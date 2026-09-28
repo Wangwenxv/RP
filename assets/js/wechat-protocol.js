@@ -54,14 +54,23 @@
 ✗ 使用"首先""其次""总之""希望能帮到你"这类助手腔。
 ✗ 在 JSON 外面写任何文字。`;
 
-    /** 组装 system prompt。persona 人设；extra.relation/scene/rpSummary 可选。 */
+    /**
+     * 组装 system prompt。
+     * @param {string} persona 人设文本（通常是完整角色卡）
+     * @param {{characterName?:string, userInfo?:string, relation?:string, scene?:string, rpSummary?:string, extraRules?:string}} [extra]
+     */
     function buildSystemPrompt(persona, extra = {}) {
+        const who = String(extra.characterName || '').trim();
         const parts = [
-            '你现在扮演一个真实的微信用户，正在用微信和对方聊天。',
+            who
+                ? `你现在扮演一个真实的微信用户「${who}」，正在用微信和对方聊天。`
+                : '你现在扮演一个真实的微信用户，正在用微信和对方聊天。',
             PROTOCOL,
             '【你的人设】',
             String(persona || '').trim() || '一个普通的年轻人。'
         ];
+        // 对方（用户）是谁，与 RP 侧一致，避免模型对聊天对象一无所知。
+        if (extra.userInfo) parts.push(`【对方信息】\n${extra.userInfo}`);
         if (extra.relation) parts.push(`【你们的关系】\n${extra.relation}`);
         if (extra.scene) parts.push(`【当前场景】\n${extra.scene}`);
         if (extra.rpSummary) parts.push(`【之前发生的事】\n${extra.rpSummary}`);

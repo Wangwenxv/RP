@@ -135,8 +135,16 @@ index.html 与 app.js 的调用清单各加一行），return 里暴露模板需
 - **RP → 时间线**：`generateResponse` 的 `finally` 调 `recordRpMessages()`，按 `rpIndex` 只追加新消息
   （角色未开微信时为空操作）。
 - **进微信**（`openWechat`）：读该 scope 的时间线，把已有 RP 历史补齐；
-  system prompt = 微信协议 + 角色微信人设 + **RP 近况摘要**（`buildRpDigestForWechat`，
-  复用 `buildConversationTurnSnapshot` 取最近若干轮）；历史只取 `channel==='wechat'` 段。
+  system prompt（`buildWechatSystemPrompt`）由以下拼成：
+  - **完整角色卡**（`buildWechatCharacterCard`）：`Name` + `Description` + `Personality` + `mes_example`，
+    与 RP 侧 `[Character]` 注入对齐；若角色编辑器填了「微信人设」则用它覆盖；
+  - **对方（用户）信息**：复用 `buildUserInfoPrompt()`，让模型知道在跟谁聊；
+  - **RP 预设白名单**（`WECHAT_PRESET_WHITELIST`：人格内核/禁止规则/防神化）——
+    只带跨媒介的人格与行为约束；叙事格式类预设（文风/活人感/剧情面板/时间戳/第二人称/去User中心化）
+    与 NSFW增强（要求「细腻缓慢推进」，与短气泡冲突）都是 RP 正文规则，一律不带；
+  - 关系/场景（`wechatRelation`/`wechatScene`）+ **RP 近况摘要**（`buildRpDigestForWechat`）；
+  - 微信协议 + 跨场景提示。
+  历史只取 `channel==='wechat'` 段。
 - **回 RP**（`15-generate.js`）：上下文组装后调 `appendWechatDigestToMessages`，把
   「最后一次 RP 之后」的微信段改写成第三人称剧情片段（`buildWechatRpDigest`），
   附到最新一条 user 消息**前面**（保留用户输入原文）。

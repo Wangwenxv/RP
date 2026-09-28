@@ -137,8 +137,10 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     const root = window.__APP_PROXY__;
     if (!root) return { _err: 'no __APP_PROXY__' };
     if (!root.characters) return { _err: 'no characters', keys: Object.keys(root).slice(0, 20) };
+    root.user.name = '阿伟';
     root.characters.push({
       name: '小A', description: '安静的插画师', personality: '嘴硬心软', first_mes: '……你好。',
+      mes_example: '<START>\n{{user}}: 在干嘛\n{{char}}: 画画，别烦。',
       avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
       uuid: 'test-uuid-1', createdAt: Date.now(),
       wechatEnabled: true, wechatPeerName: '小A', wechatRelation: '老同学', wechatScene: '深夜', wechatSpeed: 'fast'
@@ -227,10 +229,16 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('重新打开从 IndexedDB 读回记录', back.afterReopen === 4, 'n=' + back.afterReopen);
 
   console.log('\n== 双向衔接（RP ↔ 微信，黑盒：拦截真实请求体）==');
-  // 微信侧请求应带上 RP 近况摘要
+  // 微信侧请求应带上完整角色卡前提 + 对方信息
   const wxCall = [...captured].reverse().find(c => c.isWechat);
   check('微信 system prompt 含 RP 近况摘要', !!wxCall && wxCall.sysContent.includes('roleplay') && wxCall.sysContent.includes('小A'));
-  check('微信 system prompt 含角色微信人设/关系', !!wxCall && wxCall.sysContent.includes('微信'));
+  check('微信 system prompt 含角色微信人设/关系', !!wxCall && wxCall.sysContent.includes('你只能输出一个 JSON 对象'));
+  check('微信 prompt 含角色卡 Name', !!wxCall && wxCall.sysContent.includes('Name: 小A'));
+  check('微信 prompt 含角色卡 Description', !!wxCall && wxCall.sysContent.includes('安静的插画师'));
+  check('微信 prompt 含角色卡 Personality', !!wxCall && wxCall.sysContent.includes('嘴硬心软'));
+  check('微信 prompt 含示例对话 mes_example', !!wxCall && wxCall.sysContent.includes('画画，别烦'));
+  check('微信 prompt 含对方（用户）信息', !!wxCall && wxCall.sysContent.includes('阿伟'));
+  check('微信 prompt 未混入 RP 叙事预设（第二人称）', !!wxCall && !wxCall.sysContent.includes('第二人称'));
 
   // 回 RP：发一条 RP 消息，最新 user 消息应被注入"后来你们在微信上聊了这些"剧情段
   const backToRp = await page.evaluate(async () => {

@@ -194,17 +194,51 @@
         };
         __s.buildRpDigestForWechat = buildRpDigestForWechat;
 
+        /**
+         * 组装「完整角色卡」文本，与 RP 侧一致地作为人设前提注入。
+         * RP 侧角色卡 = [Character] + Name + Personality + mes_example；这里对齐，
+         * 并优先使用角色编辑器里的「微信人设」覆盖（若填了）。
+         */
+        const buildWechatCharacterCard = () => {
+            const char = __s.currentCharacter.value || {};
+            const override = String(char.wechatPersona || '').trim();
+            if (override) return override;
+            const parts = [];
+            if (char.name) parts.push(`Name: ${char.name}`);
+            if (String(char.description || '').trim()) parts.push(`Description: ${String(char.description).trim()}`);
+            if (String(char.personality || '').trim()) parts.push(`Personality: ${String(char.personality).trim()}`);
+            if (String(char.mes_example || '').trim()) parts.push(`示例对话:\n${String(char.mes_example).trim()}`);
+            return parts.join('\n');
+        };
+        __s.buildWechatCharacterCard = buildWechatCharacterCard;
+
+        /**
+         * RP 预设里，只挑「跨媒介的人格/行为约束」带进微信。
+         * 叙事格式类预设（文风/活人感/剧情面板/时间戳/第二人称/去User中心化等）是 RP 正文规则，
+         * 与微信短气泡冲突（如「对白不能过分简短」vs「每条 12 字以内」），一律不带。
+         * NSFW增强同理不带：它要求「细腻缓慢推进、不能一笔带过」，与短气泡节奏冲突。
+         */
+        const WECHAT_PRESET_WHITELIST = ['人格内核', '禁止规则', '防神化'];
+        const buildWechatPresetRules = () => {
+            const whitelist = new Set(WECHAT_PRESET_WHITELIST);
+            return __s.presets.value
+                .map(__s.normalizePreset)
+                .filter(preset => __s.isPresetEnabled(preset) && preset.content.trim() && whitelist.has(preset.name))
+                .map(preset => preset.content.trim())
+                .join('\n\n---\n\n');
+        };
+
         const buildWechatSystemPrompt = () => {
             const char = __s.currentCharacter.value || {};
-            const persona = String(char.wechatPersona || '').trim()
-                || String(char.personality || '').trim()
-                || String(char.description || '').trim();
-            return wxProtocol.buildSystemPrompt(persona, {
+            return wxProtocol.buildSystemPrompt(buildWechatCharacterCard(), {
+                characterName: String(char.wechatPeerName || '').trim() || char.name || '',
+                userInfo: __s.buildUserInfoPrompt(),
                 relation: String(char.wechatRelation || '').trim(),
                 scene: String(char.wechatScene || '').trim(),
                 rpSummary: buildRpDigestForWechat(),
                 extraRules: `【重要】你们既是 roleplay 里的关系，也是现实里互加微信的人。`
                     + `把 roleplay 中已建立的称呼、关系、默契带进微信，像真人一样随口聊天，不要重来一遍自我介绍。`
+                    + (buildWechatPresetRules() ? `\n\n【行为约束】\n${buildWechatPresetRules()}` : '')
             });
         };
         __s.buildWechatSystemPrompt = buildWechatSystemPrompt;
