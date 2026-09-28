@@ -75,6 +75,8 @@
                     name: preset.name,
                     role: preset.role,
                     content: preset.content,
+                    // 微信版文案也走这条同步路径，否则破限/预注入在微信侧永远没有内容
+                    wechatContent: preset.wechatContent || '',
                     enabled: existingPresetData ? existingPresetData.enabled !== false : fallbackBuiltinEnabled
                 });
             });

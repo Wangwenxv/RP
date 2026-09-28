@@ -89,7 +89,11 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
         break;
       }
     }
-    captured.push({ isWechat, sysContent, lastUser });
+    captured.push({
+      isWechat, sysContent, lastUser,
+      roles: msgs.map(m => m.role).join(','),
+      contents: msgs.map(m => typeof m.content === 'string' ? m.content.slice(0, 240) : '[parts]')
+    });
     const content = isWechat ? REPLY : '（继续画着，头也没抬）……嗯，那你歇会儿。';
     await route.fulfill({
       status: 200,
@@ -126,11 +130,32 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
       think: P.parseReply('<thinking>x</thinking>{"messages":[{"type":"text","content":"嗯"}]}')[0]?.content === '嗯',
       fallback: P.parseReply('一\n二\n三').length === 3,
       bareEmoji: P.parseReply('{"messages":[{"type":"text","content":"😂"}]}')[0]?.type === 'sticker',
-      overflow: P.parseReply('{"messages":[' + Array.from({ length: 20 }, (_, i) => `{"type":"text","content":"m${i}"}`).join(',') + ']}').length === 6
+      overflow: P.parseReply('{"messages":[' + Array.from({ length: 20 }, (_, i) => `{"type":"text","content":"m${i}"}`).join(',') + ']}').length === 6,
+      // 小作文：协议要留得下长消息，不能拦腰截断
+      essayKeptIntact: P.parseReply('{"messages":[{"type":"text","content":"' + '好'.repeat(300) + '"}]}')[0]?.content.length === 300,
+      essayRuleInProtocol: P.PROTOCOL.includes('小作文')
     };
   });
   Object.entries(proto).forEach(([k, v]) => { if (k !== 'ok') check('protocol.' + k, v === true); });
   if (!proto.ok) { console.log('协议未加载，终止'); process.exit(1); }
+
+  console.log('\n== 表情包档位裁剪（注入 random，确定性） ==');
+  const tiers = await page.evaluate(() => {
+    const P = window.RPHubWeChatProtocol;
+    const mix = () => ([{ type: 'text', content: 'a' }, { type: 'sticker', content: '🙄' }, { type: 'sticker', content: '😂' }]);
+    const stickers = (list) => list.filter(m => m.type === 'sticker').length;
+    return {
+      offDropsAll: stickers(P.applyStickerPolicy(mix(), 'off')) === 0,
+      lowKeepsAtMostOne: stickers(P.applyStickerPolicy(mix(), 'low', { random: () => 0 })) === 1,
+      lowDropsWhenUnlucky: stickers(P.applyStickerPolicy(mix(), 'low', { random: () => 0.999 })) === 0,
+      highKeepsAll: stickers(P.applyStickerPolicy(mix(), 'high', { random: () => 0.999 })) === 2,
+      textUntouched: P.applyStickerPolicy(mix(), 'off').filter(m => m.type === 'text').length === 1,
+      stickerOnlyNeverEmpty: P.applyStickerPolicy([{ type: 'sticker', content: '🙄' }], 'off').length === 1,
+      unknownTierFallsBack: P.normalizeStickerTier('nope') === P.DEFAULT_STICKER_TIER,
+      ruleChangesWithTier: P.stickerRuleFor('off') !== P.stickerRuleFor('high')
+    };
+  });
+  Object.entries(tiers).forEach(([k, v]) => check('sticker.' + k, v === true));
 
   console.log('\n== 建角色 + 开启微信 ==');
   const setup = await page.evaluate(async () => {
@@ -143,7 +168,13 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
       mes_example: '<START>\n{{user}}: 在干嘛\n{{char}}: 画画，别烦。',
       avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
       uuid: 'test-uuid-1', createdAt: Date.now(),
-      wechatEnabled: true, wechatPeerName: '小A', wechatRelation: '老同学', wechatScene: '深夜', wechatSpeed: 'fast'
+      wechatEnabled: true, wechatPeerName: '小A', wechatRelation: '老同学', wechatScene: '深夜', wechatSpeed: 'fast',
+      worldInfo: [
+        { comment: '画室设定', content: '小A 在城西画室打工，右手有旧伤，阴天会疼。', enabled: true, scope: 'character', order: 10 },
+        { comment: '没勾选的条目', content: '这段设定没被勾选，不该出现在微信提示词里。', enabled: true, scope: 'character', order: 20 }
+      ],
+      wechatWorldInfoComments: ['画室设定'],
+      wechatStickerRate: 'low'
     });
     await root.selectCharacter(0, false, { silent: true });
     return {
@@ -199,14 +230,15 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     return {
       bubbleCount: bubbles.length,
       texts: bubbles.map(b => b.textContent.trim()),
-      hasSticker: !!document.querySelector('.wx-root .wx-bubble.sticker'),
+      stickerCount: document.querySelectorAll('.wx-root .wx-bubble.sticker').length,
       generating: root.isWechatGenerating
     };
   });
-  // 用户 1 条 + 助手 3 条 = 4 个气泡；其中 1 个是 sticker（无文字）
-  check('气泡数量 = 4（1 用户 + 3 助手）', send.bubbleCount === 4, 'count=' + send.bubbleCount);
+  // 用户 1 条 + 助手 2~3 条；助手第 3 条是 sticker，low 档下可能被裁掉，所以数量是范围，
+  // 但「最多留 1 个表情」是档位硬上限，任何随机结果都必须成立。
+  check('气泡数量 = 3~4（1 用户 + 2~3 助手）', send.bubbleCount >= 3 && send.bubbleCount <= 4, 'count=' + send.bubbleCount);
   check('助手分段文本正确', send.texts.includes('在的') && send.texts.includes('刚看到消息'), JSON.stringify(send.texts));
-  check('表情气泡渲染为 sticker', send.hasSticker);
+  check('low 档表情气泡数量不超过 1', send.stickerCount <= 1, 'stickers=' + send.stickerCount);
   check('生成结束状态已复位', send.generating === false);
 
   console.log('\n== 回 RP：微信段写入时间线并可持久化 ==');
@@ -225,13 +257,20 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
       panel: root.showWechatPanel
     };
   });
-  check('关闭后时间线含 4 条微信消息', back.beforeClose === 4, 'n=' + back.beforeClose);
-  check('重新打开从 IndexedDB 读回记录', back.afterReopen === 4, 'n=' + back.afterReopen);
+  check('关闭后时间线与气泡数一致', back.beforeClose === send.bubbleCount, 'n=' + back.beforeClose);
+  check('重新打开从 IndexedDB 读回记录', back.afterReopen === send.bubbleCount, 'n=' + back.afterReopen);
 
   console.log('\n== 双向衔接（RP ↔ 微信，黑盒：拦截真实请求体）==');
   // 微信侧请求应带上完整角色卡前提 + 对方信息
   const wxCall = [...captured].reverse().find(c => c.isWechat);
-  check('微信 system prompt 含 RP 近况摘要', !!wxCall && wxCall.sysContent.includes('roleplay') && wxCall.sysContent.includes('小A'));
+  // RP 上下文不再堆在 system 里，而是按时间线还原成消息序列
+  check('RP 剧情块按时间顺序排在微信消息之前',
+    !!wxCall
+    && wxCall.contents[1]?.includes('【roleplay 剧情')
+    && wxCall.contents[wxCall.contents.length - 1]?.includes('在吗'),
+    JSON.stringify(wxCall ? wxCall.contents.map(c => c.replace(/\n/g, ' ').slice(0, 22)) : []));
+  check('微信 system prompt 不再重复塞 RP 摘要',
+    !!wxCall && !wxCall.sysContent.includes('【之前发生的事】'));
   check('微信 system prompt 含角色微信人设/关系', !!wxCall && wxCall.sysContent.includes('你只能输出一个 JSON 对象'));
   check('微信 prompt 含角色卡 Name', !!wxCall && wxCall.sysContent.includes('Name: 小A'));
   check('微信 prompt 含角色卡 Description', !!wxCall && wxCall.sysContent.includes('安静的插画师'));
@@ -239,6 +278,16 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('微信 prompt 含示例对话 mes_example', !!wxCall && wxCall.sysContent.includes('画画，别烦'));
   check('微信 prompt 含对方（用户）信息', !!wxCall && wxCall.sysContent.includes('阿伟'));
   check('微信 prompt 未混入 RP 叙事预设（第二人称）', !!wxCall && !wxCall.sysContent.includes('第二人称'));
+  // 世界书：只注入被勾选的条目（含条目名），未勾选的不进提示词
+  check('微信 prompt 含【世界设定】段', !!wxCall && wxCall.sysContent.includes('【世界设定】'));
+  check('微信 prompt 含勾选的世界书条目名', !!wxCall && wxCall.sysContent.includes('[画室设定]'));
+  check('微信 prompt 含勾选的世界书正文', !!wxCall && wxCall.sysContent.includes('右手有旧伤'));
+  check('微信 prompt 未注入未勾选的条目', !!wxCall && !wxCall.sysContent.includes('这段设定没被勾选'));
+  // 表情包档位提示词
+  check('微信 prompt 含表情包策略', !!wxCall && wxCall.sysContent.includes('表情包策略'));
+  // 回归：内置 RP 写作预设（禁止规则/防神化）曾按名字白名单无条件注入，把 prompt 淹掉
+  check('微信 prompt 不再泄漏内置 RP 写作预设',
+    !!wxCall && !wxCall.sysContent.includes('<prohibited_content>') && !wxCall.sysContent.includes('<R-LOGIC>'));
 
   // 回 RP：发一条 RP 消息，最新 user 消息应被注入"后来你们在微信上聊了这些"剧情段
   const backToRp = await page.evaluate(async () => {
@@ -271,14 +320,60 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('编辑器出现「开启微信」开关', editor.hasToggle);
   check('开关反映角色 wechatEnabled=true', editor.checked === true);
 
+  console.log('\n== 微信设置抽屉：世界书与表情包档位 ==');
+  const drawer = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.showCharacterEditor = false;
+    await root.openWechat();
+    root.openWechatSettings();
+    await new Promise(r => setTimeout(r, 250));
+    const onOpen = JSON.parse(JSON.stringify(root.wechatSettingsDraft));
+    const optionNames = root.wechatWorldInfoOptions.map(o => o.comment);
+    // 两个勾选列表：0 = 世界书，1 = 预设
+    const listCounts = [...document.querySelectorAll('.wx-pick-list')].map(l => l.querySelectorAll('.wx-pick-item').length);
+    root.wechatSettingsDraft.stickerRate = 'off';
+    await root.saveWechatSettings();
+    return {
+      optionNames,
+      listCounts,
+      presetNames: root.wechatPresetOptions.map(o => o.name),
+      draftComments: onOpen.worldInfoComments,
+      draftPresets: onOpen.presetNames,
+      draftTier: onOpen.stickerRate,
+      savedTier: root.currentCharacter.wechatStickerRate,
+      savedComments: root.currentCharacter.wechatWorldInfoComments,
+      savedPresets: root.currentCharacter.wechatPresetNames,
+      drawerClosed: root.showWechatSettings === false
+    };
+  });
+  check('抽屉列出角色世界书条目', drawer.optionNames.includes('画室设定') && drawer.optionNames.includes('没勾选的条目'), JSON.stringify(drawer.optionNames));
+  check('抽屉渲染世界书列表 DOM', (drawer.listCounts[0] || 0) >= 2, 'counts=' + JSON.stringify(drawer.listCounts));
+  check('抽屉渲染预设列表 DOM', (drawer.listCounts[1] || 0) >= 1, 'counts=' + JSON.stringify(drawer.listCounts));
+  check('抽屉只列带微信版文案的预设',
+    ['破限', '破限预注入 · User 1', '破限预注入 · AI 1', '破限预注入 · User 2', '破限预注入 · AI 2',
+      'NSFW增强', '人格内核', '防神化', '活人感'].every(n => drawer.presetNames.includes(n))
+    && !drawer.presetNames.includes('禁止规则')
+    && !drawer.presetNames.includes('时间戳')
+    && !drawer.presetNames.includes('COT'),
+    JSON.stringify(drawer.presetNames));
+  check('预设列表 DOM 与选项数一致', drawer.listCounts[1] === drawer.presetNames.length,
+    'dom=' + drawer.listCounts[1] + ' opt=' + drawer.presetNames.length);
+  check('打开设置时草稿回填已勾选条目', JSON.stringify(drawer.draftComments) === JSON.stringify(['画室设定']), JSON.stringify(drawer.draftComments));
+  check('打开设置时草稿预设为空', Array.isArray(drawer.draftPresets) && drawer.draftPresets.length === 0, JSON.stringify(drawer.draftPresets));
+  check('打开设置时草稿回填表情包档位', drawer.draftTier === 'low', drawer.draftTier);
+  check('保存后档位写回角色', drawer.savedTier === 'off', drawer.savedTier);
+  check('保存后世界书选择写回角色', JSON.stringify(drawer.savedComments) === JSON.stringify(['画室设定']), JSON.stringify(drawer.savedComments));
+  check('保存后预设选择写回角色', Array.isArray(drawer.savedPresets) && drawer.savedPresets.length === 0, JSON.stringify(drawer.savedPresets));
+  check('保存后抽屉关闭', drawer.drawerClosed === true);
+
   console.log('\n== 切角色：时间线按角色隔离（游标不串）==');
   const isolation = await page.evaluate(async () => {
     const root = window.__APP_PROXY__;
-    root.showCharacterEditor = false;
     root.characters.push({
       name: '小B', description: '程序员', personality: '话痨', first_mes: '在吗？',
       avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
-      uuid: 'test-uuid-2', createdAt: Date.now(), wechatEnabled: true, wechatPeerName: '小B', wechatSpeed: 'fast'
+      uuid: 'test-uuid-2', createdAt: Date.now(), wechatEnabled: true, wechatPeerName: '小B',
+      wechatSpeed: 'fast', wechatStickerRate: 'high'
     });
     await root.selectCharacter(1, false, { silent: true });
     await root.openWechat();
@@ -289,7 +384,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     await root.sendWechatMessage();
     await new Promise(r => setTimeout(r, 400));
     const bAfter = root.wechatDisplayItems.filter(i => i.kind === 'message').length;
-    // 切回小A，应看到小A自己的 4 条，而非小B的
+    // 切回小A，应看到小A自己的记录，而非小B的
     await root.closeWechat();
     await root.selectCharacter(0, false, { silent: true });
     await root.openWechat();
@@ -299,7 +394,261 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   });
   check('小B 初始无历史（未继承小A记录）', isolation.bMsgs === 0, 'n=' + isolation.bMsgs);
   check('小B 聊天后有自己的记录', isolation.bAfter === 4, 'n=' + isolation.bAfter);
-  check('切回小A 仍见小A的 4 条', isolation.aMsgs === 4, 'n=' + isolation.aMsgs);
+  check('切回小A 仍见小A自己的记录', isolation.aMsgs === send.bubbleCount, 'n=' + isolation.aMsgs);
+
+  console.log('\n== 表情包档位端到端生效 ==');
+  // 小A 上一步已存成 off 档：这一轮不该多出任何表情
+  const stickerOff = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    const countStickers = () => root.wechatDisplayItems.filter(i => i.type === 'sticker').length;
+    const before = countStickers();
+    root.wechatInput = '在吗';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+    return { tier: root.currentCharacter.wechatStickerRate, added: countStickers() - before };
+  });
+  check('off 档本轮不发表情', stickerOff.tier === 'off' && stickerOff.added === 0, JSON.stringify(stickerOff));
+
+  const stickerHigh = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.currentCharacter.wechatStickerRate = 'high';
+    const countStickers = () => root.wechatDisplayItems.filter(i => i.type === 'sticker').length;
+    const before = countStickers();
+    root.wechatInput = '在吗';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+    return {
+      tier: root.currentCharacter.wechatStickerRate,
+      added: countStickers() - before,
+      domStickers: document.querySelectorAll('.wx-root .wx-bubble.sticker').length
+    };
+  });
+  check('high 档本轮发出表情', stickerHigh.tier === 'high' && stickerHigh.added >= 1, JSON.stringify(stickerHigh));
+  check('表情气泡渲染为 sticker 样式', stickerHigh.domStickers >= 1, 'dom=' + stickerHigh.domStickers);
+
+  console.log('\n== 预设微信版注入与 RP 长期记忆 ==');
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    // 顺手把 RP 侧的「人格内核」停用：微信勾选应当独立生效，不被这个开关带动
+    const core = root.presets.find(preset => preset.name === '人格内核');
+    if (core) core.enabled = false;
+    root.currentCharacter.wechatPresetNames = ['人格内核'];
+    root.wechatInput = '在吗';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 500));
+  });
+  const presetCall = [...captured].reverse().find(c => c.isWechat);
+  check('注入的是预设的微信版文案（而非 RP 版）',
+    !!presetCall && presetCall.sysContent.includes('你就是这个人') && !presetCall.sysContent.includes('【人物成立】'));
+  check('未勾选的预设不注入（防神化缺席）',
+    !!presetCall && !presetCall.sysContent.includes('你只知道你知道的'));
+  check('预设停用不影响微信勾选', !!presetCall && presetCall.sysContent.includes('【预设规则】'));
+  check('长期记忆未开启时不注入', !!presetCall && !presetCall.sysContent.includes('【长期记忆】'));
+
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.memorySettings.enabled = true;
+    root.classicMemories.push({
+      id: 'mem-1', classicMemory: true, enabled: true,
+      turn: 5, turnStart: 3, turnEnd: 5,
+      summary: '你们第一次见面是在画室楼下，她借了你一把伞。'
+    });
+    root.wechatInput = '在吗';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 500));
+  });
+  const memCall = [...captured].reverse().find(c => c.isWechat);
+  check('长期记忆注入微信 prompt', !!memCall && memCall.sysContent.includes('【长期记忆】'));
+  check('长期记忆带轮次标签与正文',
+    !!memCall && memCall.sysContent.includes('第 3–5 轮') && memCall.sysContent.includes('借了你一把伞'));
+
+  console.log('\n== 破限族：system 版与预注入轮次分流 ==');
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.currentCharacter.wechatPresetNames = [
+      '破限', '破限预注入 · User 1', '破限预注入 · AI 1', '破限预注入 · User 2', '破限预注入 · AI 2'
+    ];
+    root.wechatInput = '在吗';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 500));
+  });
+  const breachCall = [...captured].reverse().find(c => c.isWechat);
+  check('破限进 system prompt（且是微信版）',
+    !!breachCall && breachCall.sysContent.includes('微信聊天模式') && !breachCall.sysContent.includes('# 角色扮演模式'));
+  check('预注入作为真实消息插在 system 与聊天记录之间',
+    !!breachCall && breachCall.roles.startsWith('system,user,assistant,user,assistant'),
+    breachCall ? breachCall.roles : '');
+  check('预注入用的是微信版文案',
+    !!breachCall
+    && breachCall.contents.some(c => c.includes('本次微信扮演'))
+    && breachCall.contents.some(c => c.includes('[WeChat READY]'))
+    && !breachCall.contents.some(c => c.includes('RP-Hub READY')));
+  check('预注入没有混进 system 提示词',
+    !!breachCall && !breachCall.sysContent.includes('[WeChat READY]'));
+
+  console.log('\n== RP ↔ 微信 交错：按时间顺序还原 ==');
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    // 关掉记忆：这一段要验证「原始块按序全部保留」，开着记忆会被收敛掉
+    root.memorySettings.enabled = false;
+    root.characters.push({
+      name: '小C', description: '乐手', personality: '闷', first_mes: '……',
+      avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
+      uuid: 'test-uuid-3', createdAt: Date.now(),
+      wechatEnabled: true, wechatPeerName: '小C', wechatSpeed: 'fast', wechatStickerRate: 'high'
+    });
+    await root.selectCharacter(2, false, { silent: true });
+
+    // 第一轮 RP
+    root.chatHistory.length = 0;
+    root.chatHistory.push(
+      { role: 'assistant', content: '（把吉他放下）你来了。' },
+      { role: 'user', content: '演出怎么样' },
+      { role: 'assistant', content: '（耸肩）就那样。' }
+    );
+    await root.openWechat();
+    root.wechatInput = '微信第一轮';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+    await root.closeWechat();
+
+    // 第二轮 RP（在第一轮微信之后）
+    root.chatHistory.push(
+      { role: 'user', content: '我给你带了夜宵' },
+      { role: 'assistant', content: '（愣了一下）谢了。' }
+    );
+
+    await root.openWechat();
+    root.wechatInput = '微信第二轮';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+  });
+  const interCall = [...captured].reverse().find(c => c.isWechat);
+  const idxFrom = (needle, from = 0) => interCall
+    ? interCall.contents.findIndex((c, i) => i >= from && c.includes(needle))
+    : -1;
+  const rpBlock1 = idxFrom('【roleplay 剧情');
+  const wxRound1 = idxFrom('微信第一轮');
+  const rpBlock2 = idxFrom('【roleplay 剧情', wxRound1 + 1);
+  const wxRound2 = idxFrom('微信第二轮');
+  check('交错顺序还原为 RP → 微信 → RP → 微信',
+    rpBlock1 >= 0 && wxRound1 > rpBlock1 && rpBlock2 > wxRound1 && wxRound2 > rpBlock2,
+    JSON.stringify((interCall ? interCall.contents : []).map((c, i) => `#${i} ${c.replace(/\n/g, ' ').slice(0, 16)}`)));
+  check('前后两段 RP 各自归到自己的块里',
+    !!interCall
+    && !interCall.contents[rpBlock1].includes('带了夜宵')
+    && interCall.contents[rpBlock2].includes('带了夜宵'));
+
+  console.log('\n== 乙：记忆覆盖后只留最近一段 RP ==');
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.memorySettings.enabled = true;
+    root.classicMemories.push({
+      id: 'mem-C', classicMemory: true, enabled: true,
+      turn: 1, turnStart: 1, turnEnd: 1, summary: '你们在排练室见过一面。'
+    });
+    root.wechatInput = '还在吗';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+  });
+  const collapseCall = [...captured].reverse().find(c => c.isWechat);
+  const rpBlockCount = collapseCall
+    ? collapseCall.contents.filter(c => c.includes('【roleplay 剧情')).length
+    : -1;
+  check('记忆覆盖后只保留最近一段 RP', rpBlockCount === 1, 'rpBlocks=' + rpBlockCount);
+  check('收敛不影响微信消息本身',
+    !!collapseCall
+    && collapseCall.contents.some(c => c.includes('微信第一轮'))
+    && collapseCall.contents.some(c => c.includes('微信第二轮')));
+
+  console.log('\n== A：相邻同角色气泡合并 ==');
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    // 多聊几轮，把时间线顶过「最近 8 条不合并」的窗口，才看得到合并效果
+    for (let i = 0; i < 4; i++) {
+      root.wechatInput = '再聊一句' + i;
+      await root.sendWechatMessage();
+      await new Promise(r => setTimeout(r, 300));
+    }
+    root.wechatInput = '最后一句';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+  });
+  const mergeCall = [...captured].reverse().find(c => c.isWechat);
+  const mergedAssistant = mergeCall
+    ? mergeCall.contents.filter(c => c.includes('在的') && c.includes('刚看到消息')).length
+    : -1;
+  check('超窗口的历史分段气泡被并成一条', mergedAssistant >= 1, 'merged=' + mergedAssistant);
+  check('最近的分段气泡保持单条原样（给模型看正确格式）',
+    !!mergeCall && mergeCall.contents.some(c => c === '刚看到消息'),
+    JSON.stringify(mergeCall ? mergeCall.contents.slice(-5) : []));
+
+  console.log('\n== 清空微信记录（确认弹窗必须能盖在微信层上） ==');
+  const clearFlow = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    const countMsgs = () => root.wechatDisplayItems.filter(i => i.kind === 'message').length;
+    const before = countMsgs();
+    root.clearWechatTimeline();
+    await new Promise(r => setTimeout(r, 300));
+    const confirmBtn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '确认');
+    const overlay = confirmBtn ? confirmBtn.closest('.fixed') : null;
+    const wxRoot = document.querySelector('.wx-root');
+    return {
+      before,
+      modalShown: root.showConfirmModal === true,
+      hasConfirmButton: !!confirmBtn,
+      modalZ: overlay ? Number(getComputedStyle(overlay).zIndex) : NaN,
+      wxZ: wxRoot ? Number(getComputedStyle(wxRoot).zIndex) : NaN
+    };
+  });
+  check('清空前有聊天记录', clearFlow.before > 0, 'n=' + clearFlow.before);
+  check('点🗑 弹出确认框', clearFlow.modalShown === true && clearFlow.hasConfirmButton === true);
+  check('确认框层级高于微信覆盖层', clearFlow.modalZ > clearFlow.wxZ,
+    `modal=${clearFlow.modalZ} wx=${clearFlow.wxZ}`);
+
+  const cleared = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    const confirmBtn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '确认');
+    confirmBtn.click();
+    await new Promise(r => setTimeout(r, 600));
+    const afterClear = root.wechatDisplayItems.filter(i => i.kind === 'message').length;
+    // 重新打开，验证落盘
+    await root.closeWechat();
+    await root.openWechat();
+    await new Promise(r => setTimeout(r, 400));
+    return {
+      afterClear,
+      afterReopen: root.wechatDisplayItems.filter(i => i.kind === 'message').length,
+      modalClosed: root.showConfirmModal === false
+    };
+  });
+  check('确认后记录被清空', cleared.afterClear === 0, 'n=' + cleared.afterClear);
+  check('清空已落盘（重开仍为空）', cleared.afterReopen === 0, 'n=' + cleared.afterReopen);
+  check('确认后弹窗关闭', cleared.modalClosed === true);
+
+  console.log('\n== 预设编辑器：微信版内容 ==');
+  const presetEdit = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    // 「防抢话」本来没有微信版，现加一份
+    const index = root.presets.findIndex(p => p.name === '防抢话');
+    const before = root.wechatPresetOptions.some(o => o.name === '防抢话');
+    root.editPreset(index);
+    await new Promise(r => setTimeout(r, 300));
+    const hasField = !!document.querySelector('.app-modal-panel textarea[placeholder^="留空"]');
+    root.editingPreset.data.wechatContent = '# 微信版防抢话\n对方说过的要接住，不要替他补话。';
+    await root.savePreset();
+    await new Promise(r => setTimeout(r, 300));
+    return {
+      before,
+      hasField,
+      saved: root.presets[index].wechatContent,
+      after: root.wechatPresetOptions.some(o => o.name === '防抢话')
+    };
+  });
+  check('预设编辑器有微信版输入框', presetEdit.hasField === true);
+  check('未填微信版时抽屉不列出该预设', presetEdit.before === false);
+  check('保存后写入 wechatContent', String(presetEdit.saved).includes('不要替他补话'), String(presetEdit.saved).slice(0, 30));
+  check('保存后该预设出现在微信抽屉', presetEdit.after === true);
 
   console.log('\nERRORS(' + errors.length + '):');
   errors.slice(0, 15).forEach(e => console.log('  ' + e));

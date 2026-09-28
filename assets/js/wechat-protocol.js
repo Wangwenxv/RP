@@ -6,10 +6,15 @@
  *
  * 用 JSON 而非分隔符：每条消息可带类型（文字/表情/图片/语音），后续扩展"撤回""发图"
  * 时不用改协议。解析层容忍代码块包裹、think 块、缺外层包裹、纯文本降级。
+ *
+ * 表情包频率不靠模型自觉：档位同时作用于提示词（stickerRuleFor）和生成后的硬裁剪
+ * （applyStickerPolicy），两者共用同一组 STICKER_TIERS。
  */
 (function () {
     const MAX_MESSAGES = 6;
-    const MAX_CONTENT_LEN = 240;
+    // 单条上限要留得下「小作文」：真人偶尔会一口气发一大段，
+    // 截得太短会把长消息拦腰砍断，比不发还假。
+    const MAX_CONTENT_LEN = 400;
 
     const PROTOCOL = `【输出格式 — 必须严格遵守】
 你只能输出一个 JSON 对象，不要输出任何解释、前言、Markdown 代码块或多余文字。
@@ -24,9 +29,10 @@
 
 【怎么分段 — 这是最重要的一点】
 你要模仿真人在微信上打字：想到什么就发什么，不会攒成一大段。
-- 硬性要求：如果不是只发表情，就至少发 2 条消息。合成 1 条长消息是错的。
-- 最常见的是 2~3 条；情绪上来、话赶话的时候发 4~5 条。
-- 每一条都要短，尽量在 12 个字以内。想一想，一句话超过 15 个字就该拆成两条。
+- 默认是短消息：一轮 2~3 条，每条尽量在 12 个字以内；一句话超过 15 个字就该拆成两条。
+- 硬性要求：如果不是只发表情，就至少发 2 条消息。把想说的合成 1 条长消息是错的。
+- 情绪上来、话赶话的时候发 4~5 条。
+- 例外——偶尔会写小作文：对方问的事需要认真回应，或者你在解释、交代、翻旧账、情绪上来的时候，可以发一条很长的消息（几十到几百字）。这种时候长消息一般是连发几条里夹着的一条，不是孤零零甩出去一段。十几轮里大概才一次，不要滥用。
 - 偶尔（大约每 6~7 轮有 1 次）只发一个 sticker，一句话都不说。
 - 情绪强烈时，可以「文字 + 表情」组合，例如先吐槽一句再发个 😂。
 
@@ -56,25 +62,33 @@
 
     /**
      * 组装 system prompt。
+     * RP 相关的上下文（长期记忆、近况摘要）一律排在最后：越靠近生成位置，模型越当回事，
+     * 而协议/人设/世界设定这些静态前提放在前面。
      * @param {string} persona 人设文本（通常是完整角色卡）
-     * @param {{characterName?:string, userInfo?:string, relation?:string, scene?:string, rpSummary?:string, extraRules?:string}} [extra]
+     * @param {{characterName?:string, presetRules?:string, worldInfo?:string, userInfo?:string, relation?:string, scene?:string, memory?:string, rpSummary?:string, stickerRule?:string, extraRules?:string}} [extra]
      */
     function buildSystemPrompt(persona, extra = {}) {
         const who = String(extra.characterName || '').trim();
         const parts = [
             who
                 ? `你现在扮演一个真实的微信用户「${who}」，正在用微信和对方聊天。`
-                : '你现在扮演一个真实的微信用户，正在用微信和对方聊天。',
-            PROTOCOL,
-            '【你的人设】',
-            String(persona || '').trim() || '一个普通的年轻人。'
+                : '你现在扮演一个真实的微信用户，正在用微信和对方聊天。'
         ];
+        // 预设规则（破限、人格内核…）排在最前：它们是"你是什么状态"的前提，先于格式契约。
+        if (extra.presetRules) parts.push(`【预设规则】\n${String(extra.presetRules).trim()}`);
+        parts.push(PROTOCOL);
+        if (extra.stickerRule) parts.push(String(extra.stickerRule).trim());
+        parts.push('【你的人设】', String(persona || '').trim() || '一个普通的年轻人。');
+        // 世界书设定：与 RP 侧同源的 [条目名] + 正文，让微信侧的称呼/设定和 RP 对齐。
+        if (extra.worldInfo) parts.push(`【世界设定】\n${String(extra.worldInfo).trim()}`);
         // 对方（用户）是谁，与 RP 侧一致，避免模型对聊天对象一无所知。
         if (extra.userInfo) parts.push(`【对方信息】\n${extra.userInfo}`);
         if (extra.relation) parts.push(`【你们的关系】\n${extra.relation}`);
         if (extra.scene) parts.push(`【当前场景】\n${extra.scene}`);
-        if (extra.rpSummary) parts.push(`【之前发生的事】\n${extra.rpSummary}`);
         if (extra.extraRules) parts.push(extra.extraRules);
+        // 长期记忆：RP 侧压缩出来的历轮总结，补上「摘要只覆盖最近几轮」之外的旧账。
+        if (extra.memory) parts.push(`【长期记忆】\n${String(extra.memory).trim()}`);
+        if (extra.rpSummary) parts.push(`【之前发生的事】\n${extra.rpSummary}`);
         return parts.join('\n\n');
     }
 
@@ -200,15 +214,78 @@
             .map((content) => ({ type: isPureEmoji(content) ? 'sticker' : 'text', content: content.slice(0, MAX_CONTENT_LEN) }));
     }
 
+    /**
+     * 表情包档位：keep = 单个 sticker 的保留概率，max = 每轮最多留下几个。
+     * keep 与 max 一起用，模型偶尔无视提示词刷表情时仍能被硬裁掉。
+     */
+    const DEFAULT_STICKER_TIER = 'low';
+    const STICKER_TIERS = Object.freeze({
+        off: Object.freeze({ keep: 0, max: 0 }),
+        low: Object.freeze({ keep: 0.35, max: 1 }),
+        normal: Object.freeze({ keep: 0.7, max: 2 }),
+        high: Object.freeze({ keep: 1, max: 3 })
+    });
+
+    function normalizeStickerTier(tier) {
+        return Object.prototype.hasOwnProperty.call(STICKER_TIERS, tier) ? tier : DEFAULT_STICKER_TIER;
+    }
+
+    /** 档位对应的提示词片段，措辞上明确压过 PROTOCOL 里的默认频率描述。 */
+    const STICKER_RULES = Object.freeze({
+        off: '【表情包策略 — 优先级高于上文】这轮聊天不要发表情包，不要输出 type 为 "sticker" 的消息，只用文字。',
+        low: '【表情包策略 — 优先级高于上文】表情包要克制：绝大多数轮次只发文字，大约每 4~5 轮才在文字后面跟一个 sticker，不要整条只发一个表情。',
+        normal: '【表情包策略 — 优先级高于上文】表情包按需使用：大约每 2~3 轮在文字后面跟一个 sticker，偶尔可以整条只发一个表情。',
+        high: '【表情包策略 — 优先级高于上文】表情包可以多用：情绪到位就带一个 sticker，也可以整条只发一个表情。'
+    });
+
+    function stickerRuleFor(tier) {
+        return STICKER_RULES[normalizeStickerTier(tier)];
+    }
+
+    /**
+     * 按档位裁剪 sticker：先逐条按保留概率抽掉，再套每轮上限。
+     * 整轮被裁空时保留第一条 sticker —— 宁可偶尔多发一个表情，也不要让这轮回复变成空白。
+     * @param {Array<{type:string, content:string}>} messages parseReply 的输出
+     * @param {string} tier
+     * @param {{random?:() => number}} [options]
+     */
+    function applyStickerPolicy(messages, tier, options = {}) {
+        const list = Array.isArray(messages) ? messages : [];
+        const random = typeof options.random === 'function' ? options.random : Math.random;
+        const { keep, max } = STICKER_TIERS[normalizeStickerTier(tier)];
+        const out = [];
+        let kept = 0;
+        for (const message of list) {
+            if (message?.type !== 'sticker') {
+                out.push(message);
+                continue;
+            }
+            if (kept >= max) continue;
+            if (keep <= 0) continue;
+            if (keep < 1 && random() >= keep) continue;
+            kept++;
+            out.push(message);
+        }
+        if (out.length === 0 && list.some((message) => message?.type === 'sticker')) {
+            return [list.find((message) => message?.type === 'sticker')];
+        }
+        return out;
+    }
+
     window.RPHubWeChatProtocol = Object.freeze({
         MAX_MESSAGES,
         MAX_CONTENT_LEN,
         PROTOCOL,
+        DEFAULT_STICKER_TIER,
+        STICKER_TIERS,
         buildSystemPrompt,
         stripThinking,
         extractJSON,
         isPureEmoji,
         normalizeMessages,
-        parseReply
+        parseReply,
+        normalizeStickerTier,
+        stickerRuleFor,
+        applyStickerPolicy
     });
 })();

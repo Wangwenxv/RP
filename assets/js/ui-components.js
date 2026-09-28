@@ -1189,7 +1189,7 @@
             roleOptions: { type: Array, default: () => [] },
             roleLabel: { type: String, default: '' }
         },
-        emits: ['close', 'save', 'update:name', 'update:role', 'update:content'],
+        emits: ['close', 'save', 'update:name', 'update:role', 'update:content', 'update:wechatContent'],
         template: `
             <modal-shell v-if="show" overlay-class="z-50 bg-black/50 backdrop-blur-sm p-2 md:p-3 animate-fade-in"
                 panel-class="bg-white rounded-2xl border border-gray-200 w-full max-w-2xl flex flex-col shadow-2xl max-h-[94vh] overflow-hidden">
@@ -1221,6 +1221,18 @@
                             </label>
                             <textarea :value="preset.content" @input="$emit('update:content', $event.target.value)" rows="12"
                                 class="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-gray-800 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 focus:outline-none text-sm shadow-inner leading-relaxed resize-y min-h-[200px]" placeholder="在此输入预设内容..."></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5 flex justify-between">
+                                <span>微信版内容 <span class="font-normal normal-case text-gray-400">选填</span></span>
+                                <span class="text-[10px] font-normal normal-case bg-gray-100 px-1.5 rounded text-gray-500">{{ (preset.wechatContent || '').length }} 字符</span>
+                            </label>
+                            <textarea :value="preset.wechatContent" @input="$emit('update:wechatContent', $event.target.value)" rows="8"
+                                class="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-gray-800 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 focus:outline-none text-sm shadow-inner leading-relaxed resize-y min-h-[140px]" placeholder="留空则微信设置里不会列出这条预设..."></textarea>
+                            <p class="mt-1.5 text-xs text-gray-500 leading-relaxed">
+                                微信侧注入的是这份内容，RP 侧用的是上面的「内容」，两者互不影响；微信里勾不勾选也不受本预设的启用开关影响。
+                                留空则这条预设不会出现在微信设置的预设列表里。
+                            </p>
                         </div>
                     </div>
                     <div class="p-4 md:p-5 border-t border-gray-100 flex justify-end space-x-3 bg-gray-50/80 backdrop-blur-sm flex-shrink-0">

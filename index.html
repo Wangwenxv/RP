@@ -2665,7 +2665,8 @@
             :role-label="getPresetRoleLabel(editingPreset.data)" @close="showPresetEditor = false"
             @save="savePreset" @update:name="editingPreset.data.name = $event"
             @update:role="editingPreset.data.role = $event"
-            @update:content="editingPreset.data.content = $event"></preset-editor-modal>
+            @update:content="editingPreset.data.content = $event"
+            @update:wechatContent="editingPreset.data.wechatContent = $event"></preset-editor-modal>
 
         <ui-template-editor-modal :show="showUiTemplateEditor" :template-data="editingUiTemplate.data"
             :editing="editingUiTemplate.id !== undefined" :tab="editingUiTemplate.tab"
@@ -2801,6 +2802,42 @@
                         <label class="wx-field"><span>微信人设 <small>留空则用角色卡</small></span>
                             <textarea rows="6" v-model="wechatSettingsDraft.persona"></textarea></label>
                         <div class="wx-field">
+                            <span>世界书 <small>勾选即注入微信</small></span>
+                            <div class="wx-pick-list">
+                                <label v-for="option in wechatWorldInfoOptions" :key="option.index" class="wx-pick-item"
+                                    :class="{ off: !option.enabled || !option.selectable }">
+                                    <input type="checkbox" v-model="wechatSettingsDraft.worldInfoComments"
+                                        :value="option.comment" :disabled="!option.enabled || !option.selectable">
+                                    <span class="wx-pick-main">
+                                        <span class="wx-pick-name">
+                                            {{ option.comment || '未命名条目' }}
+                                            <em v-if="option.constant" class="wx-pick-badge">常驻</em>
+                                        </span>
+                                        <span class="wx-pick-preview">{{ option.preview || '（空内容）' }}</span>
+                                    </span>
+                                </label>
+                                <p v-if="!wechatWorldInfoOptions.length" class="wx-hint">当前角色没有世界书条目。</p>
+                            </div>
+                            <small class="wx-hint">已选 {{ wechatSettingsDraft.worldInfoComments.length }} 条，
+                                原样写进提示词，不走关键词触发；未勾选和已停用的条目都不会生效。</small>
+                        </div>
+                        <div class="wx-field">
+                            <span>预设 <small>勾选即注入微信</small></span>
+                            <div class="wx-pick-list">
+                                <label v-for="option in wechatPresetOptions" :key="option.index" class="wx-pick-item">
+                                    <input type="checkbox" v-model="wechatSettingsDraft.presetNames"
+                                        :value="option.name">
+                                    <span class="wx-pick-main">
+                                        <span class="wx-pick-name">{{ option.name }}</span>
+                                        <span class="wx-pick-preview">{{ option.preview }}</span>
+                                    </span>
+                                </label>
+                                <p v-if="!wechatPresetOptions.length" class="wx-hint">没有带微信版文案的预设。</p>
+                            </div>
+                            <small class="wx-hint">已选 {{ wechatSettingsDraft.presetNames.length }} 条。这里注入的是预设的
+                                <em>微信版文案</em>，和 RP 用的那套是两份内容；勾选只影响微信，也不会被预设的启用开关带动。</small>
+                        </div>
+                        <div class="wx-field">
                             <span>打字速度</span>
                             <div class="wx-seg">
                                 <button :class="{ on: wechatSettingsDraft.speed === 'fast' }"
@@ -2811,6 +2848,20 @@
                                     @click="wechatSettingsDraft.speed = 'slow'">慢</button>
                             </div>
                             <small class="wx-hint">决定「对方正在输入…」的停顿长短，越慢越像真人。</small>
+                        </div>
+                        <div class="wx-field">
+                            <span>表情包频率</span>
+                            <div class="wx-seg">
+                                <button :class="{ on: wechatSettingsDraft.stickerRate === 'off' }"
+                                    @click="wechatSettingsDraft.stickerRate = 'off'">关</button>
+                                <button :class="{ on: wechatSettingsDraft.stickerRate === 'low' }"
+                                    @click="wechatSettingsDraft.stickerRate = 'low'">少</button>
+                                <button :class="{ on: wechatSettingsDraft.stickerRate === 'normal' }"
+                                    @click="wechatSettingsDraft.stickerRate = 'normal'">中</button>
+                                <button :class="{ on: wechatSettingsDraft.stickerRate === 'high' }"
+                                    @click="wechatSettingsDraft.stickerRate = 'high'">多</button>
+                            </div>
+                            <small class="wx-hint">越少越像真人。提示词和生成后裁剪都会按这档收紧，模型想多发也发不出来。</small>
                         </div>
                         <button class="wx-primary" @click="saveWechatSettings">保存</button>
                     </div>

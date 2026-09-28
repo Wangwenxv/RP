@@ -376,7 +376,7 @@
         // Preset Management
         const createPreset = () => {
             __s.editingPreset.id = undefined;
-            __s.editingPreset.data = { name: 'New Preset', content: '', enabled: false, role: 'system' };
+            __s.editingPreset.data = { name: 'New Preset', content: '', wechatContent: '', enabled: false, role: 'system' };
             __s.showPresetEditor.value = true;
         };
         __s.createPreset = createPreset;

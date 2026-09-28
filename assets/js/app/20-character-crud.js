@@ -15,6 +15,11 @@
     window.RPHubAppSections = window.RPHubAppSections || {};
     window.RPHubAppSections.characterCrud = function (__s) {
 
+        /** 微信侧的「按名字勾选」字段（世界书条目名 / 预设名）统一去空去重。 */
+        const normalizeTrimmedList = (value) => [...new Set(
+            (Array.isArray(value) ? value : []).map(item => String(item || '').trim()).filter(Boolean)
+        )];
+
         // Character Management
         const createNewCharacter = () => {
             __s.editingCharacter.id = undefined;
@@ -34,7 +39,10 @@
                 wechatRelation: '',
                 wechatScene: '',
                 wechatPersona: '',
-                wechatSpeed: 'normal'
+                wechatSpeed: 'normal',
+                wechatWorldInfoComments: [],
+                wechatPresetNames: [],
+                wechatStickerRate: window.RPHubWeChatProtocol.DEFAULT_STICKER_TIER
             };
             __s.editorTab.value = 'basic';
             __s.showCharacterEditor.value = true;
@@ -66,6 +74,11 @@
                 wechatSpeed: ['fast', 'normal', 'slow'].includes(__s.editingCharacter.data.wechatSpeed)
                     ? __s.editingCharacter.data.wechatSpeed
                     : 'normal',
+                wechatWorldInfoComments: normalizeTrimmedList(__s.editingCharacter.data.wechatWorldInfoComments),
+                wechatPresetNames: normalizeTrimmedList(__s.editingCharacter.data.wechatPresetNames),
+                wechatStickerRate: window.RPHubWeChatProtocol.normalizeStickerTier(
+                    __s.editingCharacter.data.wechatStickerRate
+                ),
                 regexScripts: characterRegexScripts,
                 uiTemplates: (__s.editingCharacter.data.uiTemplates || []).map(template => normalizeUiTemplate({ ...template, scope: 'character' }))
             };

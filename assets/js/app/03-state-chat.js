@@ -73,6 +73,9 @@
             ...preset,
             name: preset.name || 'New Preset',
             content: String(preset.content || ''),
+            // 微信版文案：与 content 同一预设的两种写法，RP 用 content，微信侧用这份。
+            // 留空表示该预设不适用于微信，微信抽屉里不会列出来。
+            wechatContent: String(preset.wechatContent || ''),
             enabled: preset.enabled !== false,
             role: normalizePresetRole(preset.role || preset.presetRole || preset.type)
         });
@@ -80,6 +83,7 @@
         const syncBuiltinPreset = ({
             name,
             content,
+            wechatContent,
             aliases = [],
             role,
             enabled = true,
@@ -94,6 +98,8 @@
 
             preset.name = name;
             preset.content = content;
+            // 内置预设整份覆盖，避免改掉 wechatContent 后残留上一版文案。
+            preset.wechatContent = String(wechatContent || '');
             if (role) preset.role = role;
             if (syncEnabled) preset.enabled = enabled;
 

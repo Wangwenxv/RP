@@ -303,7 +303,7 @@ const app = createApp({
             toggleAutoImageGen: __s.toggleAutoImageGen, setWorldInfoEnabled: __s.setWorldInfoEnabled, handleGeneratedImageReroll: __s.handleGeneratedImageReroll,
             quotaValue: __s.quotaValue, quotaLoading: __s.quotaLoading, quotaError: __s.quotaError,
             // Memory System Exports
-            classicMemoryPage: __s.classicMemoryPage, classicMemoryPageCount: __s.classicMemoryPageCount, memorySettings: __s.memorySettings, retryingClassicMemoryId: __s.retryingClassicMemoryId, retryClassicMemory: __s.retryClassicMemory,
+            classicMemoryPage: __s.classicMemoryPage, classicMemoryPageCount: __s.classicMemoryPageCount, classicMemories: __s.classicMemories, memorySettings: __s.memorySettings, retryingClassicMemoryId: __s.retryingClassicMemoryId, retryClassicMemory: __s.retryClassicMemory,
             isActiveBatchExtracting: __s.isClassicBatchExtracting,
             showMemoryBackfillModal: __s.showMemoryBackfillModal, memoryBackfillProgress: __s.memoryBackfillProgress,
             startBatchMemoryExtraction: __s.startBatchMemoryExtraction, abortBatchExtraction: __s.abortClassicBatchExtraction,
@@ -639,6 +639,8 @@ const app = createApp({
             isWechatGenerating: __s.isWechatGenerating, wechatTyping: __s.wechatTyping,
             wechatStatusText: __s.wechatStatusText, wechatSettingsDraft: __s.wechatSettingsDraft,
             wechatPeerName: __s.wechatPeerName, wechatAvatar: __s.wechatAvatar,
+            wechatWorldInfoOptions: __s.wechatWorldInfoOptions,
+            wechatPresetOptions: __s.wechatPresetOptions,
             wechatDisplayItems: __s.wechatDisplayItems,
             openWechat: __s.openWechat, closeWechat: __s.closeWechat,
             openWechatSettings: __s.openWechatSettings, saveWechatSettings: __s.saveWechatSettings,
