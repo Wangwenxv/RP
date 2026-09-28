@@ -1,6 +1,7 @@
 # App 模块地图（assets/js/app/）
 
-> 24 个模块全部由原 `app.js` 的 `setup()`（661 条顶层语句、662 个声明）机械拆分而来，行为与原文件完全一致。
+> 01~24 号模块由原 `app.js` 的 `setup()`（661 条顶层语句、662 个声明）机械拆分而来，行为与原文件完全一致；
+> 25 号为后加的微信子系统。合并加载顺序 = 文件序号。
 > 每个文件头部注释标明了它来自原文件的哪几行。加载顺序 = 文件序号 = 原声明顺序。
 > 约定见 [ARCHITECTURE.md](./ARCHITECTURE.md) §3（`__s` 共享上下文）。
 
@@ -30,6 +31,7 @@
 | 22 | `22-character-io.js` | ~407 | 世界书归一化/导入导出、角色卡/聊天记录/PNG 导出、预设增删改 |
 | 23 | `23-lifecycle.js` | ~289 | 启动 watcher、`onMounted` 初始化全流程、`onBeforeUnmount` 清理（无导出成员，纯副作用） |
 | 24 | `24-late-helpers.js` | ~195 | 流式正文截断 `processMainContent`、用户人设切换、记忆展示与统计滑块 |
+| 25 | `25-wechat.js` | ~430 | **微信子系统**：角色统一时间线（`wechat_timeline`）、进出微信衔接、分段生成与打字节奏（见 ARCHITECTURE §7） |
 
 > 注：行数为约数（含镜像赋值与文件头注释）。23 号模块没有顶层声明（只有 `watch` / `onMounted` / `onBeforeUnmount` 三条副作用语句），这是正常的。
 
@@ -45,6 +47,8 @@
 - **自动生图**：`07`
 - **UI 模板（面板/变量）**：运行时 `08`、更新执行 `13`、工具函数 `data-services.js`（`RPHubUiTemplateUtils`）
 - **API 请求/密钥/提供商**：`02`（选择与归一化）+ `api-utils.js`（请求实现）
+- **微信子系统**：状态/时间线/生成 `25` + 协议 `wechat-protocol.js` + UI/样式 `index.html` 的 `.wx-root` / `wechat.css`；
+  角色开关字段在 `20`-crud 归一化、编辑器开关在 `ui-components.js`；RP 侧衔接注入在 `15`（`appendWechatDigestToMessages`）。
 - **移动端键盘/视口**：`01`
 - **启动初始化顺序**：`23`（`onMounted`：`loadData` → 恢复上次角色 → `fetchModels` → 状态检查 → 视口监听 → 全局点击收起）
 

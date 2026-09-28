@@ -382,6 +382,8 @@
                     depth: array.length - 1 - index
                 })
             }));
+            // 微信 ↔ RP 衔接：若从上次 RP 之后又在微信聊过，把这段改写成剧情附到最新用户消息。
+            messages = __s.appendWechatDigestToMessages(messages);
 
             let generatedAssistantMessageId = null;
             let assistantMessage = null;
@@ -623,6 +625,8 @@
                 }
                 __s.collapseActiveNativeReasoning();
                 await __s.saveChatHistoryNow();
+                // 把本轮 RP 消息镜像进角色统一时间线（微信侧据此衔接；角色未开启微信时为空操作）。
+                await __s.recordRpMessages();
                 __s.isThinking.value = false;
                 __s.isGenerating.value = false;
                 __s.isReceiving.value = false;

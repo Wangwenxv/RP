@@ -27,7 +27,14 @@
                 mes_example: '',
                 uuid: generateUUID(),
                 createdAt: Date.now(),
-                uiTemplates: []
+                uiTemplates: [],
+                // 微信子系统（缺省关闭）
+                wechatEnabled: false,
+                wechatPeerName: '',
+                wechatRelation: '',
+                wechatScene: '',
+                wechatPersona: '',
+                wechatSpeed: 'normal'
             };
             __s.editorTab.value = 'basic';
             __s.showCharacterEditor.value = true;
@@ -51,6 +58,14 @@
                 .filter(script => script.scope !== 'global');
             const normalizedCharacterData = {
                 ...__s.editingCharacter.data,
+                wechatEnabled: __s.editingCharacter.data.wechatEnabled === true,
+                wechatPeerName: String(__s.editingCharacter.data.wechatPeerName || '').trim(),
+                wechatRelation: String(__s.editingCharacter.data.wechatRelation || '').trim(),
+                wechatScene: String(__s.editingCharacter.data.wechatScene || '').trim(),
+                wechatPersona: String(__s.editingCharacter.data.wechatPersona || ''),
+                wechatSpeed: ['fast', 'normal', 'slow'].includes(__s.editingCharacter.data.wechatSpeed)
+                    ? __s.editingCharacter.data.wechatSpeed
+                    : 'normal',
                 regexScripts: characterRegexScripts,
                 uiTemplates: (__s.editingCharacter.data.uiTemplates || []).map(template => normalizeUiTemplate({ ...template, scope: 'character' }))
             };

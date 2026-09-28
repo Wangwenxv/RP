@@ -16,4 +16,6 @@
 - 用户在意代码可 review 性与交接文档；大改动要留审计工具与回滚备份。
 
 ## 进行中计划
-- 微信聊天子系统集成（需求与挂点见 docs/ARCHITECTURE.md §7；参考工程 D:\aiops_wwx\test\wechat-chat-agent）。
+- （2026-09-28 已完成）微信聊天子系统集成：25-wechat 模块 + wechat-protocol.js + wechat.css + `.wx-root` 覆盖层；
+  角色级 wechatEnabled 开关；统一时间线 scoped key `wechat_timeline`（跟随剧情分支）；RP↔微信双向衔接。
+  验证：tools/refactor/smoke-wechat.cjs（27 项，全过）。详见 docs/ARCHITECTURE.md §7。

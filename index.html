@@ -86,6 +86,7 @@
     <script>
         document.write('<link rel="stylesheet" href="assets/css/styles.css?v=' + new Date().getTime() + '">');
         document.write('<link rel="stylesheet" href="assets/css/theme.css?v=' + new Date().getTime() + '">');
+        document.write('<link rel="stylesheet" href="assets/css/wechat.css?v=' + new Date().getTime() + '">');
     </script>
 </head>
 <body class="bg-gray-50 text-gray-900 font-sans selection:bg-primary-200 selection:text-primary-900">
@@ -334,6 +335,15 @@
                             <div v-else class="text-white/60 italic drop-shadow-sm">未选择角色卡</div>
                         </div>
                         <div class="flex items-center gap-0">
+                            <button v-if="currentCharacter && currentCharacter.wechatEnabled" @click="openWechat"
+                                class="p-1.5 text-white/70 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+                                title="打开微信">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z">
+                                    </path>
+                                </svg>
+                            </button>
                             <button @click="toggleChatFullscreen"
                                 class="p-1.5 text-white/70 hover:text-white rounded-full hover:bg-white/10 transition-colors"
                                 :title="isChatFullscreen ? '退出全屏' : '全屏聊天'">
@@ -2711,12 +2721,110 @@
 
         <retry-confirm-modal :state="globalConfirmModal"></retry-confirm-modal>
 
+        <!-- ============ 微信子系统：全屏覆盖层（独立 App 观感） ============ -->
+        <div v-if="showWechatPanel && currentCharacter" class="wx-root">
+            <header class="wx-bar">
+                <div class="wx-bar-left">
+                    <button class="wx-back" @click="closeWechat" title="返回">‹</button>
+                    <div class="wx-peer">
+                        <span class="wx-peer-name">{{ wechatPeerName }}</span>
+                        <span class="wx-peer-status">{{ wechatStatusText }}</span>
+                    </div>
+                </div>
+                <div class="wx-bar-right">
+                    <button class="wx-icon-btn" @click="openWechatSettings" title="设置">⚙</button>
+                    <button class="wx-icon-btn" @click="clearWechatTimeline" title="清空记录">🗑</button>
+                </div>
+            </header>
+
+            <main id="wechat-chat-scroll" class="wx-chat" @click="showWechatSettings = false">
+                <template v-for="item in wechatDisplayItems" :key="item.id">
+                    <div v-if="item.kind === 'day'" class="wx-day">{{ item.label }}</div>
+                    <div v-else-if="item.kind === 'system'" class="wx-sys">{{ item.content }}</div>
+                    <div v-else class="wx-row" :class="{ me: item.role === 'user' }">
+                        <img v-if="item.role === 'user' ? user?.avatar : wechatAvatar" class="wx-avatar"
+                            :src="item.role === 'user' ? user?.avatar : wechatAvatar">
+                        <div v-else class="wx-avatar wx-avatar--fallback">
+                            {{ item.role === 'user' ? '我' : (wechatPeerName || '?').charAt(0) }}</div>
+                        <div class="wx-bubble"
+                            :class="{ sticker: item.type === 'sticker', image: item.type === 'image' }">
+                            <img v-if="item.type === 'image'" :src="item.content" alt="图片" loading="lazy">
+                            <span v-else-if="item.type === 'sticker'" class="wx-sticker-inner">{{ item.content }}</span>
+                            <template v-else>{{ item.content }}</template>
+                        </div>
+                    </div>
+                </template>
+                <div v-if="wechatTyping" class="wx-row wx-typing">
+                    <img v-if="wechatAvatar" class="wx-avatar" :src="wechatAvatar">
+                    <div v-else class="wx-avatar wx-avatar--fallback">{{ (wechatPeerName || '?').charAt(0) }}</div>
+                    <div class="wx-bubble"><span class="wx-dot"></span><span class="wx-dot"></span><span
+                            class="wx-dot"></span></div>
+                </div>
+            </main>
+
+            <footer class="wx-composer">
+                <div v-if="wechatPendingImage" class="wx-pending">
+                    <div class="wx-pending-item">
+                        <img :src="wechatPendingImage" alt="待发送图片">
+                        <button class="wx-pending-del" @click="removeWechatPendingImage">✕</button>
+                    </div>
+                </div>
+                <div class="wx-composer-row">
+                    <label class="wx-icon-btn wx-attach" title="发送图片">📎
+                        <input type="file" accept="image/*" class="wx-file-hidden"
+                            @change="handleWechatImageSelection">
+                    </label>
+                    <textarea v-model="wechatInput" rows="1" class="wx-input" placeholder="发消息…"
+                        @keydown.enter.exact.prevent="sendWechatMessage"></textarea>
+                    <button v-if="!isWechatGenerating" class="wx-send"
+                        :disabled="!wechatInput.trim() && !wechatPendingImage"
+                        @click="sendWechatMessage">发送</button>
+                    <button v-else class="wx-send wx-send--stop" @click="stopWechatGeneration">停止</button>
+                </div>
+            </footer>
+
+            <div v-if="showWechatSettings" class="wx-drawer-mask" @click.self="showWechatSettings = false">
+                <aside class="wx-drawer">
+                    <div class="wx-drawer-head">
+                        <h2>微信设置</h2>
+                        <button class="wx-icon-btn" @click="showWechatSettings = false">✕</button>
+                    </div>
+                    <div class="wx-drawer-body">
+                        <label class="wx-field"><span>联系人名字</span>
+                            <input type="text" v-model="wechatSettingsDraft.peerName"></label>
+                        <label class="wx-field"><span>你们的关系 <small>选填</small></span>
+                            <input type="text" v-model="wechatSettingsDraft.relation"
+                                placeholder="网上认识的朋友，认识挺久了"></label>
+                        <label class="wx-field"><span>当前场景 <small>选填</small></span>
+                            <input type="text" v-model="wechatSettingsDraft.scene"
+                                placeholder="凌晨，两人都在摸鱼"></label>
+                        <label class="wx-field"><span>微信人设 <small>留空则用角色卡</small></span>
+                            <textarea rows="6" v-model="wechatSettingsDraft.persona"></textarea></label>
+                        <div class="wx-field">
+                            <span>打字速度</span>
+                            <div class="wx-seg">
+                                <button :class="{ on: wechatSettingsDraft.speed === 'fast' }"
+                                    @click="wechatSettingsDraft.speed = 'fast'">快</button>
+                                <button :class="{ on: wechatSettingsDraft.speed === 'normal' }"
+                                    @click="wechatSettingsDraft.speed = 'normal'">中</button>
+                                <button :class="{ on: wechatSettingsDraft.speed === 'slow' }"
+                                    @click="wechatSettingsDraft.speed = 'slow'">慢</button>
+                            </div>
+                            <small class="wx-hint">决定「对方正在输入…」的停顿长短，越慢越像真人。</small>
+                        </div>
+                        <button class="wx-primary" @click="saveWechatSettings">保存</button>
+                    </div>
+                </aside>
+            </div>
+        </div>
+
     </div>
 
     <script>
         document.write('<script src="assets/js/built-in-content.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/core-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/api-utils.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/wechat-protocol.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/data-services.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/runtime-services.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/update-check.js?v=' + new Date().getTime() + '"><\/script>');
@@ -2746,6 +2854,7 @@
         document.write('<script src="assets/js/app/22-character-io.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/23-lifecycle.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/24-late-helpers.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/25-wechat.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app.js?v=' + new Date().getTime() + '"><\/script>');
     </script>
 </body>

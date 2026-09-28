@@ -260,6 +260,7 @@ const app = createApp({
         __sections.characterIo(__s);
         __sections.lifecycle(__s);
         __sections.lateHelpers(__s);
+        __sections.wechat(__s);
 
         return {
             switchProfile: __s.switchProfile, createNewProfile: __s.createNewProfile, deleteProfile: __s.deleteProfile, userProfiles: __s.userProfiles, activeProfileId: __s.activeProfileId, showProfileDropdown: __s.showProfileDropdown,
@@ -630,7 +631,21 @@ const app = createApp({
                 }
                 __s.showAutoImageGenModal.value = false;
                 __s.saveData();
-            }
+            },
+
+            // 微信子系统（25-wechat.js）
+            showWechatPanel: __s.showWechatPanel, showWechatSettings: __s.showWechatSettings,
+            wechatInput: __s.wechatInput, wechatPendingImage: __s.wechatPendingImage,
+            isWechatGenerating: __s.isWechatGenerating, wechatTyping: __s.wechatTyping,
+            wechatStatusText: __s.wechatStatusText, wechatSettingsDraft: __s.wechatSettingsDraft,
+            wechatPeerName: __s.wechatPeerName, wechatAvatar: __s.wechatAvatar,
+            wechatDisplayItems: __s.wechatDisplayItems,
+            openWechat: __s.openWechat, closeWechat: __s.closeWechat,
+            openWechatSettings: __s.openWechatSettings, saveWechatSettings: __s.saveWechatSettings,
+            clearWechatTimeline: __s.clearWechatTimeline,
+            handleWechatImageSelection: __s.handleWechatImageSelection,
+            removeWechatPendingImage: __s.removeWechatPendingImage,
+            sendWechatMessage: __s.sendWechatMessage, stopWechatGeneration: __s.stopWechatGeneration
         };
     }
 });

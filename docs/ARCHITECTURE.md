@@ -19,12 +19,13 @@
 | 1 | `assets/js/built-in-content.js` | `RPHubBuiltinContent` / `RPHubBuiltinPresets` / `RPHubLatestUpdate` | 默认预设、各模式提示词、画师串、更新公告 |
 | 2 | `assets/js/core-utils.js` | `RPHubUtils` / `RPHubCardUtils` / `RPHubConfig` | 通用工具、角色卡处理、基础配置（API 提供商、主动工具常量、UI 选项） |
 | 3 | `assets/js/api-utils.js` | `RPHubApiUtils` / `RPHubApiClient` | API 端点拼接、OpenAI 兼容请求（流式） |
+| 3.5 | `assets/js/wechat-protocol.js` | `RPHubWeChatProtocol` | 微信分段回复协议：JSON 分段 prompt + 容错解析（见 §7） |
 | 4 | `assets/js/data-services.js` | `RPHubStorage` / `RPHubMemoryUtils` / `RPHubContextUtils` / `RPHubStoryBranches` / `RPHubUiTemplateUtils` | IndexedDB 存储层、记忆/向量工具、上下文组装、剧情分支、UI 模板工具 |
 | 5 | `assets/js/runtime-services.js` | `RPHubMessageRenderer` / `RPHubComposables` | 消息渲染器、存储统计与 token 用量两个 composable |
 | 6 | `assets/js/update-check.js` | `RPHubUpdateCheck` | 更新检查 |
 | 7 | `assets/js/ui-components.js` | `RPHubCustomSelect` / `RPHubLayoutComponents` / `RPHubComponents` | 全部弹窗/导航/卡片等 Vue 组件 |
-| 8 | `assets/js/app/*.js`（24 个） | `RPHubAppSections.<模块名>` | **应用模块**（原 app.js setup() 的拆分，见 §3） |
-| 9 | `assets/js/app.js` | — | 引导：全局常量解构、`RollingText` 组件、createApp、按序调用 24 个模块、mount |
+| 8 | `assets/js/app/*.js`（25 个） | `RPHubAppSections.<模块名>` | **应用模块**（原 app.js setup() 的拆分，见 §3） |
+| 9 | `assets/js/app.js` | — | 引导：全局常量解构、`RollingText` 组件、createApp、按序调用 25 个模块、mount |
 
 另有 `assets/js/presence.js`（`RPHubPresence`，在线状态，配合 `presence-server/` 使用，主页未加载）。
 
@@ -35,7 +36,7 @@
 ## 3. App 模块模式（`__s` 约定）
 
 原来的 `app.js` 是一个 8560 行文件，`setup()` 里有 662 个顶层声明。
-现在拆成 `assets/js/app/01..24-*.js` 共 24 个**模块函数**，约定如下：
+现在拆成 `assets/js/app/01..25-*.js` 共 25 个**模块函数**（`25-wechat.js` 为后加的微信子系统，见 §7），约定如下：
 
 ```js
 // assets/js/app/XX-*.js
@@ -96,24 +97,68 @@ index.html 与 app.js 的调用清单各加一行），return 里暴露模板需
 单页多视图：`currentView`（`'chat' | 'characters' | 'settings' | ...`）切换 `index.html` 中的大块模板。
 模态弹窗可见性都是 `showXxx` ref。DOM 模板引用：`chatContainer`、`inputBox`、`messageElements` 等模板 ref。
 
-## 7. 扩展挂点：微信聊天子系统（规划）
+## 7. 微信聊天子系统（已实现）
 
-需求：角色扮演 ↔ 拟真微信聊天双场景互通，共享角色记忆，按时间线无缝衔接。建议挂点：
+需求：角色扮演 ↔ 拟真微信聊天双场景互通，共享角色记忆，按时间线无缝衔接。
+微信 agent 参考工程：`D:\aiops_wwx\test\wechat-chat-agent`。
 
-- **新视图**：`currentView` 增加 `'wechat'`（或全屏覆盖层 `showWechatPanel`），UI 移植
-  wechat-chat-agent 的 `public/`（样式改写为 DaisyUI 类或独立 CSS 文件 `assets/css/wechat.css`）。
-- **角色级开关**：`editingCharacter.data.wechatEnabled`（编辑器 `20-character-crud.js` 的表单加一个勾选），
-  聊天顶栏按 `currentCharacter.wechatEnabled` 显示"微信"入口按钮。
-- **统一时间线（核心设计）**：新增模块 `25-wechat.js`，把 RP 消息与微信消息写入**同一条角色作用域时间线**
-  （每条 `{ ts, channel: 'rp' | 'wechat', role, content }`，存 `setScopedStoredValue`）。
-  进微信时：system prompt = 角色卡 + "你们刚才在以 roleplay 方式互动" + 最近 RP 摘要/原文（可复用
-  `buildConversationTurnSnapshot` 与经典记忆）；回 RP 时：把微信段改写成第三人称剧情片段注入上下文
-  （"后来你们在微信上聊了这些：……"）。两侧永远不需要整段复制历史，只按需取窗口。
-- **微信侧生成**：复用 `requestChatCompletion` + 微信 agent 的 JSON 分段协议
-  （`{"messages":[{type,content}]}`，见 wechat-chat-agent 的 `public/lib/protocol.js`）与打字节奏
-  （`typingDuration`、"对方正在输入…"逐条重起）。
-- **注意**：微信侧不要再触发 RP 的记忆抽取/世界书/正则管线，避免互相污染；
-  微信消息的记忆抽取可作为独立开关复用 `16-memory-extraction.js`。
+### 7.1 文件与挂点
+
+| 文件 | 职责 |
+| --- | --- |
+| `assets/js/wechat-protocol.js` | 微信分段协议（`window.RPHubWeChatProtocol`）：JSON 分段 prompt + 容错解析（代码块/think/纯文本降级） |
+| `assets/js/app/25-wechat.js` | 应用模块 `wechat`：统一时间线、进出微信、分段生成、打字节奏 |
+| `assets/css/wechat.css` | 全屏覆盖层样式（`.wx-*` 前缀，挂在 `.wx-root` 下，不污染既有样式） |
+| `index.html` | `.wx-root` 全屏覆盖层模板；聊天顶栏「微信」入口按钮（`currentCharacter.wechatEnabled` 时显示） |
+
+加载顺序：`wechat-protocol.js` 紧随 `api-utils.js`（在 `data-services.js` 前）；
+`app/25-wechat.js` 在 `24-late-helpers.js` 之后、`app.js` 之前。
+
+### 7.2 角色级开关与字段
+
+角色卡新增字段（`20-character-crud.js` 新建/保存时归一化，`ui-components.js` 的角色编辑器
+「基础」页有「开启微信」开关）：
+
+- `wechatEnabled`（布尔，缺省 false）：聊天顶栏是否显示「微信」入口。
+- `wechatPeerName` / `wechatRelation` / `wechatScene` / `wechatPersona`（微信侧人设，留空回退角色卡 name/personality/description）。
+- `wechatSpeed`：`'fast' | 'normal' | 'slow'`，决定打字停顿长短。
+
+### 7.3 统一时间线（核心）
+
+`25-wechat.js` 把 RP 消息与微信消息写入**同一条角色作用域时间线**，存在 scoped key
+`wechat_timeline`（已在 `05-state-editing-export.js` 的 `CHARACTER_SCOPED_STORAGE_NAMES` 注册，
+随角色删除/存储清理一并处理）。**粒度跟随剧情分支**（scope = `getCurrentStoryBranchScopeId()`），
+切分支时微信记录一起切，不会串戏。
+
+每条：`{ id, ts, channel: 'rp' | 'wechat', role, type, content }`。
+
+- **RP → 时间线**：`generateResponse` 的 `finally` 调 `recordRpMessages()`，按 `rpIndex` 只追加新消息
+  （角色未开微信时为空操作）。
+- **进微信**（`openWechat`）：读该 scope 的时间线，把已有 RP 历史补齐；
+  system prompt = 微信协议 + 角色微信人设 + **RP 近况摘要**（`buildRpDigestForWechat`，
+  复用 `buildConversationTurnSnapshot` 取最近若干轮）；历史只取 `channel==='wechat'` 段。
+- **回 RP**（`15-generate.js`）：上下文组装后调 `appendWechatDigestToMessages`，把
+  「最后一次 RP 之后」的微信段改写成第三人称剧情片段（`buildWechatRpDigest`），
+  附到最新一条 user 消息**前面**（保留用户输入原文）。
+
+两侧永远不整段复制历史，只按需取窗口；因此不会互相膨胀。
+
+### 7.4 微信侧生成
+
+复用 `requestTrackedChatCompletion`（RP 当前 `settings` 的 URL/Key/模型）+ 微信 agent 的
+JSON 分段协议与打字节奏：逐条 `typingDuration`（基线 + 字数×每字耗时 + 抖动，12% 走神）、
+每条之间重起「对方正在输入…」、等待期状态栏跑计时器。
+
+**不触发** RP 的世界书/正则/记忆抽取/UI 模板管线，避免互相污染。微信图片经 `compressImage`
+压到长边 ≤1024 后作为 `image_url` 多模态 part 发送。
+
+### 7.5 验证
+
+`tools/refactor/smoke-wechat.cjs`（无头 Edge，`node tools/refactor/smoke-wechat.cjs`）覆盖：
+协议解析 6 例、建角色开微聊、入口按钮显隐、覆盖层渲染、分段气泡（含表情）、
+IndexedDB 持久化回读、以及**双向衔接**（黑盒拦截真实请求体，验证进微信带 RP 摘要、
+回 RP 注入微信剧情段且保留原文）、角色编辑器开关。`tools/refactor/shot-wechat.cjs` 生成覆盖层截图。
+
 
 ## 8. 已知遗留
 
