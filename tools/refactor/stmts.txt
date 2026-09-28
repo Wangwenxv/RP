@@ -1,0 +1,661 @@
+  0 L 199-199  Vari cardUtils
+  1 L 200-212  Vari fontFamilyOptions,fontSizeOptions,imageGenCountOptions,image
+  2 L 213-213  Vari ACTIVE_TOOL_KEYWORD_TYPE
+  3 L 214-214  Vari ACTIVE_TOOL_WEB_TYPE
+  4 L 215-215  Vari ACTIVE_TOOL_RANDOM_TYPE
+  5 L 216-216  Vari ACTIVE_TOOL_MIN_RESULT_COUNT
+  6 L 217-217  Vari ACTIVE_TOOL_DEFAULT_RESULT_COUNT
+  7 L 218-218  Vari ACTIVE_TOOL_MAX_RESULT_COUNT
+  8 L 219-219  Vari ACTIVE_TOOL_RESULT_COUNT_VERSION
+  9 L 220-220  Vari ACTIVE_TOOL_MAX_AUTO_CONTINUE
+ 10 L 221-221  Vari ACTIVE_TOOL_AGGRESSIVENESS_ADAPTIVE
+ 11 L 222-222  Vari ACTIVE_TOOL_AGGRESSIVENESS_OPTIONS
+ 12 L 223-223  Vari ACTIVE_TOOL_REMINDERS
+ 13 L 224-224  Vari ACTIVE_TOOL_TAVILY_ENDPOINT
+ 14 L 225-225  Vari ACTIVE_TOOL_TAVILY_EXTRACT_ENDPOINT
+ 15 L 226-226  Vari ACTIVE_TOOL_TAVILY_SEARCH_DEPTH
+ 16 L 227-227  Vari ACTIVE_TOOL_TAVILY_EXTRACT_MAX_URLS
+ 17 L 228-228  Vari getDefaultActiveToolDefinitions
+ 18 L 231-237  Vari globalConfirmModal   ### State
+ 19 L 238-238  Vari updateModalRef
+ 20 L 240-256  Vari showVueConfirmModal
+ 21 L 258-258  Vari currentView
+ 22 L 259-259  Vari isNavigationOpen
+ 23 L 260-260  Vari showDescriptionPanel
+ 24 L 261-261  Vari showModelSelector
+ 25 L 262-262  Vari modelSelectionTarget
+ 26 L 263-263  Vari showChatModelSelector
+ 27 L 264-264  Vari showCharacterEditor
+ 28 L 265-265  Vari showPresetEditor
+ 29 L 266-266  Vari showUiTemplateEditor
+ 30 L 267-267  Vari uiTemplateUpdateStatus
+ 31 L 268-268  Vari uiTemplateUpdateSeq
+ 32 L 269-269  Vari uiTemplateUpdateAbortController
+ 33 L 270-270  Vari showRegexEditor
+ 34 L 271-271  Vari showWorldInfoEditor
+ 35 L 272-272  Vari showActiveToolEditor
+ 36 L 273-273  Vari showUserSetupModal
+ 37 L 274-274  Vari showAutoImageGenModal
+ 38 L 276-276  Vari activeToolMessages
+ 39 L 277-277  Vari tempUserSetup
+ 40 L 278-278  Vari characterDisplayLimit
+ 41 L 279-279  Vari hasOpenedCharacterManager
+ 42 L 280-280  Vari isDesktopCharacterLayout
+ 43 L 283-283  Vari quotaValue
+ 44 L 284-284  Vari quotaLoading
+ 45 L 285-285  Vari quotaError
+ 46 L 287-316  Vari fetchQuota
+ 47 L 318-318  Vari showConfirmModal
+ 48 L 319-319  Vari confirmMessage
+ 49 L 320-320  Vari confirmCallback
+ 50 L 321-321  Vari showMemoryBackfillModal
+ 51 L 322-322  Vari isGenerating
+ 52 L 323-323  Vari isRemoteGenerating
+ 53 L 324-324  Vari remoteEstimatedTime
+ 54 L 325-325  Vari isReceiving
+ 55 L 326-326  Vari isThinking
+ 56 L 327-327  Vari activeToolContinuationMessageId
+ 57 L 328-328  Vari activeToolContinuationToolCallId
+ 58 L 329-329  Vari activeToolContinuationHasResponse
+ 59 L 330-330  Vari activeToolHandoffPending
+ 60 L 331-331  Vari activeToolQueueRunning
+ 61 L 332-332  Vari activeToolContinuationPending
+ 62 L 333-333  Vari activeToolQueueAbortController
+ 63 L 334-334  Vari abortController
+ 64 L 335-335  Vari userInput
+ 65 L 336-336  Vari pendingCardInteraction
+ 66 L 337-337  Vari pendingChatImages
+ 67 L 338-338  Vari pendingChatImageReadCount
+ 68 L 339-339  Vari chatImageSelectionEpoch
+ 69 L 340-342  Vari isRecognizingImages
+ 70 L 343-343  Vari modelSearchQuery
+ 71 L 344-344  Vari activeModelTag
+ 72 L 345-345  Vari characterSearchQuery
+ 73 L 346-346  Vari availableModels
+ 74 L 347-347  Vari toasts
+ 75 L 348-348  Vari toastIdSeed
+ 76 L 349-349  Vari chatContainer
+ 77 L 350-350  Vari isChatFullscreen
+ 78 L 351-351  Vari isMobileKeyboardOpen
+ 79 L 352-352  Vari inputBox
+ 80 L 353-353  Vari messageElements
+ 81 L 354-354  Vari mobileViewportRaf
+ 82 L 355-355  Vari mobileKeyboardBlurTimer
+ 83 L 356-356  Vari lastAppliedMobileViewportHeight
+ 84 L 357-357  Vari lastAppliedMobileKeyboardInset
+ 85 L 358-358  Vari lastAppliedMobileBackgroundHeight
+ 86 L 361-361  Vari scrollRevealObserver
+ 87 L 362-377  Vari initScrollReveal
+ 88 L 380-389  Expr 
+ 89 L 392-401  Vari autoResizeInput
+ 90 L 403-405  Expr 
+ 91 L 407-410  Vari isMobileViewport
+ 92 L 412-414  Vari toggleNavigation
+ 93 L 416-418  Vari closeNavigation
+ 94 L 420-428  Vari applyMobileVisualViewportHeight
+ 95 L 430-435  Vari applyMobileKeyboardInset
+ 96 L 437-447  Vari applyMobileBackgroundHeight
+ 97 L 449-485  Vari syncMobileVisualViewport
+ 98 L 487-493  Vari scheduleMobileVisualViewportSync
+ 99 L 495-500  Vari handleChatInputFocus
+100 L 502-508  Vari handleChatInputBlur
+101 L 510-513  Vari handleMobileViewportResize
+102 L 514-518  Vari handleMobileOrientationChange
+103 L 521-521  Vari apiStatus
+104 L 522-522  Vari apiLatency
+105 L 523-523  Vari imageGenStatus
+106 L 524-524  Vari imageGenLatency
+107 L 526-532  Vari user
+108 L 533-534  Vari replaceUserNamePlaceholder
+109 L 535-535  Vari buildUserInfoPrompt
+110 L 536-536  Vari getCurrentCharacterPrompt
+111 L 538-538  Vari userProfiles
+112 L 539-539  Vari activeProfileId
+113 L 540-540  Vari showProfileDropdown
+114 L 542-557  Expr 
+115 L 559-559  Vari MAX_CONTEXT_SIZE
+116 L 561-597  Vari settings
+117 L 598-598  Vari v5UnsupportedImageStyles
+118 L 599-601  Vari availableImageStyleOptions
+119 L 602-603  Vari getImageModelName
+120 L 604-604  Vari normalizeFontFamily
+121 L 605-608  Vari normalizeFontSize
+122 L 609-611  Vari applyFontFamily
+123 L 612-612  Expr 
+124 L 614-614  Vari showApiProviderSelector
+125 L 615-615  Vari selectedApiProviderId
+126 L 616-621  Vari customApiProviderOption
+127 L 622-622  Vari customApiProviderOptions
+128 L 623-623  Vari isCustomApiProviderId
+129 L 624-624  Vari normalizeApiProviderUrl
+130 L 625-625  Vari getApiProviderById
+131 L 626-629  Vari getApiProviderByUrl
+132 L 630-639  Vari syncCurrentApiKeyToProvider
+133 L 640-676  Vari normalizeApiProviderSettings
+134 L 677-682  Vari selectedApiProvider
+135 L 683-683  Vari isCustomApiProvider
+136 L 684-693  Vari selectApiProvider
+137 L 694-694  Expr 
+138 L 696-704  Expr 
+139 L 706-710  Expr 
+140 L 712-725  Vari syncSettingsToGenerator
+141 L 727-727  Vari workshopImportPending
+142 L 728-728  Vari squareImportPending
+143 L 729-729  Vari getSquareFrame
+144 L 731-825  Expr 
+145 L 827-844  Expr 
+146 L 847-849  Expr 
+147 L 851-851  Vari currentModelMode
+148 L 852-852  Vari isGeminiModel
+149 L 853-853  Vari isTruncationEnabled
+150 L 854-870  Vari modelMode
+151 L 871-878  Vari reasoningEffortOptions
+152 L 879-882  Vari reasoningEffortSlider
+153 L 883-883  Vari reasoningEffortLabel
+154 L 884-888  Vari chatModelSlots
+155 L 889-893  Vari selectChatModelSlot
+156 L 896-896  Vari characters
+157 L 897-897  Vari showAddCharacterMenu
+158 L 898-898  Vari currentCharacterIndex
+159 L 899-899  Vari switchingCharacterIndex
+160 L 901-901  Vari chatHistory
+161 L 902-902  Vari CHAT_RENDER_INITIAL_LIMIT
+162 L 903-903  Vari CHAT_RENDER_BATCH_SIZE
+163 L 904-904  Vari chatRenderLimit
+164 L 905-905  Vari isLoadingEarlierChatMessages
+165 L 906-906  Vari isChatTopUnlockArmed
+166 L 907-907  Vari lastActiveCharacterId
+167 L 908-913  Func hasActiveToolContinuationWork
+168 L 915-923  Vari hasActiveToolInlineWork
+169 L 924-924  Vari isConversationBusy
+170 L 926-926  Vari presets
+171 L 928-929  Vari isPresetEnabled
+172 L 930-931  Vari isStoryPanelsEnabled
+173 L 932-934  Vari normalizePresetRole
+174 L 935-941  Vari normalizePreset
+175 L 942-972  Vari syncBuiltinPreset
+176 L 973-976  Vari getPresetRoleLabel
+177 L 977-980  Vari getPresetRoleDisplayLabel
+178 L 981-983  Vari getPresetRoleBadgeClass
+179 L 984-984  Vari blockedStyleSentencePattern
+180 L 985-985  Vari standaloneWordCountSentencePattern
+181 L 986-986  Vari paleFingerClausePattern
+182 L 987-987  Vari blockedStyleClausePattern
+183 L 988-988  Vari blockedStyleWordPattern
+184 L 989-989  Vari quotedDialoguePattern
+185 L 990-990  Vari standaloneRenderedContentPattern
+186 L 991-991  Vari isStandaloneRenderedContent
+187 L 992-992  Vari loggedBlockedStyleFragments
+188 L 993-993  Vari openStyleFilterMessageKey
+189 L 994-994  Vari getStyleFilterMessageKey
+190 L 995-997  Vari isStyleFilterDetailsOpen
+191 L 998-1001 Vari toggleStyleFilterDetails
+192 L1002-1007 Vari normalizeStyleFilterHit
+193 L1008-1008 Vari styleFilterHighlightPattern
+194 L1009-1020 Vari getStyleFilterHitSegments
+195 L1021-1054 Vari filterBlockedStyleText
+196 L1055-1059 Vari getPostprocessedChatMessages
+197 L1060-1062 Vari buildConversationTurnSnapshot
+198 L1064-1066 Vari getConversationTurnAtIndex
+199 L1068-1071 Vari getLatestCompleteConversationTurn
+200 L1073-1087 Vari latestDeletableMessageIndexes
+201 L1088-1088 Vari canDeleteMessage
+202 L1090-1090 Vari regexScripts
+203 L1091-1091 Vari globalRegexScripts
+204 L1092-1092 Vari LEGACY_USER_REGEX_NAME
+205 L1093-1093 Vari isLegacyUserRegex
+206 L1094-1102 Vari removeLegacyUserRegex
+207 L1103-1103 Vari globalWorldInfo
+208 L1104-1104 Vari worldInfo
+209 L1105-1105 Vari globalUiTemplates
+210 L1106-1106 Vari recentGenerationTimes
+211 L1107-1107 Vari currentWaitTime
+212 L1108-1108 Vari waitTimer
+213 L1110-1110 Vari SUMMARY_EMBEDDING_BATCH_SIZE   ### Memory System State
+214 L1111-1111 Vari SUMMARY_RECALL_LIMIT
+215 L1112-1112 Vari SUMMARY_RECALL_MIN_SIMILARITY
+216 L1113-1113 Vari CLASSIC_MEMORY_MIN_CONCURRENCY
+217 L1114-1114 Vari CLASSIC_MEMORY_MAX_CONCURRENCY
+218 L1115-1115 Vari CLASSIC_MEMORY_DEFAULT_CONCURRENCY
+219 L1116-1116 Vari CLASSIC_SECONDARY_KEEP_TURNS
+220 L1117-1117 Vari CLASSIC_SECONDARY_GROUP_SIZE
+221 L1118-1118 Vari MEMORY_MODE_ENHANCED
+222 L1119-1119 Vari MEMORY_MODE_CLASSIC
+223 L1120-1120 Vari SUMMARY_KEEP_FLOORS_MIN
+224 L1121-1121 Vari SUMMARY_KEEP_FLOORS_MAX
+225 L1122-1122 Vari SUMMARY_KEEP_FLOORS_DEFAULT
+226 L1123-1123 Vari LIST_PAGE_SIZE
+227 L1124-1124 Vari classicMemories
+228 L1125-1125 Vari classicMemoryPage
+229 L1126-1133 Vari memorySettings
+230 L1134-1134 Vari isClassicBatchExtracting
+231 L1135-1135 Vari memoryBackfillProgress
+232 L1136-1136 Vari retryingClassicMemoryId
+233 L1137-1137 Vari _isApplyingCharacterScopedData
+234 L1138-1138 Vari _classicMemoriesLoaded
+235 L1139-1139 Vari _characterSwitchEpoch
+236 L1140-1140 Vari _characterSwitchSavePromise
+237 L1141-1141 Vari _initComplete
+238 L1144-1148 Vari normalizeActiveToolAggressiveness   ### Active Tool System State
+239 L1149-1155 Vari getActiveToolAggressiveness
+240 L1156-1158 Vari getActiveToolAggressivenessLabel
+241 L1159-1159 Vari getActiveToolLatestUserReminder
+242 L1160-1163 Vari normalizeActiveToolAggressivenessSettings
+243 L1164-1164 Vari activeTools
+244 L1166-1170 Vari normalizeKeepFloors
+245 L1172-1176 Vari normalizeClassicMemoryConcurrency
+246 L1178-1198 Vari normalizeMemorySettings
+247 L1200-1208 Vari normalizeActiveToolCallName
+248 L1210-1211 Vari normalizeActiveToolBaseCallName
+249 L1213-1213 Vari getActiveToolResultCountMin
+250 L1215-1215 Vari getActiveToolResultCountMax
+251 L1217-1259 Vari normalizeActiveTool
+252 L1261-1285 Vari normalizeActiveTools
+253 L1287-1295 Vari estimatedGenerationTime
+254 L1297-1297 Vari showWorldInfoSettings
+255 L1298-1298 Vari showMemorySettings
+256 L1299-1299 Vari settingsHelpTopic
+257 L1300-1300 Vari showActiveToolSettings
+258 L1301-1301 Vari showUiTemplateSettings
+259 L1302-1305 Vari worldInfoSettings
+260 L1308-1308 Vari editingCharacter
+261 L1309-1309 Vari editorTab
+262 L1310-1310 Vari isBatchDeleteMode
+263 L1311-1311 Vari characterGridView
+264 L1312-1312 Vari characterDeck
+265 L1313-1313 Vari useCharacterDeck
+266 L1314-1314 Vari selectedCharacterIndices
+267 L1315-1315 Vari editingPreset
+268 L1316-1316 Vari editingUiTemplate
+269 L1317-1317 Vari editingRegex
+270 L1318-1318 Vari editingWorldInfo
+271 L1319-1319 Vari worldInfoKeysText
+272 L1320-1320 Vari editingActiveTool
+273 L1322-1322 Vari showContextViewerModal
+274 L1323-1323 Vari showStoryBranchModal
+275 L1324-1324 Vari showStoryBranchNameEditor
+276 L1325-1325 Vari storyBranchNameDraft
+277 L1326-1326 Vari storyBranches
+278 L1327-1327 Vari activeStoryBranchId
+279 L1328-1328 Vari storyBranchSwitching
+280 L1329-1329 Vari selectedStoryBranchId
+281 L1330-1330 Vari storyRouteMapDragging
+282 L1331-1331 Vari storyRouteDragState
+283 L1332-1332 Vari suppressStoryRouteNodeClick
+284 L1333-1333 Vari lastContextMessages
+285 L1334-1334 Vari lastTriggeredWorldInfos
+286 L1335-1338 Vari lastContextTotalLength
+287 L1339-1340 Vari lastContextFloorCount
+288 L1341-1341 Vari CHARACTER_SCOPED_STORAGE_NAMES
+289 L1342-1378 Vari clearTokenUsageHistory,displayedTokenUsageHistory,filteredTo
+290 L1379-1385 Vari requestTrackedChatCompletion
+291 L1386-1408 Vari cleanupUnusedStorage,formatStorageSize,refreshStorageStats,s
+292 L1410-1410 Vari showExportModal
+293 L1411-1411 Vari exportType
+294 L1412-1412 Vari exportItems
+295 L1413-1413 Vari selectedExportIndices
+296 L1416-1416 Vari showCharacterExportModal
+297 L1417-1417 Vari characterToExportIndex
+298 L1419-1422 Vari openCharacterExportModal
+299 L1424-1436 Vari confirmCharacterExport
+300 L1439-1439 Vari isGeneratorLoading
+301 L1440-1440 Vari generatorUrl
+302 L1442-1445 Vari onGeneratorLoad
+303 L1448-1448 Vari isSquareLoading
+304 L1449-1449 Vari squareUrl
+305 L1451-1454 Vari onSquareLoad
+306 L1457-1457 Vari isNovelLoading
+307 L1458-1458 Vari novelUrl
+308 L1460-1462 Vari onNovelLoad
+309 L1465-1465 Vari sortableItemKeys
+310 L1466-1466 Vari sortableItemSequence
+311 L1467-1470 Vari getSortableItemKey
+312 L1471-1471 Vari activeSortable
+313 L1472-1502 Vari initializeSortableList
+314 L1505-1531 Expr 
+315 L1535-1537 Vari getStoryBranchScopeId   ### Character-scoped persistence
+316 L1538-1538 Vari getCurrentStoryBranchScopeId
+317 L1540-1540 Vari chatHistorySaveTimer
+318 L1541-1541 Vari chatHistorySaveQueue
+319 L1542-1542 Vari lastChatSaveErrorToastAt
+320 L1544-1548 Vari isRetryableChatStorageError
+321 L1550-1559 Vari notifyChatSaveFailure
+322 L1561-1593 Vari saveChatHistoryNow
+323 L1595-1602 Vari scheduleChatHistorySave
+324 L1604-1610 Vari flushPendingChatHistorySave
+325 L1612-1616 Vari saveMemorySettingsNow
+326 L1618-1625 Vari saveClassicMemoriesNow
+327 L1627-1630 Vari saveCharactersNow
+328 L1632-1672 Vari saveData
+329 L1674-1692 Vari saveConversationMutationNow
+330 L1695-1695 Vari _memorySettingsSaveTimer
+331 L1696-1701 Expr 
+332 L1703-1863 Vari loadData
+333 L1866-1881 Expr 
+334 L1883-1897 Expr 
+335 L1899-1906 Expr 
+336 L1909-1922 Vari isAutoImageGenEnabled
+337 L1924-1926 Vari showAutoImageGenToggleToast
+338 L1928-1933 Vari setAutoImageGenEnabled
+339 L1935-1937 Vari toggleAutoImageGen
+340 L1939-1947 Vari setWorldInfoEnabled
+341 L1949-1949 Vari generatedImageTasks
+342 L1950-1950 Vari generatedImageObserver
+343 L1952-1959 Vari fetchImageJobJson
+344 L1961-1999 Vari renderGeneratedImageJob
+345 L2001-2046 Vari startGeneratedImageTask
+346 L2048-2055 Vari ensureGeneratedImageProgressUi
+347 L2057-2081 Vari loadGeneratedImageCard
+348 L2083-2090 Vari hydrateGeneratedImages
+349 L2092-2102 Expr 
+350 L2104-2163 Vari handleGeneratedImageReroll
+351 L2165-2212 Vari updateImageGenRegexState
+352 L2214-2226 Expr 
+353 L2228-2233 Expr 
+354 L2235-2239 Expr 
+355 L2241-2249 Expr 
+356 L2251-2256 Expr 
+357 L2258-2260 Expr 
+358 L2263-2269 Vari debounce
+359 L2272-2274 Vari debouncedSave
+360 L2275-2277 Vari debouncedCharacterSave
+361 L2278-2278 Vari suspendCharacterAutoSave
+362 L2281-2291 Expr 
+363 L2292-2295 Expr 
+364 L2299-2302 Expr 
+365 L2305-2307 Vari currentCharacter   ### Computed
+366 L2308-2311 Vari scopeOptions
+367 L2313-2315 Vari normalizeRegexScript
+368 L2317-2319 Vari toRegexExportEntry
+369 L2321-2328 Vari combineRegexScriptsForCharacter
+370 L2330-2334 Vari finishApplyingCharacterScopedData
+371 L2336-2339 Vari toUiTemplateExportEntry
+372 L2341-2348 Vari ensureCurrentUiTemplates
+373 L2350-2355 Vari ensureGlobalUiTemplates
+374 L2357-2357 Vari getUiTemplateListByScope
+375 L2359-2364 Vari currentUiTemplates
+376 L2365-2365 Vari activeUiTemplates
+377 L2366-2368 Vari isUiTemplateAnalysisEnabled
+378 L2370-2378 Vari handleUiTemplateClick
+379 L2380-2391 Vari renderEditingUiTemplatePreview
+380 L2393-2393 Vari getLastAssistantMessage
+381 L2394-2397 Vari summarizeUiTemplateFailure
+382 L2398-2414 Vari buildMainModelUiTemplateUpdatePrompt
+383 L2416-2479 Vari applyMainModelUiTemplateUpdates
+384 L2481-2525 Vari appendPendingUiTemplateCorrection
+385 L2527-2535 Vari removeOrphanedUiTemplateCorrections
+386 L2537-2556 Vari attachUiTemplateBlocksToLastAssistant
+387 L2558-2561 Vari getAssistantTurnAtIndex
+388 L2563-2578 Vari buildUiTemplateStateAtTurn
+389 L2580-2580 Vari UI_TEMPLATE_CONTEXT_OPEN_TAG
+390 L2581-2581 Vari UI_TEMPLATE_CONTEXT_CLOSE_TAG
+391 L2583-2585 Vari stripUiTemplateContextInjection
+392 L2587-2589 Vari stripNextResponsePrompt
+393 L2591-2617 Vari buildUiTemplateContextSystemPrompt
+394 L2619-2631 Vari rebuildUiTemplateStateFromLogs
+395 L2633-2669 Vari pruneUiTemplateChangesFromTurn
+396 L2671-2682 Vari resetUiTemplateRuntimeState
+397 L2684-2686 Vari getUiTemplateRuntimeKey
+398 L2688-2691 Vari getUiTemplatesForRuntime
+399 L2693-2708 Vari saveGlobalUiTemplateRuntimeForCharacter
+400 L2710-2723 Vari loadGlobalUiTemplateRuntimeForCharacter
+401 L2725-2728 Vari getCharacterFavoriteTime
+402 L2730-2730 Vari isCharacterFavorite
+403 L2732-2755 Vari filteredCharacters
+404 L2757-2767 Vari displayedCharacters
+405 L2769-2771 Vari loadMoreCharacters
+406 L2773-2776 Vari resetChatRenderWindow
+407 L2778-2778 Vari hiddenChatMessageCount
+408 L2780-2786 Vari displayedChatMessages
+409 L2788-2802 Vari getChatScrollAnchor
+410 L2804-2829 Vari restoreChatScrollAnchor
+411 L2831-2858 Vari loadEarlierChatMessages
+412 L2860-2871 Vari handleChatScroll
+413 L2874-2876 Expr 
+414 L2878-2878 Vari conversationBodyLength
+415 L2879-2881 Vari chatRoundStats
+416 L2882-2884 Vari currentStoryBranch
+417 L2885-2891 Vari storyRouteMap
+418 L2892-2895 Vari selectedStoryRouteNode
+419 L2896-2898 Vari selectedStoryRouteCanDelete
+420 L2899-2914 Vari startStoryRouteDrag
+421 L2915-2930 Vari moveStoryRouteDrag
+422 L2931-2943 Vari endStoryRouteDrag
+423 L2944-2947 Vari handleStoryRouteNodeClick
+424 L2949-2949 Vari isSecondaryClassicMemory
+425 L2950-2955 Vari getClassicMemoryTurnRange
+426 L2956-2959 Vari getClassicSecondaryMemoryMarker
+427 L2961-2981 Vari buildClassicMemoryLookup
+428 L2983-2989 Vari findClassicMemoryForTurn
+429 L2991-2999 Vari findSecondaryClassicMemoryForTurn
+430 L3001-3050 Vari summaryCompressedBodyLength
+431 L3051-3057 Vari summaryCompressionRate
+432 L3059-3082 Vari modelTags
+433 L3084-3105 Vari filteredModels
+434 L3107-3112 Vari getCharacterWICount
+435 L3114-3119 Vari getCharacterRegexCount
+436 L3124-3130 Vari showToast   ### Methods
+437 L3133-3139 Vari yieldToUi
+438 L3141-3145 Vari confirmAction
+439 L3147-3155 Vari runConfirmCallback
+440 L3157-3163 Vari handleConfirm
+441 L3165-3169 Vari handleCancel
+442 L3173-3182 Vari stripDisabledImageGenContext
+443 L3183-3260 Vari processRegex
+444 L3261-3271 Vari clearMessageRenderCaches,contentUsesHtmlFrame,renderMarkdown
+445 L3272-3274 Expr 
+446 L3276-3281 Vari messageUsesHtmlFrame
+447 L3283-3288 Vari messageHasUiTemplateBlocks
+448 L3290-3295 Vari messageHasPendingUiTemplate
+449 L3297-3307 Vari messageUsesWideLayout
+450 L3309-3315 Vari collapseNativeReasoning
+451 L3317-3325 Vari appendAssistantResponseError
+452 L3327-3329 Vari collapseActiveNativeReasoning
+453 L3332-3348 Vari fetchModels
+454 L3350-3359 Vari openModelSelector
+455 L3361-3375 Vari selectQuickModels
+456 L3377-3400 Vari selectModel
+457 L3402-3421 Vari checkConnectionStatus
+458 L3423-3431 Vari checkApiStatus
+459 L3433-3441 Vari checkImageGenStatus
+460 L3443-3447 Vari checkAllStatuses
+461 L3449-3454 Vari createAbortReason
+462 L3455-3458 Vari abortSafely
+463 L3461-3482 Vari markActiveToolInlineWorkCancelled
+464 L3484-3495 Vari stopGeneration
+465 L3497-3503 Vari waitForConversationIdle
+466 L3505-3505 Vari MAX_CHAT_IMAGES
+467 L3506-3521 Vari getMessageImageDescriptionText
+468 L3522-3524 Vari appendMessageImageDescriptions
+469 L3525-3528 Vari clearPendingChatImages
+470 L3529-3531 Vari clearPendingCardInteraction
+471 L3532-3534 Vari removePendingChatImage
+472 L3535-3540 Vari readFileAsDataUrl
+473 L3541-3577 Vari recognizeChatImage
+474 L3578-3588 Vari requestChatImageSelection
+475 L3589-3627 Vari handleChatImageSelection
+476 L3629-3672 Vari sendMessage
+477 L3674-3679 Vari scrollChatToBottom
+478 L3681-3700 Vari clearChat
+479 L3702-3702 Vari getNativeFullscreenElement
+480 L3703-3707 Vari requestNativeFullscreen
+481 L3708-3712 Vari exitNativeFullscreen
+482 L3714-3734 Vari toggleChatFullscreen
+483 L3736-3738 Vari syncChatFullscreenState
+484 L3740-3747 Vari copyMessage
+485 L3749-3764 Vari editMessage
+486 L3766-3773 Vari clearMessageEditState
+487 L3775-3810 Vari saveEditMessage
+488 L3812-3817 Vari cancelEditMessage
+489 L3819-3825 Vari markUiTemplateStatus
+490 L3827-3830 Vari failUiTemplateAnalysis
+491 L3832-3839 Vari startUiTemplateUpdateRun
+492 L3841-3846 Vari isUiTemplateUpdateRunCurrent
+493 L3848-3858 Vari abortUiTemplateUpdate
+494 L3860-4027 Vari updateUiTemplatesFromChat
+495 L4031-4042 Vari filterClassicMemoriesAsync
+496 L4044-4061 Vari removeClassicMemoriesForConversationTurn
+497 L4063-4096 Vari syncMemoryConversationBindings
+498 L4098-4108 Vari playMessageActionFeedback
+499 L4110-4114 Vari removeClassicMemoriesFromTurn
+500 L4116-4156 Vari deleteMessage
+501 L4158-4206 Vari regenerateMessage
+502 L4208-4209 Vari getEnabledActiveTools
+503 L4211-4214 Vari isWebActiveTool
+504 L4216-4216 Vari getActiveToolDisplayDescription
+505 L4218-4236 Vari appendActiveToolReminderToLatestUserMessage
+506 L4238-4262 Vari buildActiveToolDefinitions
+507 L4264-4272 Vari buildActiveToolSystemPrompt
+508 L4273-4273 Vari usesThinkingCotTag
+509 L4274-4278 Vari getMessageThinkingText
+510 L4279-4281 Vari wrapAnalysis
+511 L4282-4303 Vari appendNextResponsePrompt
+512 L4304-4304 Vari usedGeminiPromptNonces
+513 L4305-4953 Vari generateResponse
+514 L4956-4956 Vari _classicBatchExtractAbort   ### Memory Extraction
+515 L4957-4957 Vari _classicExtractionEpoch
+516 L4958-4958 Vari _classicBatchRescanRequested
+517 L4959-4959 Vari _classicSummaryInFlightKeys
+518 L4961-4961 Vari getMemoryEmbeddingModel
+519 L4962-4971 Vari getMemoryMessageText
+520 L4973-4979 Vari getClassicTurnSourceIds
+521 L4981-4996 Vari ensureConversationMessageIds
+522 L4998-5005 Vari hasClassicMemoryForJob
+523 L5007-5039 Vari buildClassicSummaryJob
+524 L5041-5056 Vari requestClassicMemoryCompletion
+525 L5058-5079 Vari requestClassicMemorySummary
+526 L5081-5098 Vari requestClassicSecondarySummary
+527 L5100-5102 Vari getSecondaryClassicSourceMemories
+528 L5104-5113 Vari trimClassicMemoriesToTurn
+529 L5115-5136 Vari getEligibleClassicSecondaryGroups
+530 L5138-5233 Vari compressEligibleClassicMemories
+531 L5235-5246 Vari restoreSecondaryClassicMemoriesForTurnCount
+532 L5248-5327 Vari retryClassicMemory
+533 L5329-5357 Vari generateAndStoreClassicMemory
+534 L5359-5391 Vari requestMemoryEmbeddings
+535 L5393-5395 Vari hasCurrentSummaryEmbedding
+536 L5397-5412 Vari getSummaryEmbeddingJobs
+537 L5414-5454 Vari indexSummaryMemories
+538 L5456-5490 Vari selectEnhancedMemories
+539 L5492-5502 Vari extractKeywordToolTerms
+540 L5504-5509 Vari getKeywordToolMessageText
+541 L5511-5522 Vari buildKeywordToolSnippet
+542 L5524-5570 Vari searchDialogueByKeywordForTool
+543 L5572-5591 Vari getTavilyErrorDetailText
+544 L5593-5600 Vari buildTavilyErrorMessage
+545 L5602-5614 Vari requestTavily
+546 L5616-5627 Vari normalizeTavilyExtractUrl
+547 L5629-5635 Vari extractWebUrlsFromToolQuery
+548 L5637-5643 Vari getWebTitleFromUrl
+549 L5645-5686 Vari extractWebPagesByTavilyForTool
+550 L5688-5730 Vari searchWebByTavilyForTool
+551 L5732-5734 Vari resetActiveToolResultContext
+552 L5736-5738 Vari appendActiveToolResult
+553 L5740-5746 Vari getRandomToolRangeSize
+554 L5748-5760 Vari generateRandomNumberForTool
+555 L5762-5789 Vari parseNativeActiveToolCall
+556 L5791-5814 Vari syncNativeActiveToolUis
+557 L5816-5816 Vari cleanActiveToolCallReason
+558 L5818-5835 Vari createActiveToolUi
+559 L5837-5853 Vari getActiveToolUiGroupKey
+560 L5855-5861 Vari getToolCallDisplayName
+561 L5863-5877 Vari getToolCallModeText
+562 L5879-5879 Vari TOOL_CALL_RUNNING_STATUSES
+563 L5880-5882 Vari getToolCallEffectiveStatus
+564 L5884-5896 Vari getCurrentThinkingToolCall
+565 L5898-5901 Vari getToolCallReasoningParts
+566 L5903-5916 Vari getAssistantReasoningText
+567 L5918-5925 Vari hasThinkingOrTools
+568 L5927-5936 Vari isMessageThinkingOrRunning
+569 L5938-5941 Vari isThinkingSummaryOpen
+570 L5943-5947 Vari toggleThinkingSummary
+571 L5949-5956 Vari markThinkingSummaryDetailOpened
+572 L5958-5961 Vari getToolCallStepText
+573 L5963-5963 Vari getTimelineCharCount
+574 L5965-6023 Vari getTimelineSteps
+575 L6025-6105 Vari handleActiveToolCallFromAssistant
+576 L6107-6122 Vari waitForMemoryConversationIdle
+577 L6124-6134 Vari abortClassicBatchExtraction
+578 L6136-6139 Vari abortConversationBackgroundWork
+579 L6141-6299 Vari startClassicBatchMemoryExtraction
+580 L6301-6308 Vari startAutomaticMemoryPatrol
+581 L6310-6313 Vari startBatchMemoryExtraction
+582 L6315-6317 Expr 
+583 L6320-6335 Vari createNewCharacter
+584 L6337-6347 Vari editCharacter
+585 L6349-6366 Vari saveCharacter
+586 L6368-6379 Vari createUiTemplate
+587 L6381-6394 Vari editUiTemplate
+588 L6396-6441 Vari saveUiTemplate
+589 L6443-6452 Vari deleteUiTemplate
+590 L6454-6459 Vari downloadJsonFile
+591 L6461-6480 Vari readJsonFileInput
+592 L6482-6499 Vari importUiTemplates
+593 L6501-6538 Vari deleteCharacterData
+594 L6540-6549 Vari finishCharacterDeletion
+595 L6551-6562 Vari stopCurrentCharacterWork
+596 L6564-6577 Vari clearCurrentCharacterData
+597 L6579-6605 Vari deleteCharacter
+598 L6607-6626 Vari toggleCharacterFavorite
+599 L6628-6631 Vari toggleBatchDeleteMode
+600 L6633-6639 Vari toggleCharacterSelection
+601 L6641-6683 Vari batchDeleteCharacters
+602 L6685-6743 Vari enforceSpecialRules
+603 L6745-6752 Expr 
+604 L6754-6776 Vari prepareLoadedChatHistoryForDisplay
+605 L6778-6782 Vari createInitialChatHistory
+606 L6784-6796 Vari getStoredChatHistoryWithRetry
+607 L6798-6813 Vari loadStoredChatHistory
+608 L6815-6823 Vari saveStoryBranchesForCharacter
+609 L6825-6840 Vari readStoryBranchesForCharacter
+610 L6842-6847 Vari loadStoryBranchesForCharacter
+611 L6849-6856 Vari updateCurrentStoryBranchSummary
+612 L6858-6862 Vari clearStoryBranchTransientContext
+613 L6864-6903 Vari saveCurrentStoryBranchState
+614 L6905-6908 Vari selectStoryBranchNode
+615 L6910-6919 Vari openStoryBranchNameEditor
+616 L6921-6955 Vari saveStoryBranchName
+617 L6957-7011 Vari deleteSelectedStoryBranch
+618 L7013-7139 Vari createStoryBranch
+619 L7141-7180 Vari switchStoryBranch
+620 L7182-7192 Vari openStoryBranchModal
+621 L7194-7205 Vari readCharacterMemories
+622 L7207-7217 Vari loadCharacterMemories
+623 L7219-7335 Vari selectCharacter
+624 L7337-7350 Vari handleAvatarUpload
+625 L7354-7356 Vari normalizeWorldInfoEntry
+626 L7358-7361 Vari toWorldInfoExportEntry
+627 L7363-7374 Vari getCombinedWorldInfo
+628 L7376-7379 Vari applyCharacterScopedResources
+629 L7381-7384 Vari syncWorldInfoToCurrentCharacter
+630 L7386-7386 Vari parseWorldInfoKeysText
+631 L7388-7393 Vari setWorldInfoKeysText
+632 L7395-7398 Vari updateEditingWorldInfoKeys
+633 L7400-7447 Vari importCharacterData
+634 L7449-7599 Vari importCharacter
+635 L7601-7605 Vari buildCharacterExportData
+636 L7607-7620 Vari exportCharacterJson
+637 L7622-7687 Vari exportCharacterChat
+638 L7689-7707 Vari exportCharacterPng
+639 L7710-7714 Vari createPreset
+640 L7716-7720 Vari editPreset
+641 L7722-7730 Vari savePreset
+642 L7732-7737 Vari deletePreset
+643 L7740-7752 Expr 
+644 L7755-7992 Expr 
+645 L7994-8009 Expr 
+646 L8011-8056 Vari processMainContent
+647 L8058-8066 Vari switchProfile
+648 L8068-8079 Vari createNewProfile
+649 L8083-8101 Vari deleteProfile
+650 L8103-8103 Vari activeKeepFloors
+651 L8104-8104 Vari keepFloorsSliderMin
+652 L8105-8105 Vari keepFloorsSliderMax
+653 L8106-8113 Vari keepFloorsSlider
+654 L8114-8114 Vari classicMemoryPageCount
+655 L8115-8115 Expr 
+656 L8116-8116 Expr 
+657 L8117-8171 Vari displayedClassicMemories
+658 L8172-8172 Vari memoryStats
+659 L8174-8180 Vari applyPersonPresetSelection
+660 L8182-8552 Retu 
