@@ -92,7 +92,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     captured.push({
       isWechat, sysContent, lastUser,
       roles: msgs.map(m => m.role).join(','),
-      contents: msgs.map(m => typeof m.content === 'string' ? m.content.slice(0, 240) : '[parts]')
+      contents: msgs.map(m => typeof m.content === 'string' ? m.content.slice(0, 400) : '[parts]')
     });
     const content = isWechat ? REPLY : '（继续画着，头也没抬）……嗯，那你歇会儿。';
     await route.fulfill({
@@ -582,6 +582,39 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('最近的分段气泡保持单条原样（给模型看正确格式）',
     !!mergeCall && mergeCall.contents.some(c => c === '刚看到消息'),
     JSON.stringify(mergeCall ? mergeCall.contents.slice(-5) : []));
+
+  console.log('\n== 剧情块：占位符解析 + 长文截断不留残渣 ==');
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    // 关记忆，避免剧情块被收敛掉
+    root.memorySettings.enabled = false;
+    // 段一：短句占位符 → 应被 RP 正则管线解析成用户名
+    root.chatHistory.push({ role: 'user', content: '{{user}}坐下，端起碗。' });
+    root.chatHistory.push({ role: 'assistant', content: '好。' });
+    await root.closeWechat();
+    await root.openWechat();
+    root.wechatInput = '分段探针一';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+    // 段二：精确构造，前缀 197 码点 + {{user}}，让占位符正好跨在第 200 个码点上，
+    // 覆盖「切片落在占位符内部留下半截 {{u」这一 bug。
+    root.chatHistory.push({ role: 'assistant', content: '钥'.repeat(197) + '{{user}}随后坐下。' });
+    await root.closeWechat();
+    await root.openWechat();
+    root.wechatInput = '分段探针二';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 500));
+  });
+  const clipCall = [...captured].reverse().find(c => c.isWechat);
+  const clipBlocks = clipCall ? clipCall.contents.filter(c => c.includes('【roleplay 剧情')) : [];
+  const shortBlock = clipBlocks.find(c => c.includes('坐下，端起碗')) || '';
+  const longBlock = clipBlocks.find(c => c.includes('钥')) || '';
+  check('剧情块里的 {{user}} 经 RP 正则解析成用户名',
+    shortBlock.includes('阿伟') && !shortBlock.includes('{{user}}'),
+    shortBlock.slice(0, 60));
+  check('长文截断后不留残缺花括号/占位符残渣',
+    longBlock.length > 0 && !/\{[^{}]*$/.test(longBlock) && !longBlock.includes('{{'),
+    longBlock.slice(-40));
 
   console.log('\n== 清空微信记录（确认弹窗必须能盖在微信层上） ==');
   const clearFlow = await page.evaluate(async () => {

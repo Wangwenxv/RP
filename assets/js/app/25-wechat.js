@@ -190,17 +190,32 @@
          * 一段连续的 RP 时间线 → 一条「剧情背景」消息。
          * 用 user 角色 + 明显标题，与项目里中途插世界书的既有做法一致
          * （injectContextMessages 也是 user + [标题] 的前缀形式）。
-         * 顺手用 stripThinking 去掉 <thinking> 块：RP 正文里常见，带进微信纯属噪音。
+         *
+         * 正文先走一遍 RP 的 processRegex（与 15-generate.js 生成时同参）：它会
+         * replaceUserNamePlaceholder 把 {{user}} 等占位符解析掉，再跑用户自定义正则
+         * （如遗留的「Auto Replace {{user}}」）。必须在截断之前做——否则 200 字边界
+         * 落在 {{user}} 中间会切出半截「{」，而微信块不走 RP 管线，残渣会原样发给模型。
+         * 最后顺手用 stripThinking 去掉 <thinking> 块：RP 正文里常见，带进微信是噪音。
          */
+        const clipRpText = (raw, role) => {
+            const processed = __s.processRegex(raw, { isPrompt: true, role }) || '';
+            const oneLine = wxProtocol.stripThinking(processed).replace(/\s+/g, ' ').trim();
+            const codePoints = Array.from(oneLine);
+            if (codePoints.length <= WECHAT_RP_SEGMENT_CHARS) return oneLine;
+            // 按码点切（不劈开 emoji 代理对），末尾兜底摘掉任何残缺的 {{...}} / 花括号
+            return codePoints.slice(0, WECHAT_RP_SEGMENT_CHARS).join('')
+                .replace(/\{\{[^{}]*$/, '').replace(/\{[^{}]*$/, '').trim();
+        };
+
         const buildWechatRpBlock = (items) => {
             const char = __s.currentCharacter.value || {};
             const who = String(char.name || '').trim() || '你';
             const lines = [];
             for (const item of items) {
                 if (item.role !== 'user' && item.role !== 'assistant') continue;
-                const text = wxProtocol.stripThinking(item.content).replace(/\s+/g, ' ').trim();
+                const text = clipRpText(item.content, item.role);
                 if (!text) continue;
-                lines.push(`${item.role === 'user' ? '对方' : `你（${who}）`}：${text.slice(0, WECHAT_RP_SEGMENT_CHARS)}`);
+                lines.push(`${item.role === 'user' ? '对方' : `你（${who}）`}：${text}`);
             }
             if (!lines.length) return '';
             const kept = lines.slice(-WECHAT_RP_SEGMENT_MESSAGES);
