@@ -3,13 +3,15 @@
  *
  * 设计见 docs/ARCHITECTURE.md §8。长期记忆是「每轮一份缩写」，和 RP/微信原文混排时会
  * 「弄没」（旧的被粗暴丢弃）或「多一份」（原文 + 摘要重复）。这里引入 agent 式的上下文
- * 压缩：用户手动点「压缩」，把截止点之前的 RP 轮次 + 微信时间线老段（连同更早的旧提要）
- * 交给模型，压成一份第三人称「前情提要」。
+ * 压缩：用户从聊天快捷面板点「压缩上下文」，把**当前全部** RP 轮次 + 微信时间线（连同更早的
+ * 旧提要）交给模型，压成一份第三人称「前情提要」。
  *
  * - 原文不销毁：chatHistory 与 wechat_timeline 原样保留，只是不再进上下文，前情提要代表它们。
  * - 覆盖范围用前缀计数表达：coversThroughTurn（覆盖到第几轮 RP）+ coversWechatCount（覆盖多少条微信）。
+ *   压缩即全量，所以这两个计数恒等于「压缩那一刻」的全部内容。
  * - RP 侧：recap 作为独立 message 注入，被覆盖的老轮次（及其 per-turn 记忆）从上下文剔除。
- * - 微信侧：recap 进 system，被覆盖的旧 RP 块与微信老段剔除；记忆只注入未被覆盖的轮次。
+ * - 微信侧：recap 作为对话记录首条注入（不进 system），被覆盖的旧 RP 块与微信老段剔除；记忆只注入
+ *   未被覆盖的轮次。
  */
 (function () {
     window.RPHubAppSections = window.RPHubAppSections || {};
@@ -71,22 +73,22 @@
             .filter(item => item.channel === 'wechat' && item.role !== 'system').length;
 
         /**
-         * 当前若点「压缩」，覆盖到哪：保留最近 recapKeepRpTurns 轮 / recapKeepWechatMsgs 条，
-         * 更早的进提要。返回各计数与是否有可压缩的新内容。
+         * 压缩覆盖范围：**全部** RP 轮次 + 全部微信消息（保留窗口为 0）。
+         * 与前情提要是「压缩点之前全部内容的代表」这一设计一致：点一次压缩，
+         * 截止当前的所有内容都塌成一条提要，之后只追加新内容。
          */
         const computeRecapCoverage = () => {
             const turns = (__s.buildConversationTurnSnapshot(__s.chatHistory.value, { includeSystem: false }).turns || []).length;
             const wechatTotal = countWechatMessages();
-            const keepRp = Math.max(0, Number(__s.memorySettings?.recapKeepRpTurns) || 0);
-            const keepWx = Math.max(0, Number(__s.memorySettings?.recapKeepWechatMsgs) || 0);
-            const coversThroughTurn = Math.max(0, turns - keepRp);
-            const coversWechatCount = Math.max(0, wechatTotal - keepWx);
             const prev = storyRecap.value;
             return {
-                turns, wechatTotal, coversThroughTurn, coversWechatCount,
-                // 有新增的待覆盖内容（相比上次压缩）
-                hasNewContent: coversThroughTurn > (prev?.coversThroughTurn || 0)
-                    || coversWechatCount > (prev?.coversWechatCount || 0)
+                turns,
+                wechatTotal,
+                coversThroughTurn: turns,
+                coversWechatCount: wechatTotal,
+                // UI 用：相比上次压缩是否有新增内容（多了才值得再点）
+                hasNewContent: turns > (prev?.coversThroughTurn || 0)
+                    || wechatTotal > (prev?.coversWechatCount || 0)
             };
         };
         __s.computeRecapCoverage = computeRecapCoverage;
@@ -134,6 +136,9 @@
         const runStoryRecap = async () => {
             if (isRecapGenerating.value) return;
             await ensureStoryRecapLoaded();
+            // 微信时间线只在打开微信面板时载入；在记忆页直接点压缩时它可能还是空的，
+            // 那样素材里就没有微信对话（用户看到的「压缩没带微信记忆」）。先确保载入。
+            if (__s.ensureWechatTimelineLoaded) await __s.ensureWechatTimelineLoaded();
             const coverage = computeRecapCoverage();
             if (coverage.coversThroughTurn <= 0 && coverage.coversWechatCount <= 0) {
                 __s.showToast('没有可压缩的内容（先多聊几轮，或调小保留窗口）', 'info');
@@ -187,6 +192,14 @@
             });
         };
         __s.clearStoryRecap = clearStoryRecap;
+
+        /** 静默清除（供「清空聊天记录」联动，不再弹确认框）。 */
+        const clearStoryRecapSilently = async () => {
+            if (!storyRecap.value) return;
+            storyRecap.value = null;
+            try { await saveStoryRecapNow(null); } catch (error) { console.error('清除前情提要失败:', error); }
+        };
+        __s.clearStoryRecapSilently = clearStoryRecapSilently;
 
         // 切角色/分支时重载
         const recapLoadingKey = computed(() => `${__s.currentCharacter.value?.uuid || ''}::${recapScopeId()}`);

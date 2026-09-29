@@ -150,10 +150,12 @@ index.html 与 app.js 的调用清单各加一行），return 里暴露模板需
   历史按时间线顺序还原：每段连续 RP 合并成**一条**「剧情背景」块（`buildWechatRpBlock`）插在原时间位置，
   正文先过 RP 的 `processRegex` 解析 `{{user}}` 等占位符且**不截断**；微信消息**相邻同角色气泡全量合并**
   成一条（跨轮因 user/assistant 交替天然分开），避免一轮 4 条被拆成 4 条分别发。
-- **回 RP**（`15-generate.js`）：上下文组装后调 `appendWechatDigestToMessages`，把**全部**微信消息
-  改写成「微信聊天记录」块（`buildWechatRpDigest`），附到最新一条 user 消息**前面**（保留用户输入原文）。
-  取全量而非「最后一次 RP 之后」：RP 侧每轮独立重建上下文，增量过滤会让
-  「微信1→RP1→微信2→RP2」在 RP2 时丢掉微信1。
+- **回 RP**（`15-generate.js`）：上下文组装后调 `appendWechatDigestToMessages`，把时间线里的**每一段**
+  连续微信改写成一条「微信聊天记录」块（`buildWechatRpSegment`），按时间位置插回对话——段内多条
+  **拍平成一处**（刻意设计：降低请求条数；用户视角仍是分块），段与段之间靠镜像 `rpIndex`
+  （= chatHistory 索引）定位，于是 RP 侧上下文还原成 `RP1→微信1→RP2→微信2` 的时间交错，
+  而不是把所有微信堆到最前或最后。取全量而非「最后一次 RP 之后」：RP 侧每轮独立重建上下文，
+  增量过滤会让「微信1→RP1→微信2→RP2」在 RP2 时丢掉微信1。
 
 两侧永远不整段复制历史，只按需取窗口；因此不会互相膨胀。
 
@@ -194,10 +196,10 @@ IndexedDB 持久化回读、角色间时间线隔离、编辑/重新生成后的
 - **前情提要 `storyRecap`**：每个「角色×分支」存一份
   `{ text, coversThroughTurn, coversWechatCount, createdAt }`。`text` 是人类可读的第三人称
   「前情提要」，概括到压缩那一刻为止的全部 RP + 微信内容。
-- **仅手动触发**：UI 加「压缩」按钮。点击后把截止点之前的 RP 轮次 + 微信时间线老段
-  （连同更早的旧提要）一起交给模型，生成新提要并覆盖旧的。不自动触发。
-- **保留窗口可配置**：`settings.recapKeepRpTurns`（RP 保留轮数，默认 3）与
-  `settings.recapKeepWechatMsgs`（微信保留条数，默认 20）。压缩时更早的部分进提要，最近这些保留原文。
+- **手动全量压缩**：入口在聊天输入框旁的**快捷面板**（`#chat-quick-panel`）里的「压缩上下文」按钮。
+  点击即把**当前全部** RP 轮次 + 全部微信消息（连同更早的旧提要）交给模型，生成新提要并覆盖旧的
+  ——压缩点之前的内容全部塌成一条提要，之后只追加新内容。不自动触发，也没有保留窗口
+  （`coversThroughTurn`/`coversWechatCount` 恒等于压缩那一刻的全部计数）。
 - **原文不销毁**：`chatHistory` 与 `wechat_timeline` 原样保留（UI 仍可回看、可撤销），只是不再进上下文。
   前情提要即「可丢掉旧原文」的依据——覆盖范围内的内容已由提要代表。
 
@@ -209,18 +211,100 @@ IndexedDB 持久化回读、角色间时间线隔离、编辑/重新生成后的
 - **RP 侧**：`storyRecap.text` 作为一条独立 message（user 角色 + 明显标题）注入；被覆盖的老轮次
   从上下文剔除。这样那些轮次的**原文和它们的 per-turn 记忆摘要一起消失**（记忆挂在轮次上），
   天然不与提要重复——提要是那段旧内容的唯一代表。
-- **微信侧**：`storyRecap.text` 进 system prompt；被覆盖的旧 RP 块与微信老段从历史剔除
+- **微信侧**：`storyRecap.text` 作为**对话记录的第一条**注入（夹在 system 与聊天记录之间），**不进
+  system prompt**——它是对话内容的一员，不是角色设定；被覆盖的旧 RP 块与微信老段从历史剔除
   （取代原 `dropEarlierRpBlocks` 的「只留最后一段」粗暴做法）。
 - **和记忆的关系**：记忆继续负责**未被提要覆盖**的轮次。`buildWechatMemory` 只注入
   `turnEnd > coversThroughTurn` 的记忆，避免同一段出现「提要 + 记忆」两份。
 
-### 8.4 存储
+### 8.4 存储与联动
 
 scoped key `story_recap`，粒度跟随剧情分支（与 `wechat_timeline` 一致），注册进
-`CHARACTER_SCOPED_STORAGE_NAMES`，随角色删除/存储清理一并处理。
+`CHARACTER_SCOPED_STORAGE_NAMES`，随角色删除/存储清理一并处理。`clearChat`（清空聊天记录）
+会一并调用 `clearStoryRecapSilently()`——提要是 `chatHistory` 之外的独立状态，不清就会在清空后
+继续作为对话首条出现（用户看到的「清空没效果」）。压缩入口（`runStoryRecap`）先
+`ensureWechatTimelineLoaded()`：微信时间线只在打开微信面板时载入，记忆页直接点压缩时可能为空，
+否则素材会漏掉微信对话。
 
 
-## 9. 已知遗留
+## 9. 微信表情包库
+
+### 9.1 现状与问题
+
+当前微信的「表情」并非表情包：模型在 `{"type":"sticker","content":"😼"}` 里直接吐一个 **emoji 字符**
+（`wechat-protocol.js` 的 `PROTOCOL` 明写「一个最贴切的 emoji」），前端 `index.html` 把它当文本渲染，
+`.wx-bubble.sticker`（`wechat.css` §表情包）放大到 68px。问题：
+
+- 渲染出来是**系统字体 emoji**（Windows 上是彩色豆腐块），跟真人微信里的表情包是两回事，观感差；
+- 模型可选的只有几十个 emoji，表达能力受限，且同一情绪反复用同一个。
+
+目标：把「表情」从 **emoji 字符**换成 **用户自建的表情包库 + 按名字调用**。模型全程**不需要看到图**——
+它从一份「名字｜适用场景」目录里挑名字输出，前端按名字贴图。
+
+### 9.2 调用模型（核心，不改协议）
+
+表情包的 `type` 仍是 `"sticker"`，但 `content` 从 emoji 变成**库里的名字**（如 `伤心猫`）：
+
+```json
+{"messages":[{"type":"text","content":"哼"},{"type":"sticker","content":"伤心猫"}]}
+```
+
+三件事天然成立，**protocol 与解析层无需改动**：
+
+- **回灌上下文**：`25-wechat.js` 的 `buildWechatRpBlock` / 微信历史还原本就把 `content` 原样拼成
+  `[表情 伤心猫]` 塞回上下文——模型据此知道「自己刚发过伤心猫」，延续语境。这一段**现成**。
+- **频率档位**：`stickerRuleFor` / `applyStickerPolicy` 只看 `type === 'sticker'`，与 `content` 无关，照常生效。
+- **协议容错**：`parseReply` 的降级、`isPureEmoji` 判定都不受影响。
+
+### 9.3 数据模型与存储
+
+**全局库**（不按角色/分支隔离）——库是用户自己的收藏，所有角色共用。存储沿用工程既有 KV：
+
+- 单一 key `wechat_stickers`，值为数组，经 `getStoredValue/setStoredValue`（`data-services.js`）读写；
+  不新增 objectStore，也不进 `CHARACTER_SCOPED_STORAGE_NAMES`（非角色作用域）。
+- 每条：`{ id, name, description, image, createdAt }`
+  - `id`：稳定 uuid，用于改名/删除时定位（**不用 name 当主键**，改名就不丢）；
+  - `name`：**调用名**，模型输出的就是它，需唯一（保存时去重、trim）；
+  - `description`：给模型看的「适用场景」，如「委屈、想被安慰、撒娇求关注时用」；
+  - `image`：压缩后的 dataURL（复用微信发图那套 `compressImage`，长边 ≤1024，控制体积）。
+
+### 9.4 目录注入（提示词）
+
+`buildWechatSystemPrompt`（`25-wechat.js`）在协议段之前注入一份**可用表情目录**：
+
+```
+【表情包库】
+你可以发送下列表情包，sticker 的 content 只能从下面这些名字里选（原样照抄，不要改动）：
+- 伤心猫｜委屈、想被安慰、撒娇求关注时用
+- 无语狗｜对对方发言感到无语、想翻白眼时用
+```
+
+- **库非空** → 注入目录，并把 `PROTOCOL` 里 sticker 的说明从「一个 emoji」改为「库里的名字」。
+- **库为空** → **不注入目录，回退现状**（emoji 模式），即零配置时的默认行为不变。
+- 目录**只带 name + description**；回灌历史只带 name，轻量。
+- 体积控制：描述 ≤ 15 字；库超过上限（如 50 条）时只注入前 N 条并 `log` 提示被截断，避免吃 token。
+
+### 9.5 前端渲染与匹配回退
+
+`index.html` 气泡模板改为按名字查库：
+
+- `content` **精确命中**库中 `name`（trim 后比较）→ 渲染 `<img :src="stickerImageOf(content)">`，走 `.wx-bubble.sticker` 的无气泡大图样式；
+- **未命中** → **回退当文本渲染**。旧记录里存的是 emoji、或库被删条目后遗留的名字，都走这条，**无需数据迁移**，也不会白屏。
+
+### 9.6 管理 UI
+
+微信设置面板加「表情包管理」入口，模态内做增删改：上传图（复用 `compressImage`）→ 起名 → 填描述 → 保存。
+最小版**纯手动录入**；后续可选接模型 vision 能力**自动打标签**（工程已具备把图片当 `image_url` 发给模型的能力，
+`25-wechat.js` 微信发图即用此路）。
+
+### 9.7 边界与取舍
+
+- **改名/删条**：旧聊天记录存的是旧 name，改名后旧气泡回退为文本——**不改写历史**（与 §7「原文不销毁」一致）。
+- **重名**：保存时拒绝或提示，保证 name → 单张图。
+- **删空库**：回到 9.4 的「库为空 → emoji 模式」。
+- **token**：目录每轮进 system prompt，靠 9.4 的条数上限 + 描述字数上限兜底。
+
+## 10. 已知遗留
 
 - `index.html`（2728 行，模板 + 3 段内联脚本）与 `assets/js/ui-components.js`（2956 行）尚未拆分，
   可按同样思路继续（模板拆分需要引入构建步骤或 Vue 单文件组件替代方案，需单独评估）。

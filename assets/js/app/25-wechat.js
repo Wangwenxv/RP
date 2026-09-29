@@ -500,7 +500,6 @@
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
                 extraRules: `【重要】你们既是 roleplay 里的关系，也是现实里互加微信的人。`
                     + `把 roleplay 中已建立的称呼、关系、默契带进微信，像真人一样随口聊天，不要重来一遍自我介绍。`,
-                storyRecap: __s.buildStoryRecapBlock ? __s.buildStoryRecapBlock() : '',
                 memory: buildWechatMemory()
             });
         };
@@ -610,48 +609,98 @@
                 merged.push({ message: { ...entry.message }, mergeable: entry.mergeable });
             });
 
-            return merged.slice(-WECHAT_HISTORY_LIMIT).map(entry => entry.message);
+            const head = merged.slice(-WECHAT_HISTORY_LIMIT).map(entry => entry.message);
+            // 前情提要是对话记录的第一条（不是 system 预设）：它代表被覆盖的老内容，
+            // 排在所有未被覆盖的对话之前，夹在 system 与聊天记录之间。
+            const recapBlock = __s.buildStoryRecapBlock ? __s.buildStoryRecapBlock() : '';
+            if (recapBlock) {
+                head.unshift({ role: 'user', content: recapBlock, _sourceIndexes: [], _preventContextMerge: true });
+            }
+            return head;
         };
 
-        // ---- 回 RP：微信段改写成剧情 ----
-        const buildWechatRpDigest = () => {
+        // ---- 回 RP：微信段按时间位置插回对话 ----
+        //
+        // docs/wechat-and-RP.md 里 RP 侧上下文必须还原「RP1→微信1→RP2→微信2」的时间交错，
+        // 而不是把所有微信拍成一段挪到最前或最后（那样顺序错位、跨段全缺）。做法：
+        // 时间线里每一段连续微信压成一条「微信聊天记录」背景块（**段内**多条拍平成一处，
+        // 这是刻意设计——降低请求条数，用户视角仍是分块），再按这段微信紧邻的那条 RP 消息
+        // （镜像的 rpIndex = chatHistory 索引）插回它在对话里的原始位置。
+        const buildWechatRpSegment = (items) => {
+            if (!items.length) return null;
             const char = __s.currentCharacter.value;
-            if (!char?.wechatEnabled) return '';
-            // 取全部微信消息（去 system）。RP 侧每轮上下文都是独立重建的，
-            // 上一轮注入过的微信摘要不会留进 chatHistory，所以这里不能做「只取最后一段
-            // RP 之后」的增量过滤——否则「微信1→RP1→微信2→RP2」到 RP2 时微信1 就丢了。
-            // 要的是「过去所有在微信上聊过的内容」都作为角色已知背景。聊天记录本身受
-            // chatHistory 窗口限制，这里不额外截断。
-            const segment = wechatTimeline.value.filter((item) =>
-                item.channel === 'wechat' && item.role !== 'system');
-            if (!segment.length) return '';
-            const who = String(char.wechatPeerName || '').trim() || char.name;
-            const lines = segment.map((item) => {
+            const who = String(char?.wechatPeerName || '').trim() || char?.name || '对方';
+            const lines = items.map((item) => {
                 const name = item.role === 'user' ? '你' : who;
                 if (item.type === 'image') return `${name}：[图片]`;
                 if (item.type === 'sticker') return `${name}：[表情 ${item.content}]`;
                 return `${name}：${item.content}`;
             });
-            return `【微信聊天记录｜以下是你们在现实里互加微信后的对话，作为你已知的背景，不是 roleplay 正文】\n`
-                + `${who}在微信上和你说：\n`
-                + lines.join('\n');
+            return {
+                role: 'user',
+                content: `【微信聊天记录｜以下是你们在现实里互加微信后的对话，作为你已知的背景，不是 roleplay 正文】\n`
+                    + `${who}在微信上和你说：\n`
+                    + lines.join('\n'),
+                _sourceIndexes: [],
+                _preventContextMerge: true
+            };
         };
-        __s.buildWechatRpDigest = buildWechatRpDigest;
 
-        /** 把微信段摘要附到最新一条 user 消息末尾（在 RP 上下文组装之后调用）。 */
+        /**
+         * 在 RP 上下文组装之后调用：按时间位置把每一段微信插进 messages。
+         * - 锚点 = 这段微信之前最近一条 RP 镜像的 rpIndex（= chatHistory 索引）；
+         *   插入位在「最后一条源索引 ≤ 锚点」的消息之后。
+         * - 已被前情提要覆盖的微信段（coversWechatCount 前缀）跳过——那段内容已进提要。
+         * - 段内没有 RP 镜像（RP 关闭 / 消息被删）时锚点为 null，落到收尾，避免错插。
+         */
         const appendWechatDigestToMessages = (messages) => {
-            const digest = buildWechatRpDigest();
-            if (!digest) return messages;
-            for (let index = messages.length - 1; index >= 0; index--) {
-                if (messages[index].role === 'user') {
-                    messages[index] = {
-                        ...messages[index],
-                        content: `${digest}\n\n${messages[index].content || ''}`.trim()
-                    };
-                    break;
+            const char = __s.currentCharacter.value;
+            if (!char?.wechatEnabled) return messages;
+            const coveredWx = (__s.recapCoverageRange?.() || {}).wxCount || 0;
+            const segments = [];
+            let buffer = [];
+            let lastRpIndex = null;
+            let wxSeen = 0;
+            const flush = () => {
+                if (buffer.length) segments.push({ items: buffer, anchor: lastRpIndex });
+                buffer = [];
+            };
+            for (const item of wechatTimeline.value) {
+                if (item.channel === 'wechat') {
+                    if (item.role === 'system') continue;
+                    wxSeen += 1;
+                    if (wxSeen <= coveredWx) continue;
+                    buffer.push(item);
+                } else if (item.channel === 'rp') {
+                    flush();
+                    if (Number.isFinite(item.rpIndex)) lastRpIndex = item.rpIndex;
                 }
             }
-            return messages;
+            flush();
+            if (!segments.length) return messages;
+
+            const pending = segments
+                .map(seg => ({ anchor: seg.anchor, block: buildWechatRpSegment(seg.items) }))
+                .filter(entry => entry.block);
+
+            const result = [];
+            for (const message of messages) {
+                const sources = (Array.isArray(message._sourceIndexes) ? message._sourceIndexes : [])
+                    .filter(Number.isFinite);
+                if (sources.length) {
+                    const minSource = Math.min(...sources);
+                    // 锚点 < 本条最小源索引 → 这段微信应落在本条之前（即上一条之后）
+                    for (let i = pending.length - 1; i >= 0; i--) {
+                        if (Number.isFinite(pending[i].anchor) && pending[i].anchor < minSource) {
+                            result.push(pending[i].block);
+                            pending.splice(i, 1);
+                        }
+                    }
+                }
+                result.push(message);
+            }
+            for (const entry of pending) result.push(entry.block);
+            return result;
         };
         __s.appendWechatDigestToMessages = appendWechatDigestToMessages;
 

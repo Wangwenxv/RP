@@ -1,0 +1,12 @@
+状态 对话记忆
+RP1 开场白
+wechat1 RP1
+RP2 RP1->wechat1
+wechat2 RP1->wechat1->RP2
+RP3 RP1->wechat1->RP2->wechat2
+压缩1 RP1->wechat1->RP2->wechat2->RP3(这次也是有问题的，压缩没有wechat的记忆)
+RP4 压缩1
+wechat4 压缩1->RP4
+RP5 压缩1->RP4->wechat4
+压缩2 压缩1->RP4->wechat4->RP5
+wechat5 压缩2

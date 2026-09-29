@@ -214,6 +214,11 @@
                     });
                 }
                 __s.classicMemories.value = [];
+                // 前情提要是 chatHistory 之外的 scoped 状态，清空聊天时要一并清掉，
+                // 否则旧提要仍会作为对话首条进入上下文（用户看到的「清空没效果」）。
+                if (__s.clearStoryRecapSilently) {
+                    Promise.resolve(__s.clearStoryRecapSilently()).catch(() => {});
+                }
                 __s.resetUiTemplateRuntimeState();
                 __s.saveData();
                 __s.showToast('聊天记录、记忆和变量记录已清空', 'success');

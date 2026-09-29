@@ -976,6 +976,22 @@
                                                         </span>
                                                     </label>
                                                 </div>
+                                                <!-- 前情提要（上下文压缩）：把当前全部 RP + 微信内容压成一条提要，
+                                                     它是压缩点之前剧情的唯一代表，插在对话最前。 -->
+                                                <div class="flex flex-col gap-1 rounded-xl bg-gray-50">
+                                                    <button type="button" @click="runStoryRecap()"
+                                                        :disabled="isRecapGenerating || !recapCoverage.hasNewContent"
+                                                        class="flex items-center justify-between gap-2 rounded-xl px-2.5 py-2.5 text-xs font-semibold text-gray-600 whitespace-nowrap transition-colors hover:bg-gray-100 disabled:opacity-45 disabled:cursor-not-allowed">
+                                                        <span>{{ isRecapGenerating ? '压缩中…' : '压缩上下文' }}</span>
+                                                        <span class="text-[11px] font-medium text-gray-400">
+                                                            {{ storyRecap ? '重建前情提要' : '生成前情提要' }}
+                                                        </span>
+                                                    </button>
+                                                    <button v-if="storyRecap" type="button" @click="clearStoryRecap()"
+                                                        class="rounded-xl px-2.5 py-1.5 text-left text-[11px] font-semibold text-red-500 whitespace-nowrap transition-colors hover:bg-red-50">
+                                                        删除前情提要
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     </transition>
@@ -2410,49 +2426,7 @@
                                         class="compact-range w-full h-1.5 bg-primary-100 rounded-lg appearance-none cursor-pointer accent-primary-500">
                                 </div>
                             </div>
-
-                            <!-- Story Recap (context compression) -->
-                            <div class="settings-field">
-                                <div class="flex justify-between items-center mb-2">
-                                    <div class="relative flex items-center">
-                                        <label class="text-sm font-semibold text-gray-700">前情提要（上下文压缩）</label>
-                                        <settings-help topic="storyRecap" :open-topic="settingsHelpTopic"
-                                            label="查看前情提要说明" popover-class="is-above"
-                                            @toggle="settingsHelpTopic = $event">
-                                            把截止点之前的 roleplay 与微信对话整体压成一份第三人称「前情提要」。原文不会被删除（仍可在聊天里回看），只是不再进上下文，由提要代表。与逐轮记忆互补：被提要覆盖的轮次不再重复注入记忆。
-                                        </settings-help>
-                                    </div>
-                                    <button type="button" @click="runStoryRecap()"
-                                        :disabled="isRecapGenerating || !recapCoverage.hasNewContent"
-                                        class="px-3 py-1.5 text-xs font-bold rounded-lg border border-primary-200 bg-primary-50 text-primary-700 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap">
-                                        {{ isRecapGenerating ? '压缩中…' : '压缩' }}
-                                    </button>
-                                </div>
-                                <div class="grid grid-cols-2 gap-3 mb-2">
-                                    <label class="flex items-center justify-between gap-2 text-xs text-gray-600">
-                                        <span>RP 保留轮数</span>
-                                        <input type="number" min="0" max="50" v-model.number="memorySettings.recapKeepRpTurns"
-                                            class="w-16 rounded-lg border border-gray-200 px-2 py-1 text-center text-gray-800">
-                                    </label>
-                                    <label class="flex items-center justify-between gap-2 text-xs text-gray-600">
-                                        <span>微信保留条数</span>
-                                        <input type="number" min="0" max="200" v-model.number="memorySettings.recapKeepWechatMsgs"
-                                            class="w-16 rounded-lg border border-gray-200 px-2 py-1 text-center text-gray-800">
-                                    </label>
-                                </div>
-                                <div class="flex items-center justify-between text-xs text-gray-500">
-                                    <span>
-                                        <template v-if="recapCoverage.coversThroughTurn || recapCoverage.coversWechatCount">
-                                            将压缩 {{ recapCoverage.coversThroughTurn }} 轮 RP + {{ recapCoverage.coversWechatCount }} 条微信
-                                        </template>
-                                        <template v-else>暂无可压缩内容</template>
-                                    </span>
-                                    <button v-if="storyRecap" type="button" @click="clearStoryRecap()"
-                                        class="text-xs text-red-500 hover:text-red-600">删除前情提要</button>
-                                </div>
-                            </div>
                         </div>
-                    </div>
                     </div>
                     </div>
                     </div>

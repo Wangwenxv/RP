@@ -312,6 +312,7 @@ const app = createApp({
             storyRecap: __s.storyRecap, isRecapGenerating: __s.isRecapGenerating,
             recapCoverage: computed(() => __s.computeRecapCoverage()),
             runStoryRecap: __s.runStoryRecap, clearStoryRecap: __s.clearStoryRecap,
+            clearStoryRecapSilently: __s.clearStoryRecapSilently,
             // 滑块值映射：4-10 为变量分析消息层数。
             uiTemplateAnalysisDepthSlider: computed({
                 get: () => Math.max(4, Math.min(10, Number(__s.settings.uiTemplateAnalysisDepth) || 4)),
