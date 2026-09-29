@@ -917,6 +917,43 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('微信历史保留未覆盖的新微信段',
     !!recapWx && recapWx.contents.some(c => c.includes('微信后续')));
 
+  console.log('\n== 前情提要：压缩素材按统一时间线交错 ==');
+  const orderCallStart = captured.length;
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.memorySettings.enabled = false;
+    root.memorySettings.classicModel = 'mock-model';
+    root.user.name = 'lin';
+    root.characters.push({
+      name: '小I', description: '交错压缩', personality: 'x', first_mes: '开场I。',
+      avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
+      uuid: 'test-uuid-recap-order', createdAt: Date.now(),
+      wechatEnabled: true, wechatPeerName: '小I', wechatSpeed: 'fast'
+    });
+    await root.selectCharacter(root.characters.length - 1, false, { silent: true });
+    const sendRp = async (text) => { root.userInput = text; await root.sendMessage(); await new Promise(r => setTimeout(r, 400)); };
+    const sendWx = async (text) => {
+      await root.openWechat(); root.wechatInput = text;
+      await root.sendWechatMessage(); await new Promise(r => setTimeout(r, 400));
+      await root.closeWechat();
+    };
+    // RP1 → 微信1 → RP2 → 微信2 → RP3：压缩素材必须原样保持这个先后
+    await sendRp('RP甲轮输入'); await sendWx('微信甲段');
+    await sendRp('RP乙轮输入'); await sendWx('微信乙段');
+    await sendRp('RP丙轮输入');
+    await root.runStoryRecap();
+    await new Promise(r => setTimeout(r, 500));
+  });
+  const orderCall = captured.slice(orderCallStart).find(c => c.isRecap);
+  const orderMaterial = orderCall
+    ? (orderCall.contents.find(c => c.includes('RP甲轮输入')) || '') : '';
+  const at = (needle) => orderMaterial.indexOf(needle);
+  check('压缩素材按 RP1→微信1→RP2→微信2→RP3 交错',
+    at('RP甲轮输入') >= 0 && at('微信甲段') > at('RP甲轮输入')
+    && at('RP乙轮输入') > at('微信甲段') && at('微信乙段') > at('RP乙轮输入')
+    && at('RP丙轮输入') > at('微信乙段'),
+    `rp1=${at('RP甲轮输入')} wx1=${at('微信甲段')} rp2=${at('RP乙轮输入')} wx2=${at('微信乙段')} rp3=${at('RP丙轮输入')}`);
+
   console.log('\n== 清空聊天记录联动清除前情提要 ==');
   const afterClear = await page.evaluate(async () => {
     const root = window.__APP_PROXY__;

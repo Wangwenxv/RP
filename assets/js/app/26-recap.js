@@ -12,6 +12,8 @@
  * - RP 侧：recap 作为独立 message 注入，被覆盖的老轮次（及其 per-turn 记忆）从上下文剔除。
  * - 微信侧：recap 作为对话记录首条注入（不进 system），被覆盖的旧 RP 块与微信老段剔除；记忆只注入
  *   未被覆盖的轮次。
+ * - 压缩素材的顺序：按统一时间线 wechat_timeline 交错（RP1→微信1→RP2→微信2→RP3），不是
+ *   「先全部 RP 再全部微信」——否则微信段会被判成发生在最后一轮之后。
  */
 (function () {
     window.RPHubAppSections = window.RPHubAppSections || {};
@@ -93,44 +95,77 @@
         };
         __s.computeRecapCoverage = computeRecapCoverage;
 
-        /** 截止点前的 RP 正文（第三人称压缩素材）：第 1..coversThroughTurn 轮的 user+assistant。 */
-        const buildRecapRpMaterial = (coversThroughTurn) => {
-            if (coversThroughTurn <= 0) return [];
-            const snapshot = __s.buildConversationTurnSnapshot(__s.chatHistory.value, { includeSystem: false });
-            const out = [];
-            (snapshot.turns || []).slice(0, coversThroughTurn).forEach((turnInfo) => {
-                const indexes = turnInfo.messageIndexes || [];
-                const parts = indexes
-                    .map(index => __s.chatHistory.value[index])
-                    .filter(message => message && ['user', 'assistant'].includes(message.role))
-                    .map(message => {
-                        const parsedMain = window.RPHubUtils.parseCot(String(message.content || '')).main;
-                        const clean = __s.stripDisabledImageGenContext(
-                            __s.stripNextResponsePrompt(__s.stripUiTemplateContextInjection(parsedMain))
-                        ).replace(/\s+/g, ' ').trim();
-                        return clean;
-                    })
-                    .filter(Boolean);
-                if (parts.length) out.push(`【第 ${turnInfo.turn} 轮】${parts.join(' ')}`);
-            });
-            return out;
+        /** 单条微信消息 → 转述素材行。 */
+        const formatRecapWechatLine = (item, characterName) => {
+            const name = item.role === 'user' ? __s.user.name : characterName;
+            if (item.type === 'image') return `${name}：[图片]`;
+            if (item.type === 'sticker') return `${name}：[表情 ${item.content}]`;
+            return `${name}：${item.content}`;
         };
 
-        /** 截止点前的微信消息（第一人称转述素材）。 */
-        const buildRecapWechatMaterial = (coversWechatCount) => {
-            if (coversWechatCount <= 0) return [];
-            const who = String(__s.currentCharacter.value?.wechatPeerName || '').trim()
-                || __s.currentCharacter.value?.name || '角色';
-            return (__s.wechatTimeline?.value || [])
-                .filter(item => item.channel === 'wechat' && item.role !== 'system')
-                .slice(0, coversWechatCount)
-                .map(item => {
-                    const name = item.role === 'user' ? __s.user.name : who;
-                    if (item.type === 'image') return `${name}：[图片]`;
-                    if (item.type === 'sticker') return `${name}：[表情 ${item.content}]`;
-                    return `${name}：${item.content}`;
+        /**
+         * 截止点前的 RP 正文（压缩素材），按 chatHistory 下标索引。
+         * 用 sourceIndexes 而不是 messageIndexes：前者是原始 chatHistory 下标，和 wechat_timeline
+         * 里 RP 镜像的 rpIndex 对齐，交错时才放得回原位。正文先走一遍 RP 侧清洗（去 CoT / UI 模板 /
+         * 下一句提示 / 图片上下文），免得原始注入漏进提要。
+         */
+        const collectRecapRpEntries = (coversThroughTurn) => {
+            const entries = [];
+            if (coversThroughTurn <= 0) return entries;
+            const snapshot = __s.buildConversationTurnSnapshot(__s.chatHistory.value, { includeSystem: false });
+            (snapshot.turns || []).slice(0, coversThroughTurn).forEach((turnInfo) => {
+                (turnInfo.sourceIndexes || []).forEach((index) => {
+                    const message = __s.chatHistory.value[index];
+                    if (!message || !['user', 'assistant'].includes(message.role)) return;
+                    const parsedMain = window.RPHubUtils.parseCot(String(message.content || '')).main;
+                    const text = __s.stripDisabledImageGenContext(
+                        __s.stripNextResponsePrompt(__s.stripUiTemplateContextInjection(parsedMain))
+                    ).replace(/\s+/g, ' ').trim();
+                    if (text) entries.push({ index, turn: turnInfo.turn, text });
                 });
+            });
+            return entries;
         };
+
+        /**
+         * 压缩素材：按**剧情真实发生的顺序**交错排列 RP 轮次与微信消息。
+         *
+         * 权威顺序来自统一时间线 wechat_timeline（`channel: 'rp'` 的镜像带 rpIndex，
+         * `channel: 'wechat'` 就是微信消息本身），于是「RP1→微信1→RP2→微信2→RP3」能原样重现。
+         * 若按「先全部 RP、再全部微信」拼，整段微信会被判成发生在最后一轮之后，压缩出的前情提要
+         * 就丢了微信在剧情里的时间位置（表现为「压缩只记住了最后一轮」）。正文一律取自 chatHistory，
+         * 时间线只负责排序。
+         */
+        const buildRecapMaterial = (coversThroughTurn, coversWechatCount) => {
+            const rpEntries = collectRecapRpEntries(coversThroughTurn);
+            const byIndex = new Map(rpEntries.map(entry => [entry.index, entry]));
+            const lines = [];
+            const emittedIndexes = new Set();
+            const emittedTurns = new Set();
+            const emitRp = (index) => {
+                const entry = byIndex.get(index);
+                if (!entry || emittedIndexes.has(index)) return;
+                emittedIndexes.add(index);
+                const prefix = emittedTurns.has(entry.turn) ? '' : `【第 ${entry.turn} 轮】`;
+                emittedTurns.add(entry.turn);
+                lines.push(`${prefix}${entry.text}`);
+            };
+
+            const characterName = String(__s.currentCharacter.value?.wechatPeerName || '').trim()
+                || __s.currentCharacter.value?.name || '角色';
+            let wxSeen = 0;
+            for (const item of (__s.wechatTimeline?.value || [])) {
+                if (item.channel === 'rp') { emitRp(item.rpIndex); continue; }
+                if (item.channel !== 'wechat' || item.role === 'system') continue;
+                if (wxSeen >= coversWechatCount) continue;
+                wxSeen += 1;
+                lines.push(formatRecapWechatLine(item, characterName));
+            }
+            // 时间线里没有镜像的 RP 正文（微信未启用 / 镜像缺失）按原文顺序补在末尾
+            rpEntries.forEach((entry) => emitRp(entry.index));
+            return lines;
+        };
+        __s.buildRecapMaterial = buildRecapMaterial;
 
         /** 手动压缩：生成并落盘前情提要。 */
         const runStoryRecap = async () => {
@@ -139,15 +174,22 @@
             // 微信时间线只在打开微信面板时载入；在记忆页直接点压缩时它可能还是空的，
             // 那样素材里就没有微信对话（用户看到的「压缩没带微信记忆」）。先确保载入。
             if (__s.ensureWechatTimelineLoaded) await __s.ensureWechatTimelineLoaded();
+            // 交错顺序靠时间线里的 RP 镜像，先和 chatHistory 对一次账（同进微信前的同步），
+            // 否则编辑/重新生成后镜像位置错位，微信段会插回错误的时间点。
+            if (__s.currentCharacter.value?.wechatEnabled && __s.reconcileRpTimeline) {
+                try {
+                    if (__s.reconcileRpTimeline()) {
+                        if (__s.resetRpRecordCursor) __s.resetRpRecordCursor();
+                        if (__s.scheduleWechatSave) __s.scheduleWechatSave();
+                    }
+                } catch (error) { console.error('压缩前同步 RP 时间线失败:', error); }
+            }
             const coverage = computeRecapCoverage();
             if (coverage.coversThroughTurn <= 0 && coverage.coversWechatCount <= 0) {
-                __s.showToast('没有可压缩的内容（先多聊几轮，或调小保留窗口）', 'info');
+                __s.showToast('没有可压缩的内容（先多聊几轮）', 'info');
                 return;
             }
-            const material = [
-                ...buildRecapRpMaterial(coverage.coversThroughTurn),
-                ...buildRecapWechatMaterial(coverage.coversWechatCount)
-            ];
+            const material = buildRecapMaterial(coverage.coversThroughTurn, coverage.coversWechatCount);
             if (!material.length) {
                 __s.showToast('可压缩范围内没有正文内容', 'info');
                 return;
