@@ -26,13 +26,10 @@
             slow: { read: [1100, 2200], base: 900, perChar: 140, cap: 4200 }
         };
         const WECHAT_HISTORY_LIMIT = 30;
-        // 最近多少条消息不参与合并：生成点附近得留着正确的「短气泡」样本，
-        // 否则模型看到的历史全是合并后的多行一条，会跟着模仿成长段。
-        const WECHAT_RECENT_VERBATIM = 8;
-        // RP 段回放预算：一段 roleplay 最多回放进微信上下文多少条消息、每条截多少字。
+        // RP 段回放预算：一段 roleplay 最多回放进微信上下文多少条消息。
         // 段数不单独限——最终统一按 WECHAT_HISTORY_LIMIT 裁消息条数。
+        // 每条消息不截断（保留完整原文；截断会把用户名、台词切一半）。
         const WECHAT_RP_SEGMENT_MESSAGES = 16;
-        const WECHAT_RP_SEGMENT_CHARS = 200;
         const WECHAT_MEMORY_LIMIT = 10;
         const WECHAT_TIMELINE_KEY = 'wechat_timeline';
 
@@ -174,6 +171,7 @@
                     ts: Date.now() + index,
                     channel: 'rp',
                     rpIndex: index,
+                    rpMsgId: message.id || null,
                     role: message.role === 'user' ? 'user' : 'assistant',
                     type: 'text',
                     content
@@ -187,24 +185,150 @@
         __s.recordRpMessages = recordRpMessages;
 
         /**
+         * 把时间线里的 RP 镜像与当前 chatHistory 对齐，是进微信前的权威同步。
+         *
+         * recordRpMessages 只在游标之后追加，且靠「最大 rpIndex+1」重设游标；一旦重新生成
+         * 让被删的消息换了新 id，游标会整段跳过它，那段剧情再也补不回微信块（用户看到的
+         * 「从微信回 RP 后剧情块丢失」）。这里对活跃 RP 消息做一次完整同步：
+         * - 编辑过的（id 命中）就地更新内容与角色；
+         * - 新增的（重新生成的新 id）按它相对相邻镜像的顺序，插回原来的时间槽；
+         * - 被删的（目录里找不到 id）连同镜像一并丢弃。
+         * 微信消息是真人敲的、改动风险高，一律原样保留。
+         */
+        const reconcileRpTimeline = () => {
+            const history = __s.chatHistory.value;
+            const active = [];
+            history.forEach((message, index) => {
+                if (!message || !['user', 'assistant'].includes(message.role)) return;
+                if (!message.id) message.id = generateUUID(); // 无 id 的就地补一个，免得对账时被当成已删
+                active.push({ message, index });
+            });
+            if (!active.length) return false;
+
+            const original = wechatTimeline.value;
+            const wechatItems = original.filter((item) => item.channel === 'wechat');
+            // 每个现有镜像的「时间槽」= 它前面有几条微信消息
+            const anchorOf = new Map();
+            let seen = 0;
+            for (const item of original) {
+                if (item.channel === 'wechat') seen++;
+                else if (item.channel === 'rp') anchorOf.set(item, seen);
+            }
+            const byId = new Map();
+            const byIndex = new Map();
+            for (const item of original) {
+                if (item.channel !== 'rp') continue;
+                if (item.rpMsgId) byId.set(item.rpMsgId, item);
+                if (Number.isFinite(item.rpIndex)) byIndex.set(item.rpIndex, item);
+            }
+
+            // 每条活跃消息的槽位：先按 rpMsgId 命中；id 对不上（重新生成换了 id）就按
+            // rpIndex 兜底认领原位置，认领后把 id 刷成新的。都没有则视为新增。
+            let changed = false;
+            const claimed = new Set();
+            const resolved = active.map((entry) => {
+                let existing = byId.get(entry.message.id) || null;
+                if (!existing) {
+                    const candidate = byIndex.get(entry.index);
+                    if (candidate && !claimed.has(candidate)) existing = candidate;
+                }
+                if (existing) {
+                    claimed.add(existing);
+                    if (existing.rpMsgId !== entry.message.id) {
+                        existing.rpMsgId = entry.message.id;
+                        changed = true;
+                    }
+                }
+                return { entry, existing, anchor: existing ? anchorOf.get(existing) : null };
+            });
+            let prevAnchor = null;
+            for (const r of resolved) {
+                if (r.existing) prevAnchor = r.anchor;
+                else r.anchor = prevAnchor;
+            }
+            let nextAnchor = 0;
+            for (let i = resolved.length - 1; i >= 0; i--) {
+                if (resolved[i].anchor === null) resolved[i].anchor = nextAnchor;
+                else nextAnchor = resolved[i].anchor;
+            }
+
+            const slots = new Map();
+            for (const r of resolved) {
+                const content = String(r.entry.message.content || '').trim();
+                const role = r.entry.message.role === 'user' ? 'user' : 'assistant';
+                let item = r.existing;
+                if (item) {
+                    if (item.content !== content || item.role !== role || item.rpIndex !== r.entry.index) {
+                        item.content = content;
+                        item.role = role;
+                        item.rpIndex = r.entry.index;
+                        changed = true;
+                    }
+                } else {
+                    item = {
+                        id: generateUUID(),
+                        ts: 0,
+                        channel: 'rp',
+                        rpIndex: r.entry.index,
+                        rpMsgId: r.entry.message.id,
+                        role,
+                        type: 'text',
+                        content,
+                        _isNew: true
+                    };
+                    changed = true;
+                }
+                if (!slots.has(r.anchor)) slots.set(r.anchor, []);
+                slots.get(r.anchor).push(item);
+            }
+
+            // 按槽交错回微信消息之间，还原「RP → 微信 → RP」的顺序
+            const rebuilt = [];
+            for (let k = 0; k <= wechatItems.length; k++) {
+                for (const item of (slots.get(k) || [])) rebuilt.push(item);
+                if (k < wechatItems.length) rebuilt.push(wechatItems[k]);
+            }
+
+            // 新插入的 RP 项 ts 取「紧接着前一条 +1」，避免比后面的微信消息还新——
+            // 回 RP 的剧情摘要按 ts 找「最后一段 RP 之后」的微信消息，ts 错位会让摘要丢失。
+            let prevTs = null;
+            for (let i = 0; i < rebuilt.length; i++) {
+                const item = rebuilt[i];
+                if (item._isNew) {
+                    if (prevTs !== null) item.ts = prevTs + 1;
+                    else {
+                        const next = rebuilt.slice(i + 1).find((x) => Number.isFinite(x.ts));
+                        item.ts = next ? next.ts - 1 : Date.now() + i;
+                    }
+                    delete item._isNew;
+                }
+                if (Number.isFinite(item.ts)) prevTs = item.ts;
+            }
+
+            if (rebuilt.length !== original.length) changed = true;
+            for (let i = 0; i < rebuilt.length && !changed; i++) {
+                if (rebuilt[i] !== original[i]) changed = true;
+            }
+            if (!changed) return false;
+            wechatTimeline.value = rebuilt;
+            return true;
+        };
+        __s.reconcileRpTimeline = reconcileRpTimeline;
+
+        /**
          * 一段连续的 RP 时间线 → 一条「剧情背景」消息。
          * 用 user 角色 + 明显标题，与项目里中途插世界书的既有做法一致
          * （injectContextMessages 也是 user + [标题] 的前缀形式）。
          *
          * 正文先走一遍 RP 的 processRegex（与 15-generate.js 生成时同参）：它会
          * replaceUserNamePlaceholder 把 {{user}} 等占位符解析掉，再跑用户自定义正则
-         * （如遗留的「Auto Replace {{user}}」）。必须在截断之前做——否则 200 字边界
-         * 落在 {{user}} 中间会切出半截「{」，而微信块不走 RP 管线，残渣会原样发给模型。
-         * 最后顺手用 stripThinking 去掉 <thinking> 块：RP 正文里常见，带进微信是噪音。
+         * （如遗留的「Auto Replace {{user}}」），免得原始占位符漏进微信上下文。
+         * 正文不截断——截断会把用户名、台词切成半截。最后用 stripThinking 去掉
+         * <thinking> 块：RP 正文里常见，带进微信是噪音。
          */
-        const clipRpText = (raw, role) => {
+        const normalizeRpText = (raw, role) => {
             const processed = __s.processRegex(raw, { isPrompt: true, role }) || '';
-            const oneLine = wxProtocol.stripThinking(processed).replace(/\s+/g, ' ').trim();
-            const codePoints = Array.from(oneLine);
-            if (codePoints.length <= WECHAT_RP_SEGMENT_CHARS) return oneLine;
-            // 按码点切（不劈开 emoji 代理对），末尾兜底摘掉任何残缺的 {{...}} / 花括号
-            return codePoints.slice(0, WECHAT_RP_SEGMENT_CHARS).join('')
-                .replace(/\{\{[^{}]*$/, '').replace(/\{[^{}]*$/, '').trim();
+            return wxProtocol.stripThinking(processed).replace(/\s+/g, ' ').trim();
         };
 
         const buildWechatRpBlock = (items) => {
@@ -213,7 +337,7 @@
             const lines = [];
             for (const item of items) {
                 if (item.role !== 'user' && item.role !== 'assistant') continue;
-                const text = clipRpText(item.content, item.role);
+                const text = normalizeRpText(item.content, item.role);
                 if (!text) continue;
                 lines.push(`${item.role === 'user' ? '对方' : `你（${who}）`}：${text}`);
             }
@@ -400,8 +524,9 @@
          *
          * 再叠两条压缩，避免来回切换几次就把消息额度吃满：
          * - 相邻同角色气泡合并：一轮回复本来就是拆成 2~3 条短消息发的，逐条占额度的话
-         *   30 条只装得下 7 轮。最近 WECHAT_RECENT_VERBATIM 条保持原样，
-         *   免得模型把「合并后的多行一条」当成该模仿的格式。
+         *   30 条只装得下 7 轮。整段历史都合并（含最近一轮），发出去的是一轮一条，
+         *   而不是 assistant 拆成 4 条分别发。跨轮因 user/assistant 交替天然分开，
+         *   不会把不同轮并成一条。图片是数组 content，不参与合并。
          * - RP 块只留最近一段：更早的已经有【长期记忆】覆盖，不必重复塞原文。
          *   记忆没开或还是空的就照旧全留，否则那段内容就彻底没了。
          */
@@ -443,10 +568,9 @@
             const kept = memoryCoversHistory ? dropEarlierRpBlocks(entries) : entries;
 
             const merged = [];
-            kept.forEach((entry, index) => {
-                const verbatim = index >= kept.length - WECHAT_RECENT_VERBATIM;
+            kept.forEach((entry) => {
                 const previous = merged[merged.length - 1];
-                if (!verbatim && entry.mergeable && previous?.mergeable
+                if (entry.mergeable && previous?.mergeable
                     && previous.message.role === entry.message.role) {
                     previous.message.content = `${previous.message.content}\n${entry.message.content}`;
                     return;
@@ -462,15 +586,16 @@
             const char = __s.currentCharacter.value;
             if (!char?.wechatEnabled) return '';
             const timeline = wechatTimeline.value;
-            let lastRpTs = -Infinity;
-            for (const item of timeline) {
-                if (item.channel === 'rp' && Number.isFinite(item.ts)) {
-                    lastRpTs = Math.max(lastRpTs, item.ts);
-                }
+            // 从尾部收集「最后一段 RP 之后」的微信消息：遇到第一条 RP 就停。
+            // 不按 ts 过滤——RP 镜像的 ts 只在生成时赋值，重新生成/编辑后会和微信消息
+            // 的时间错位，按 ts 找会让整段摘要凭空消失。
+            const segment = [];
+            for (let index = timeline.length - 1; index >= 0; index--) {
+                const item = timeline[index];
+                if (item.channel === 'rp') break;
+                if (item.channel === 'wechat' && item.role !== 'system') segment.push(item);
             }
-            const segment = timeline.filter((item) => item.channel === 'wechat'
-                && item.role !== 'system'
-                && (!Number.isFinite(item.ts) || item.ts > lastRpTs));
+            segment.reverse();
             if (!segment.length) return '';
             const who = String(char.wechatPeerName || '').trim() || char.name;
             const lines = segment.map((item) => {
@@ -543,6 +668,11 @@
             resetRpRecordCursor();
             // 把已有的 RP 历史补进时间线，保证进微信就有前情。
             await recordRpMessages();
+            // 已镜像的 RP 消息可能被编辑/删除过，重新对齐，免得发出去还是旧文案。
+            if (reconcileRpTimeline()) {
+                resetRpRecordCursor();
+                scheduleWechatSave();
+            }
             wechatInput.value = '';
             wechatPendingImage.value = null;
             wechatStatusText.value = '';

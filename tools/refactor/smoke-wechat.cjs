@@ -564,7 +564,6 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   console.log('\n== A：相邻同角色气泡合并 ==');
   await page.evaluate(async () => {
     const root = window.__APP_PROXY__;
-    // 多聊几轮，把时间线顶过「最近 8 条不合并」的窗口，才看得到合并效果
     for (let i = 0; i < 4; i++) {
       root.wechatInput = '再聊一句' + i;
       await root.sendWechatMessage();
@@ -575,19 +574,20 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     await new Promise(r => setTimeout(r, 400));
   });
   const mergeCall = [...captured].reverse().find(c => c.isWechat);
-  const mergedAssistant = mergeCall
-    ? mergeCall.contents.filter(c => c.includes('在的') && c.includes('刚看到消息')).length
-    : -1;
-  check('超窗口的历史分段气泡被并成一条', mergedAssistant >= 1, 'merged=' + mergedAssistant);
-  check('最近的分段气泡保持单条原样（给模型看正确格式）',
-    !!mergeCall && mergeCall.contents.some(c => c === '刚看到消息'),
-    JSON.stringify(mergeCall ? mergeCall.contents.slice(-5) : []));
+  check('同轮多条气泡合并成一条（含表情）',
+    !!mergeCall && mergeCall.contents.some(c =>
+      c.includes('在的') && c.includes('刚看到消息') && c.includes('🙄')),
+    JSON.stringify(mergeCall ? mergeCall.contents.slice(-4) : []));
+  check('不再把一轮拆成多条分别发',
+    !!mergeCall && !mergeCall.contents.includes('刚看到消息'));
 
-  console.log('\n== 剧情块：占位符解析 + 长文截断不留残渣 ==');
+  console.log('\n== 剧情块：占位符解析 + 长文完整保留（不截断） ==');
   await page.evaluate(async () => {
     const root = window.__APP_PROXY__;
     // 关记忆，避免剧情块被收敛掉
     root.memorySettings.enabled = false;
+    // 用户名设成 lin：{{user}}→lin 变短，旧实现按 200 字截断会把名字切成「l」
+    root.user.name = 'lin';
     // 段一：短句占位符 → 应被 RP 正则管线解析成用户名
     root.chatHistory.push({ role: 'user', content: '{{user}}坐下，端起碗。' });
     root.chatHistory.push({ role: 'assistant', content: '好。' });
@@ -596,9 +596,8 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     root.wechatInput = '分段探针一';
     await root.sendWechatMessage();
     await new Promise(r => setTimeout(r, 400));
-    // 段二：精确构造，前缀 197 码点 + {{user}}，让占位符正好跨在第 200 个码点上，
-    // 覆盖「切片落在占位符内部留下半截 {{u」这一 bug。
-    root.chatHistory.push({ role: 'assistant', content: '钥'.repeat(197) + '{{user}}随后坐下。' });
+    // 段二：230 字前缀把正文推过 200 字，验证超长部分仍完整保留、名字不被切
+    root.chatHistory.push({ role: 'assistant', content: '钥'.repeat(230) + '{{user}}随后坐下，这是结尾标记。' });
     await root.closeWechat();
     await root.openWechat();
     root.wechatInput = '分段探针二';
@@ -610,11 +609,93 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   const shortBlock = clipBlocks.find(c => c.includes('坐下，端起碗')) || '';
   const longBlock = clipBlocks.find(c => c.includes('钥')) || '';
   check('剧情块里的 {{user}} 经 RP 正则解析成用户名',
-    shortBlock.includes('阿伟') && !shortBlock.includes('{{user}}'),
+    shortBlock.includes('lin') && !shortBlock.includes('{{user}}'),
     shortBlock.slice(0, 60));
-  check('长文截断后不留残缺花括号/占位符残渣',
-    longBlock.length > 0 && !/\{[^{}]*$/.test(longBlock) && !longBlock.includes('{{'),
-    longBlock.slice(-40));
+  check('超长正文（>200 字）完整保留、不截断',
+    longBlock.includes('lin随后坐下') && longBlock.includes('这是结尾标记'),
+    JSON.stringify(longBlock.slice(-16)));
+  check('用户名不被切半个（lin 不切成 l）',
+    longBlock.includes('lin随后坐下'),
+    JSON.stringify(longBlock.slice(-16)));
+
+  console.log('\n== 编辑 RP 消息后，微信块同步更新（不再发旧文案） ==');
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.memorySettings.enabled = false;
+    // 用户名不能是 roleplay 子串（此前是 阿伟），否则正则「Auto Replace」会卡死浏览器
+    root.user.name = 'lin';
+    root.characters.push({
+      name: '小D', description: '编辑同步测试', personality: 'x', first_mes: '原始开场白：你好。',
+      avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
+      uuid: 'test-uuid-edit', createdAt: Date.now(),
+      wechatEnabled: true, wechatPeerName: '小D', wechatSpeed: 'fast'
+    });
+    const index = root.characters.length - 1;
+    await root.selectCharacter(index, false, { silent: true });
+    root.chatHistory.length = 0;
+    root.chatHistory.push({ role: 'assistant', content: '原始开场白：你好。' });
+    await root.openWechat();
+    root.wechatInput = '编辑前探针';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+    await root.closeWechat();
+    // 模拟 saveEditMessage 只改 chatHistory 里的 content
+    root.chatHistory[0].content = '改过的开场白：晚安。';
+    await root.openWechat();
+    root.wechatInput = '编辑后探针';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 500));
+  });
+  const editCalls = captured.filter(c => c.isWechat
+    && (c.contents.some(x => x.includes('编辑前探针')) || c.contents.some(x => x.includes('编辑后探针'))));
+  const beforeCall = editCalls.find(c => c.contents.some(x => x.includes('编辑前探针')));
+  const afterCall = editCalls.find(c => c.contents.some(x => x.includes('编辑后探针')));
+  check('编辑前微信块是旧文案',
+    !!beforeCall && beforeCall.contents.some(c => c.includes('原始开场白')));
+  check('编辑 RP 消息后微信块更新为新文案',
+    !!afterCall && afterCall.contents.some(c => c.includes('改过的开场白')),
+    afterCall ? afterCall.contents.find(c => c.includes('开场白'))?.slice(0, 70) : 'no call');
+  check('编辑后旧文案不再出现',
+    !!afterCall && !afterCall.contents.some(c => c.includes('原始开场白')));
+
+  console.log('\n== 重新生成换了 id 后，缺失的 RP 镜像被补回 ==');
+  const regen = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.characters.push({
+      name: '小F', description: '重生成对账', personality: 'x', first_mes: '开场白甲。',
+      avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
+      uuid: 'test-uuid-regen', createdAt: Date.now(),
+      wechatEnabled: true, wechatPeerName: '小F', wechatSpeed: 'fast'
+    });
+    await root.selectCharacter(root.characters.length - 1, false, { silent: true });
+    // 手工构造：时间线里第 3 项是已过期的镜像（旧 id / 旧文案），
+    // chatHistory 里对应消息被重新生成换了新 id。
+    root.wechatTimeline = [
+      { id: 't1', ts: 100, channel: 'rp', rpIndex: 0, rpMsgId: 'msg-a', role: 'assistant', type: 'text', content: '开场白甲。' },
+      { id: 't2', ts: 101, channel: 'wechat', role: 'user', type: 'text', content: '微信一句' },
+      { id: 't3', ts: 102, channel: 'rp', rpIndex: 1, rpMsgId: 'stale-id', role: 'assistant', type: 'text', content: '旧文案' }
+    ];
+    root.chatHistory = [
+      { id: 'msg-a', role: 'assistant', content: '开场白甲。' },
+      { id: 'new-id', role: 'assistant', content: '重新生成后的文案' }
+    ];
+    const changed = root.reconcileRpTimeline();
+    const tl = root.wechatTimeline;
+    return {
+      changed,
+      order: tl.map(i => i.channel),
+      contents: tl.filter(i => i.channel === 'rp').map(i => i.content),
+      // 新镜像的 ts 必须比它前面的微信消息新，否则回 RP 摘要会漏掉
+      tsOrderOk: tl[2].ts > tl[1].ts
+    };
+  });
+  check('过期镜像被替换为新文案（按新 id 补回）',
+    regen.changed === true && regen.contents.includes('重新生成后的文案'),
+    JSON.stringify(regen.contents));
+  check('补回后保持 RP→微信→RP 的顺序',
+    JSON.stringify(regen.order) === JSON.stringify(['rp', 'wechat', 'rp']),
+    JSON.stringify(regen.order));
+  check('补回的镜像 ts 排在后面微信消息之后（摘要不漏）', regen.tsOrderOk === true);
 
   console.log('\n== 清空微信记录（确认弹窗必须能盖在微信层上） ==');
   const clearFlow = await page.evaluate(async () => {

@@ -642,9 +642,11 @@ const app = createApp({
             wechatWorldInfoOptions: __s.wechatWorldInfoOptions,
             wechatPresetOptions: __s.wechatPresetOptions,
             wechatDisplayItems: __s.wechatDisplayItems,
+            wechatTimeline: __s.wechatTimeline,
             openWechat: __s.openWechat, closeWechat: __s.closeWechat,
             openWechatSettings: __s.openWechatSettings, saveWechatSettings: __s.saveWechatSettings,
             clearWechatTimeline: __s.clearWechatTimeline,
+            reconcileRpTimeline: __s.reconcileRpTimeline,
             handleWechatImageSelection: __s.handleWechatImageSelection,
             removeWechatPendingImage: __s.removeWechatPendingImage,
             sendWechatMessage: __s.sendWechatMessage, stopWechatGeneration: __s.stopWechatGeneration
