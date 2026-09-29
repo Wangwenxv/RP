@@ -76,7 +76,7 @@
         const lastContextFloorCount = computed(() => lastContextMessages.value
             .filter(message => Number.isFinite(message?.floor)).length);
         __s.lastContextFloorCount = lastContextFloorCount;
-        const CHARACTER_SCOPED_STORAGE_NAMES = ['chat', 'classic_memories', 'branches', 'wechat_timeline'];
+        const CHARACTER_SCOPED_STORAGE_NAMES = ['chat', 'classic_memories', 'branches', 'wechat_timeline', 'story_recap'];
         __s.CHARACTER_SCOPED_STORAGE_NAMES = CHARACTER_SCOPED_STORAGE_NAMES;
         const {
             clearTokenUsageHistory,

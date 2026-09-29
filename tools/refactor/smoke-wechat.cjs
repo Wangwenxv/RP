@@ -80,6 +80,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     const msgs = body?.messages || [];
     const sysContent = String(msgs[0]?.content || '');
     const isWechat = sysContent.includes('你只能输出一个 JSON 对象');
+    const isRecap = sysContent.includes('上下文压缩器');
     let lastUser = '';
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role === 'user') {
@@ -90,11 +91,13 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
       }
     }
     captured.push({
-      isWechat, sysContent, lastUser,
+      isWechat, isRecap, sysContent, lastUser,
       roles: msgs.map(m => m.role).join(','),
       contents: msgs.map(m => typeof m.content === 'string' ? m.content.slice(0, 400) : '[parts]')
     });
-    const content = isWechat ? REPLY : '（继续画着，头也没抬）……嗯，那你歇会儿。';
+    const content = isRecap
+      ? '林晚与 lin 在微信上聊过天，约定晚些时候再联系。'
+      : (isWechat ? REPLY : '（继续画着，头也没抬）……嗯，那你歇会儿。');
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -300,7 +303,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   });
   const rpCall = [...captured].reverse().find(c => !c.isWechat);
   check('回 RP 后仍能正常生成', backToRp.historyLen >= 5, 'len=' + backToRp.historyLen);
-  check('回 RP 的请求注入了微信剧情摘要', !!rpCall && rpCall.lastUser.includes('后来你们在微信上聊了这些'));
+  check('回 RP 的请求注入了微信聊天记录块', !!rpCall && rpCall.lastUser.includes('【微信聊天记录'));
   check('微信剧情摘要含具体对话内容', !!rpCall && rpCall.lastUser.includes('在的') && rpCall.lastUser.includes('刚看到消息'));
   check('注入后保留用户本轮原始输入', !!rpCall && rpCall.lastUser.includes('我们继续刚才的'));
 
@@ -700,6 +703,18 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   console.log('\n== 清空微信记录（确认弹窗必须能盖在微信层上） ==');
   const clearFlow = await page.evaluate(async () => {
     const root = window.__APP_PROXY__;
+    // 独立角色并先聊两句，用例自足（不依赖前面测试留下的角色/面板状态）
+    root.characters.push({
+      name: '小H', description: '清空测试', personality: 'x', first_mes: '嗨。',
+      avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
+      uuid: 'test-uuid-clear', createdAt: Date.now(),
+      wechatEnabled: true, wechatPeerName: '小H', wechatSpeed: 'fast'
+    });
+    await root.selectCharacter(root.characters.length - 1, false, { silent: true });
+    await root.openWechat();
+    root.wechatInput = '清空前的消息';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
     const countMsgs = () => root.wechatDisplayItems.filter(i => i.kind === 'message').length;
     const before = countMsgs();
     root.clearWechatTimeline();
@@ -763,6 +778,134 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('未填微信版时抽屉不列出该预设', presetEdit.before === false);
   check('保存后写入 wechatContent', String(presetEdit.saved).includes('不要替他补话'), String(presetEdit.saved).slice(0, 30));
   check('保存后该预设出现在微信抽屉', presetEdit.after === true);
+
+  console.log('\n== 微信1→RP1→微信2→RP2：两段微信都进 RP2 的背景 ==');
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.memorySettings.enabled = false;
+    // 独立角色，避免污染前面依赖精确计数的用例
+    root.characters.push({
+      name: '小G', description: '交错背景', personality: 'x', first_mes: '开场。',
+      avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
+      uuid: 'test-uuid-interleave', createdAt: Date.now(),
+      wechatEnabled: true, wechatPeerName: '小G', wechatSpeed: 'fast'
+    });
+    await root.selectCharacter(root.characters.length - 1, false, { silent: true });
+    root.chatHistory = [{ id: 'g-open', role: 'assistant', content: '开场。' }];
+    // 微信1
+    await root.openWechat();
+    root.wechatInput = '第一段微信内容';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+    await root.closeWechat();
+    // RP1
+    root.userInput = 'RP 第一轮输入';
+    await root.sendMessage();
+    await new Promise(r => setTimeout(r, 400));
+    // 微信2
+    await root.openWechat();
+    root.wechatInput = '第二段微信内容';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+    await root.closeWechat();
+    // RP2
+    root.userInput = 'RP 第二轮输入';
+    await root.sendMessage();
+    await new Promise(r => setTimeout(r, 500));
+  });
+  const rp2Call = [...captured].reverse().find(c => !c.isWechat);
+  check('RP2 的注入里同时含微信1 和微信2 的内容',
+    !!rp2Call && rp2Call.lastUser.includes('第一段微信内容') && rp2Call.lastUser.includes('第二段微信内容'),
+    rp2Call ? rp2Call.lastUser.slice(0, 40) : 'no call');
+
+  console.log('\n== 前情提要：手动压缩 + 两侧裁剪 + 去重 ==');
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.memorySettings.enabled = false; // 先不掺记忆，单独验证提要
+    root.memorySettings.classicModel = 'mock-model'; // 压缩复用记忆模型
+    root.user.name = 'lin';
+    root.characters.push({
+      name: '小R', description: '前情提要测试', personality: 'x', first_mes: '开场R。',
+      avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
+      uuid: 'test-uuid-recap', createdAt: Date.now(),
+      wechatEnabled: true, wechatPeerName: '小R', wechatSpeed: 'fast'
+    });
+    await root.selectCharacter(root.characters.length - 1, false, { silent: true });
+    // 3 轮 RP（手工构造带 id，供轮次快照使用）
+    root.chatHistory = [
+      { id: 'r0', role: 'assistant', content: '开场R。' },
+      { id: 'r1u', role: 'user', content: 'RP第一用户句' },
+      { id: 'r1a', role: 'assistant', content: 'RP第一助手句' },
+      { id: 'r2u', role: 'user', content: 'RP第二用户句' },
+      { id: 'r2a', role: 'assistant', content: 'RP第二助手句' },
+      { id: 'r3u', role: 'user', content: 'RP第三用户句' },
+      { id: 'r3a', role: 'assistant', content: 'RP第三助手句' }
+    ];
+    // 3 条微信
+    await root.openWechat();
+    for (const t of ['微信内容甲', '微信内容乙', '微信内容丙']) {
+      root.wechatInput = t;
+      await root.sendWechatMessage();
+      await new Promise(r => setTimeout(r, 250));
+    }
+    await root.closeWechat();
+    // 压缩：保留最近 1 轮 RP、1 条微信
+    root.memorySettings.recapKeepRpTurns = 1;
+    root.memorySettings.recapKeepWechatMsgs = 1;
+    await root.runStoryRecap();
+  });
+  const recapCall = captured.find(c => c.isRecap);
+  check('压缩触发了一次模型调用', !!recapCall);
+  check('压缩素材含 RP 与微信正文',
+    !!recapCall && recapCall.contents.some(c => c.includes('RP第一用户句'))
+    && recapCall.contents.some(c => c.includes('微信内容甲')));
+  const recapState = await page.evaluate(() => {
+    const root = window.__APP_PROXY__;
+    const r = root.storyRecap;
+    const wx = root.wechatTimeline.filter(i => i.channel === 'wechat' && i.role !== 'system');
+    return {
+      text: r?.text || '', ct: r?.coversThroughTurn, cw: r?.coversWechatCount,
+      totalWx: wx.length, firstWx: wx[0]?.content
+    };
+  });
+  check('前情提要已生成，覆盖 2 轮 RP',
+    recapState.text.includes('林晚') && recapState.ct === 2,
+    `ct=${recapState.ct}`);
+  check('覆盖微信数 = 总数 - 保留 1 条',
+    recapState.cw === recapState.totalWx - 1,
+    `cw=${recapState.cw} total=${recapState.totalWx}`);
+
+  // 生成一轮 RP：上下文应含提要、剔除被覆盖的老轮次
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.userInput = 'RP 后续输入';
+    await root.sendMessage();
+    await new Promise(r => setTimeout(r, 400));
+  });
+  const recapRp = [...captured].reverse().find(c => !c.isWechat && !c.isRecap);
+  check('RP 上下文含前情提要块',
+    !!recapRp && recapRp.contents.some(c => c.includes('【前情提要')));
+  check('RP 上下文剔除了被覆盖的旧轮次',
+    !!recapRp && !recapRp.contents.some(c => c.includes('RP第一助手句')));
+  check('RP 上下文保留未覆盖的轮次',
+    !!recapRp && recapRp.contents.some(c => c.includes('RP第三助手句')));
+
+  // 进微信：system 含提要、历史剔除被覆盖的旧内容
+  await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    await root.openWechat();
+    root.wechatInput = '微信后续';
+    await root.sendWechatMessage();
+    await new Promise(r => setTimeout(r, 400));
+  });
+  const recapWx = [...captured].reverse().find(c => c.isWechat);
+  check('微信 system 含前情提要',
+    !!recapWx && recapWx.sysContent.includes('【前情提要】'));
+  check('微信历史剔除被覆盖的旧微信段',
+    !!recapWx && !!recapState.firstWx && !recapWx.contents.some(c => c.includes(recapState.firstWx)),
+    recapState.firstWx);
+  check('微信历史保留未覆盖的新微信段',
+    !!recapWx && recapWx.contents.some(c => c.includes('微信后续')));
 
   console.log('\nERRORS(' + errors.length + '):');
   errors.slice(0, 15).forEach(e => console.log('  ' + e));

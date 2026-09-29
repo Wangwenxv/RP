@@ -130,11 +130,14 @@ index.html 与 app.js 的调用清单各加一行），return 里暴露模板需
 随角色删除/存储清理一并处理）。**粒度跟随剧情分支**（scope = `getCurrentStoryBranchScopeId()`），
 切分支时微信记录一起切，不会串戏。
 
-每条：`{ id, ts, channel: 'rp' | 'wechat', role, type, content }`。
+每条：`{ id, ts, channel: 'rp' | 'wechat', role, type, content, rpIndex?, rpMsgId? }`
+（`rpIndex`/`rpMsgId` 仅 RP 镜像有，指向对应的 chatHistory 消息）。
 
 - **RP → 时间线**：`generateResponse` 的 `finally` 调 `recordRpMessages()`，按 `rpIndex` 只追加新消息
   （角色未开微信时为空操作）。
-- **进微信**（`openWechat`）：读该 scope 的时间线，把已有 RP 历史补齐；
+- **进微信**（`openWechat`）：读该 scope 的时间线 → `recordRpMessages()` 补齐 → `reconcileRpTimeline()`
+  做一次权威对账。RP 侧每轮上下文独立重建，编辑/删除/重新生成不会自动回写镜像，所以对账按
+  `rpMsgId`（id 对不上时回退 `rpIndex`）重绑：编辑过的就地更新、新增的按时间槽插回原位、已删的丢弃。
   system prompt（`buildWechatSystemPrompt`）由以下拼成：
   - **完整角色卡**（`buildWechatCharacterCard`）：`Name` + `Description` + `Personality` + `mes_example`，
     与 RP 侧 `[Character]` 注入对齐；若角色编辑器填了「微信人设」则用它覆盖；
@@ -142,12 +145,15 @@ index.html 与 app.js 的调用清单各加一行），return 里暴露模板需
   - **RP 预设白名单**（`WECHAT_PRESET_WHITELIST`：人格内核/禁止规则/防神化）——
     只带跨媒介的人格与行为约束；叙事格式类预设（文风/活人感/剧情面板/时间戳/第二人称/去User中心化）
     与 NSFW增强（要求「细腻缓慢推进」，与短气泡冲突）都是 RP 正文规则，一律不带；
-  - 关系/场景（`wechatRelation`/`wechatScene`）+ **RP 近况摘要**（`buildRpDigestForWechat`）；
+  - 关系/场景（`wechatRelation`/`wechatScene`）+ **RP 长期记忆**（`buildWechatMemory`）；
   - 微信协议 + 跨场景提示。
-  历史只取 `channel==='wechat'` 段。
-- **回 RP**（`15-generate.js`）：上下文组装后调 `appendWechatDigestToMessages`，把
-  「最后一次 RP 之后」的微信段改写成第三人称剧情片段（`buildWechatRpDigest`），
-  附到最新一条 user 消息**前面**（保留用户输入原文）。
+  历史按时间线顺序还原：每段连续 RP 合并成**一条**「剧情背景」块（`buildWechatRpBlock`）插在原时间位置，
+  正文先过 RP 的 `processRegex` 解析 `{{user}}` 等占位符且**不截断**；微信消息**相邻同角色气泡全量合并**
+  成一条（跨轮因 user/assistant 交替天然分开），避免一轮 4 条被拆成 4 条分别发。
+- **回 RP**（`15-generate.js`）：上下文组装后调 `appendWechatDigestToMessages`，把**全部**微信消息
+  改写成「微信聊天记录」块（`buildWechatRpDigest`），附到最新一条 user 消息**前面**（保留用户输入原文）。
+  取全量而非「最后一次 RP 之后」：RP 侧每轮独立重建上下文，增量过滤会让
+  「微信1→RP1→微信2→RP2」在 RP2 时丢掉微信1。
 
 两侧永远不整段复制历史，只按需取窗口；因此不会互相膨胀。
 
@@ -163,14 +169,62 @@ JSON 分段协议与打字节奏：逐条 `typingDuration`（基线 + 字数×�
 ### 7.5 验证
 
 `tools/refactor/smoke-wechat.cjs`（无头 Edge，`node tools/refactor/smoke-wechat.cjs`）覆盖：
-协议解析 6 例、建角色开微聊、入口按钮显隐、覆盖层渲染、分段气泡（含表情）、
-IndexedDB 持久化回读、以及**双向衔接**（黑盒拦截真实请求体，验证进微信带 RP 摘要、
-回 RP 注入微信剧情段且保留原文）、角色编辑器开关。`tools/refactor/shot-wechat.cjs` 生成覆盖层截图。
+协议解析、建角色开微聊、入口按钮显隐、覆盖层渲染、分段气泡（含表情）、气泡全量合并、
+IndexedDB 持久化回读、角色间时间线隔离、编辑/重新生成后的镜像对账、
+`{{user}}` 占位符解析与长文不截断、以及**双向衔接**（黑盒拦截真实请求体，验证进微信带 RP 摘要、
+回 RP 注入微信聊天记录块且保留原文，含「微信1→RP1→微信2→RP2」两段微信都进 RP2 背景）、
+角色编辑器开关。`tools/refactor/shot-wechat.cjs` 生成覆盖层截图。
 
 
-## 8. 已知遗留
+## 8. 前情提要（上下文压缩）
+
+### 8.1 问题
+
+长期记忆（`classicMemories`）本质是「每轮一份缩写」。它和 RP/微信两块原文历史混在一起时会出现
+「弄没」和「多一份」：
+
+- **弄没**：微信侧为省 token 只留最近一段 RP 块（`dropEarlierRpBlocks`），更早的靠【长期记忆】兜底；
+  记忆没精确覆盖到的轮次，其 RP 正文就在微信上下文里彻底消失。
+- **多一份**：最新那段 RP 块是完整原文，【长期记忆】又覆盖了同一批轮次，同一内容出现两遍。
+
+用户要求**完整保真优先**，且要能自己控制压缩时机——于是引入 agent 式的「上下文压缩」。
+
+### 8.2 机制
+
+- **前情提要 `storyRecap`**：每个「角色×分支」存一份
+  `{ text, coversThroughTurn, coversWechatCount, createdAt }`。`text` 是人类可读的第三人称
+  「前情提要」，概括到压缩那一刻为止的全部 RP + 微信内容。
+- **仅手动触发**：UI 加「压缩」按钮。点击后把截止点之前的 RP 轮次 + 微信时间线老段
+  （连同更早的旧提要）一起交给模型，生成新提要并覆盖旧的。不自动触发。
+- **保留窗口可配置**：`settings.recapKeepRpTurns`（RP 保留轮数，默认 3）与
+  `settings.recapKeepWechatMsgs`（微信保留条数，默认 20）。压缩时更早的部分进提要，最近这些保留原文。
+- **原文不销毁**：`chatHistory` 与 `wechat_timeline` 原样保留（UI 仍可回看、可撤销），只是不再进上下文。
+  前情提要即「可丢掉旧原文」的依据——覆盖范围内的内容已由提要代表。
+
+### 8.3 注入与去重
+
+`storyRecap` 覆盖范围用**前缀计数**表达（压缩只压最老的内容，所以覆盖点必然是两条流的前缀）：
+`coversThroughTurn`（覆盖到第几轮 RP）+ `coversWechatCount`（覆盖多少条微信消息）。
+
+- **RP 侧**：`storyRecap.text` 作为一条独立 message（user 角色 + 明显标题）注入；被覆盖的老轮次
+  从上下文剔除。这样那些轮次的**原文和它们的 per-turn 记忆摘要一起消失**（记忆挂在轮次上），
+  天然不与提要重复——提要是那段旧内容的唯一代表。
+- **微信侧**：`storyRecap.text` 进 system prompt；被覆盖的旧 RP 块与微信老段从历史剔除
+  （取代原 `dropEarlierRpBlocks` 的「只留最后一段」粗暴做法）。
+- **和记忆的关系**：记忆继续负责**未被提要覆盖**的轮次。`buildWechatMemory` 只注入
+  `turnEnd > coversThroughTurn` 的记忆，避免同一段出现「提要 + 记忆」两份。
+
+### 8.4 存储
+
+scoped key `story_recap`，粒度跟随剧情分支（与 `wechat_timeline` 一致），注册进
+`CHARACTER_SCOPED_STORAGE_NAMES`，随角色删除/存储清理一并处理。
+
+
+## 9. 已知遗留
 
 - `index.html`（2728 行，模板 + 3 段内联脚本）与 `assets/js/ui-components.js`（2956 行）尚未拆分，
   可按同样思路继续（模板拆分需要引入构建步骤或 Vue 单文件组件替代方案，需单独评估）。
 - Tailwind 走 CDN 开发版（控制台会有生产警告），属项目原状。
+- 首屏依赖 CDN 的 `vue`/`marked`/`DOMPurify`/`Tailwind`：网络不通时 `marked` 未定义会让启动脚本
+  抛错、页面白屏（`runtime-services.js` 的 `new marked.Renderer()` 无兜底）。可考虑本地副本 + 判空。
 - `character/`、`novel/` 两个子工具页各自独立（内嵌 iframe 加载），不在本次范围内。

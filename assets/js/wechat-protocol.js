@@ -86,6 +86,8 @@
         if (extra.relation) parts.push(`【你们的关系】\n${extra.relation}`);
         if (extra.scene) parts.push(`【当前场景】\n${extra.scene}`);
         if (extra.extraRules) parts.push(extra.extraRules);
+        // 前情提要：用户手动压缩出的旧剧情概要，覆盖范围比逐轮记忆更早。
+        if (extra.storyRecap) parts.push(`【前情提要】\n${String(extra.storyRecap).trim()}`);
         // 长期记忆：RP 侧压缩出来的历轮总结，补上「摘要只覆盖最近几轮」之外的旧账。
         if (extra.memory) parts.push(`【长期记忆】\n${String(extra.memory).trim()}`);
         if (extra.rpSummary) parts.push(`【之前发生的事】\n${extra.rpSummary}`);

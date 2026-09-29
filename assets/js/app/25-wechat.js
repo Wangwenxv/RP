@@ -471,8 +471,11 @@
          */
         const buildWechatMemory = () => {
             if (!__s.memorySettings?.enabled) return '';
+            // 被前情提要覆盖的轮次不再重复注入这份逐轮记忆（提要已代表那段内容）
+            const recapTurnCount = Number(__s.storyRecap?.value?.coversThroughTurn) || 0;
             const memories = (__s.classicMemories?.value || [])
-                .filter(memory => memory?.enabled !== false && String(memory?.summary || '').trim());
+                .filter(memory => memory?.enabled !== false && String(memory?.summary || '').trim())
+                .filter(memory => Number(memory.turnEnd ?? memory.turn) > recapTurnCount);
             if (!memories.length) return '';
             return memories.slice(-WECHAT_MEMORY_LIMIT).map((memory) => {
                 const start = Number(memory.turnStart ?? memory.turn);
@@ -497,15 +500,16 @@
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
                 extraRules: `【重要】你们既是 roleplay 里的关系，也是现实里互加微信的人。`
                     + `把 roleplay 中已建立的称呼、关系、默契带进微信，像真人一样随口聊天，不要重来一遍自我介绍。`,
+                storyRecap: __s.buildStoryRecapBlock ? __s.buildStoryRecapBlock() : '',
                 memory: buildWechatMemory()
             });
         };
         __s.buildWechatSystemPrompt = buildWechatSystemPrompt;
 
         /**
-         * 只保留最后一个 RP 剧情块，更早的交给【长期记忆】。
-         * 注意是「丢掉多余的 RP 块」，不是「只留最后一个 RP 块之后的内容」——
-         * 微信消息一条都不能少，它们才是这条对话线本身。
+         * 只保留最后一个 RP 剧情块（**无前情提要时**的兜底）。
+         * 记忆启用但还没手动压缩时沿用旧做法：更早的交给【长期记忆】。
+         * 一旦有了前情提要，改由 recap 覆盖范围精确裁剪（见 buildWechatModelMessages）。
          */
         const dropEarlierRpBlocks = (entries) => {
             let lastRpIndex = -1;
@@ -513,6 +517,23 @@
             if (lastRpIndex === -1) return entries;
             return entries.filter((entry, index) => !entry.rp || index === lastRpIndex);
         };
+
+        /**
+         * 前情提要的覆盖边界：被覆盖的 RP 消息最大 chatHistory 索引 + 微信消息条数。
+         * 压缩只压最老的内容，所以覆盖点必然是两条流的前缀。
+         */
+        const recapCoverage = () => {
+            const recap = __s.storyRecap?.value;
+            if (!recap) return null;
+            const snapshot = __s.buildConversationTurnSnapshot(__s.chatHistory.value, { includeSystem: false });
+            const coveredTurns = (snapshot.turns || []).slice(0, Math.max(0, Number(recap.coversThroughTurn) || 0));
+            let rpMaxIndex = -1;
+            coveredTurns.forEach(turnInfo => {
+                (turnInfo.messageIndexes || []).forEach(index => { rpMaxIndex = Math.max(rpMaxIndex, index); });
+            });
+            return { rpMaxIndex, wxCount: Math.max(0, Number(recap.coversWechatCount) || 0) };
+        };
+        __s.recapCoverageRange = recapCoverage;
 
         /**
          * 微信历史 → 模型消息。严格按统一时间线的顺序走：
@@ -523,21 +544,22 @@
          * 后者会让模型分不清某段 RP 是在这轮微信之前还是之后。
          *
          * 再叠两条压缩，避免来回切换几次就把消息额度吃满：
-         * - 相邻同角色气泡合并：一轮回复本来就是拆成 2~3 条短消息发的，逐条占额度的话
-         *   30 条只装得下 7 轮。整段历史都合并（含最近一轮），发出去的是一轮一条，
-         *   而不是 assistant 拆成 4 条分别发。跨轮因 user/assistant 交替天然分开，
-         *   不会把不同轮并成一条。图片是数组 content，不参与合并。
-         * - RP 块只留最近一段：更早的已经有【长期记忆】覆盖，不必重复塞原文。
-         *   记忆没开或还是空的就照旧全留，否则那段内容就彻底没了。
+         * - 相邻同角色气泡合并：整段历史都合并（含最近一轮），发出去的是一轮一条，
+         *   而不是 assistant 拆成 4 条分别发。跨轮因 user/assistant 交替天然分开。
+         * - 有前情提要时，被 recap 覆盖的旧 RP 块与旧微信段一律剔除（内容已进提要）；
+         *   没有提要、但记忆开着时，退回「只留最近一段 RP 块」的旧做法。
          */
         const buildWechatModelMessages = () => {
             const entries = [];
             let rpBuffer = [];
+            let wxSeen = 0;
             const flushRp = () => {
                 if (!rpBuffer.length) return;
                 const block = buildWechatRpBlock(rpBuffer);
+                const maxRpIndex = rpBuffer.reduce((max, item) =>
+                    Number.isFinite(item.rpIndex) ? Math.max(max, item.rpIndex) : max, -1);
                 rpBuffer = [];
-                if (block) entries.push({ message: { role: 'user', content: block }, mergeable: false, rp: true });
+                if (block) entries.push({ message: { role: 'user', content: block }, mergeable: false, rp: true, maxRpIndex });
             };
 
             for (const item of wechatTimeline.value) {
@@ -548,24 +570,34 @@
                 if (item.channel !== 'wechat') continue;
                 flushRp();
                 if (item.role !== 'user' && item.role !== 'assistant') continue;
+                wxSeen += 1;
                 if (item.type === 'image' && item.role === 'user') {
                     const parts = [];
                     if (item.content) parts.push({ type: 'image_url', image_url: { url: item.content } });
                     // content 是数组，拼不了，也就不参与合并
-                    entries.push({ message: { role: 'user', content: parts.length ? parts : '(图片)' }, mergeable: false });
+                    entries.push({ message: { role: 'user', content: parts.length ? parts : '(图片)' }, mergeable: false, wxSeen });
                 } else if (item.type === 'sticker') {
-                    entries.push({ message: { role: item.role, content: item.content }, mergeable: true });
+                    entries.push({ message: { role: item.role, content: item.content }, mergeable: true, wxSeen });
                 } else {
                     const text = String(item.content || '').trim();
-                    if (text) entries.push({ message: { role: item.role, content: text }, mergeable: true });
+                    if (text) entries.push({ message: { role: item.role, content: text }, mergeable: true, wxSeen });
                 }
             }
             // 时间线以 RP 收尾时（刚 RP 完还没发微信），这段同样是当前对话的背景
             flushRp();
 
-            const memoryCoversHistory = __s.memorySettings?.enabled === true
-                && (__s.classicMemories?.value || []).length > 0;
-            const kept = memoryCoversHistory ? dropEarlierRpBlocks(entries) : entries;
+            let kept;
+            const coverage = recapCoverage();
+            if (coverage) {
+                // 前情提要覆盖到的旧内容（RP 块、微信段）不再注入，提要已代表它们
+                kept = entries.filter(entry => entry.rp
+                    ? (coverage.rpMaxIndex >= 0 && entry.maxRpIndex > coverage.rpMaxIndex)
+                    : !(Number.isFinite(entry.wxSeen) && entry.wxSeen <= coverage.wxCount));
+            } else {
+                const memoryCoversHistory = __s.memorySettings?.enabled === true
+                    && (__s.classicMemories?.value || []).length > 0;
+                kept = memoryCoversHistory ? dropEarlierRpBlocks(entries) : entries;
+            }
 
             const merged = [];
             kept.forEach((entry) => {
@@ -585,17 +617,13 @@
         const buildWechatRpDigest = () => {
             const char = __s.currentCharacter.value;
             if (!char?.wechatEnabled) return '';
-            const timeline = wechatTimeline.value;
-            // 从尾部收集「最后一段 RP 之后」的微信消息：遇到第一条 RP 就停。
-            // 不按 ts 过滤——RP 镜像的 ts 只在生成时赋值，重新生成/编辑后会和微信消息
-            // 的时间错位，按 ts 找会让整段摘要凭空消失。
-            const segment = [];
-            for (let index = timeline.length - 1; index >= 0; index--) {
-                const item = timeline[index];
-                if (item.channel === 'rp') break;
-                if (item.channel === 'wechat' && item.role !== 'system') segment.push(item);
-            }
-            segment.reverse();
+            // 取全部微信消息（去 system）。RP 侧每轮上下文都是独立重建的，
+            // 上一轮注入过的微信摘要不会留进 chatHistory，所以这里不能做「只取最后一段
+            // RP 之后」的增量过滤——否则「微信1→RP1→微信2→RP2」到 RP2 时微信1 就丢了。
+            // 要的是「过去所有在微信上聊过的内容」都作为角色已知背景。聊天记录本身受
+            // chatHistory 窗口限制，这里不额外截断。
+            const segment = wechatTimeline.value.filter((item) =>
+                item.channel === 'wechat' && item.role !== 'system');
             if (!segment.length) return '';
             const who = String(char.wechatPeerName || '').trim() || char.name;
             const lines = segment.map((item) => {
@@ -604,8 +632,8 @@
                 if (item.type === 'sticker') return `${name}：[表情 ${item.content}]`;
                 return `${name}：${item.content}`;
             });
-            return `【后来你们在微信上聊了这些（请据此延续，不必重复）】\n`
-                + `你们暂时从 roleplay 场景切到了现实里的微信对话，${who}在微信上和你说：\n`
+            return `【微信聊天记录｜以下是你们在现实里互加微信后的对话，作为你已知的背景，不是 roleplay 正文】\n`
+                + `${who}在微信上和你说：\n`
                 + lines.join('\n');
         };
         __s.buildWechatRpDigest = buildWechatRpDigest;

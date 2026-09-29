@@ -236,6 +236,16 @@
             }));
             const suppressedUiTemplateCorrectionIndexes = new Set();
 
+            // 前情提要（上下文压缩）：被覆盖的老轮次从上下文剔除——它们的原文和对应的
+            // per-turn 记忆一起消失，改由提要代表（避免「弄没」也避免「多一份」）。
+            const recapCoverage = __s.recapCoverageRange ? __s.recapCoverageRange() : null;
+            if (recapCoverage && recapCoverage.rpMaxIndex >= 0) {
+                chatHistoryForContext = chatHistoryForContext.filter((message) =>
+                    !(Array.isArray(message._sourceIndexes)
+                        && message._sourceIndexes.length > 0
+                        && message._sourceIndexes.every(index => index <= recapCoverage.rpMaxIndex)));
+            }
+
             if (__s.memorySettings.enabled
                 && __s.classicMemories.value.length > 0) {
                 const candidateCount = Math.max(0, chatHistoryForContext.length - __s.memorySettings.summaryKeepFloors);
@@ -306,6 +316,15 @@
                         chatHistoryForContext = chatHistoryForContext.filter((_, index) => !removableIndices.has(index));
                     }
                 }
+            }
+
+            // 前情提要正文：作为一条独立背景消息插在聊天记录之前。
+            const recapBlockText = __s.buildStoryRecapBlock ? __s.buildStoryRecapBlock() : '';
+            if (recapBlockText) {
+                chatHistoryForContext = [
+                    { role: 'user', content: recapBlockText, _sourceIndexes: [], _preventContextMerge: true },
+                    ...chatHistoryForContext
+                ];
             }
 
             // 添加聊天记录

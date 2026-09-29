@@ -42,6 +42,11 @@
         __s.SUMMARY_KEEP_FLOORS_MAX = SUMMARY_KEEP_FLOORS_MAX;
         const SUMMARY_KEEP_FLOORS_DEFAULT = 20;
         __s.SUMMARY_KEEP_FLOORS_DEFAULT = SUMMARY_KEEP_FLOORS_DEFAULT;
+        // 前情提要（story recap）：压缩时保留最近多少原文不压掉
+        const RECAP_KEEP_RP_TURNS_DEFAULT = 3;
+        __s.RECAP_KEEP_RP_TURNS_DEFAULT = RECAP_KEEP_RP_TURNS_DEFAULT;
+        const RECAP_KEEP_WECHAT_MSGS_DEFAULT = 20;
+        __s.RECAP_KEEP_WECHAT_MSGS_DEFAULT = RECAP_KEEP_WECHAT_MSGS_DEFAULT;
         const LIST_PAGE_SIZE = 10;
         __s.LIST_PAGE_SIZE = LIST_PAGE_SIZE;
         const classicMemories = ref([]);
@@ -54,7 +59,9 @@
             embeddingModel: '',
             classicModel: '',
             summaryKeepFloors: SUMMARY_KEEP_FLOORS_DEFAULT,
-            classicConcurrency: CLASSIC_MEMORY_DEFAULT_CONCURRENCY
+            classicConcurrency: CLASSIC_MEMORY_DEFAULT_CONCURRENCY,
+            recapKeepRpTurns: RECAP_KEEP_RP_TURNS_DEFAULT,
+            recapKeepWechatMsgs: RECAP_KEEP_WECHAT_MSGS_DEFAULT
         });
         __s.memorySettings = memorySettings;
         const isClassicBatchExtracting = ref(false);
@@ -115,7 +122,7 @@
             if (!memorySettings.classicModel && memorySettings.model) {
                 memorySettings.classicModel = String(memorySettings.model).trim();
             }
-            const fields = new Set(['enabled', 'mode', 'embeddingModel', 'classicModel', 'summaryKeepFloors', 'classicConcurrency']);
+            const fields = new Set(['enabled', 'mode', 'embeddingModel', 'classicModel', 'summaryKeepFloors', 'classicConcurrency', 'recapKeepRpTurns', 'recapKeepWechatMsgs']);
             Object.keys(memorySettings).forEach(key => {
                 if (!fields.has(key)) delete memorySettings[key];
             });
@@ -131,6 +138,10 @@
                 SUMMARY_KEEP_FLOORS_DEFAULT
             );
             memorySettings.classicConcurrency = normalizeClassicMemoryConcurrency(memorySettings.classicConcurrency);
+            memorySettings.recapKeepRpTurns = normalizeKeepFloors(
+                memorySettings.recapKeepRpTurns, 0, 50, RECAP_KEEP_RP_TURNS_DEFAULT);
+            memorySettings.recapKeepWechatMsgs = normalizeKeepFloors(
+                memorySettings.recapKeepWechatMsgs, 0, 200, RECAP_KEEP_WECHAT_MSGS_DEFAULT);
         };
         __s.normalizeMemorySettings = normalizeMemorySettings;
         const normalizeActiveToolCallName = (value) => {

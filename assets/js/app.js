@@ -261,6 +261,7 @@ const app = createApp({
         __sections.lifecycle(__s);
         __sections.lateHelpers(__s);
         __sections.wechat(__s);
+        __sections.recap(__s);
 
         return {
             switchProfile: __s.switchProfile, createNewProfile: __s.createNewProfile, deleteProfile: __s.deleteProfile, userProfiles: __s.userProfiles, activeProfileId: __s.activeProfileId, showProfileDropdown: __s.showProfileDropdown,
@@ -308,6 +309,9 @@ const app = createApp({
             showMemoryBackfillModal: __s.showMemoryBackfillModal, memoryBackfillProgress: __s.memoryBackfillProgress,
             startBatchMemoryExtraction: __s.startBatchMemoryExtraction, abortBatchExtraction: __s.abortClassicBatchExtraction,
             activeKeepFloors: __s.activeKeepFloors, keepFloorsSlider: __s.keepFloorsSlider, keepFloorsSliderMin: __s.keepFloorsSliderMin, keepFloorsSliderMax: __s.keepFloorsSliderMax,
+            storyRecap: __s.storyRecap, isRecapGenerating: __s.isRecapGenerating,
+            recapCoverage: computed(() => __s.computeRecapCoverage()),
+            runStoryRecap: __s.runStoryRecap, clearStoryRecap: __s.clearStoryRecap,
             // 滑块值映射：4-10 为变量分析消息层数。
             uiTemplateAnalysisDepthSlider: computed({
                 get: () => Math.max(4, Math.min(10, Number(__s.settings.uiTemplateAnalysisDepth) || 4)),
