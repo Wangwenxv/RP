@@ -309,6 +309,12 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     !!rpCall && rpCall.contents.some(c => c.includes('在的') && c.includes('刚看到消息')));
   check('注入后保留用户本轮原始输入', !!rpCall && rpCall.lastUser.includes('我们继续刚才的'));
 
+  // 微信段回灌 RP 时，玩家要标成用户名（阿伟），不能用「你」——那段里「你」= 主角 = 角色
+  const wxSeg = (rpCall?.contents || []).find(c => c.includes('【微信聊天记录'));
+  check('微信段回灌玩家用用户名标注（非「你」）',
+    !!wxSeg && wxSeg.includes('阿伟：') && !wxSeg.includes('\n你：'),
+    wxSeg ? wxSeg.replace(/\n/g, ' | ').slice(0, 160) : 'none');
+
   console.log('\n== 角色编辑器：微信开关 ==');
   const editor = await page.evaluate(async () => {
     const root = window.__APP_PROXY__;

@@ -736,8 +736,11 @@
             if (!items.length) return null;
             const char = __s.currentCharacter.value;
             const who = String(char?.wechatPeerName || '').trim() || char?.name || '对方';
+            // 玩家用名字（__s.user.name），不用「你」：这段插回 RP 上下文后，「你」= 主角 = 这个角色，
+            // 玩家发言标成「你」会跟角色撞车，模型分不清谁说的。与 §8 摘要、{{user}} 替换口径一致。
+            const playerName = String(__s.user?.name || '').trim() || '对方';
             const lines = items.map((item) => {
-                const name = item.role === 'user' ? '你' : who;
+                const name = item.role === 'user' ? playerName : who;
                 if (item.type === 'image') return `${name}：[图片]`;
                 if (item.type === 'sticker') return `${name}：[表情 ${item.content}]`;
                 return `${name}：${item.content}`;
