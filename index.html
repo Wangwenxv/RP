@@ -994,13 +994,35 @@
                                                             {{ storyRecap ? '重建前情提要' : '生成前情提要' }}
                                                         </span>
                                                     </button>
+                                                    <!-- 保留条数：前情提要下面再附上最近的原文，缓解摘要损耗、避免割裂感。
+                                                         用户可调，改完立即落盘，作用于**下一次**压缩（已生成的提要沿用当时的值）。 -->
+                                                    <div class="flex items-center gap-2 px-2.5 text-[11px] font-medium text-gray-500">
+                                                        <label class="flex items-center gap-1">
+                                                            保留
+                                                            <input type="number" min="0" max="10" step="1"
+                                                                :value="recapKeepSettings.rpTurns"
+                                                                @change="setRecapKeepSettings({ rpTurns: $event.target.value })"
+                                                                title="保留最近几轮 RP 原文"
+                                                                class="w-9 rounded-md border border-gray-200 bg-white px-1 py-0.5 text-center text-[11px] text-gray-600 focus:border-primary-400 focus:outline-none">
+                                                            轮 RP
+                                                        </label>
+                                                        <label class="flex items-center gap-1">
+                                                            <input type="number" min="0" max="30" step="1"
+                                                                :value="recapKeepSettings.wechatCount"
+                                                                @change="setRecapKeepSettings({ wechatCount: $event.target.value })"
+                                                                title="保留最近几条微信原文"
+                                                                class="w-9 rounded-md border border-gray-200 bg-white px-1 py-0.5 text-center text-[11px] text-gray-600 focus:border-primary-400 focus:outline-none">
+                                                            条微信
+                                                        </label>
+                                                    </div>
                                                     <!-- 进度 / 结果提示：压缩到哪、覆盖了什么，直接写在按钮下面，
                                                          免得点了转半天却像是没反应。 -->
                                                     <p v-if="isRecapGenerating" class="px-2.5 text-[11px] leading-relaxed text-gray-400">
                                                         正在压缩 {{ recapCoverage.turns }} 轮 RP + {{ recapCoverage.wechatTotal }} 条微信…
                                                     </p>
                                                     <p v-else-if="storyRecap" class="px-2.5 text-[11px] leading-relaxed text-gray-400">
-                                                        已覆盖 {{ storyRecap.coversThroughTurn }} 轮 RP · {{ storyRecap.coversWechatCount }} 条微信
+                                                        已覆盖 {{ storyRecap.coversThroughTurn }} 轮 RP · {{ storyRecap.coversWechatCount }} 条微信<span
+                                                            v-if="storyRecap.keepRPTurns || storyRecap.keepWechatCount">，保留最近 {{ storyRecap.keepRPTurns }} 轮 · {{ storyRecap.keepWechatCount }} 条原文</span>
                                                     </p>
                                                     <p v-else-if="!recapCoverage.hasNewContent" class="px-2.5 text-[11px] leading-relaxed text-gray-400">
                                                         暂无可压缩的内容，先多聊几轮

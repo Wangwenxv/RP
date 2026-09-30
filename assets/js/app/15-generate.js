@@ -318,13 +318,10 @@
                 }
             }
 
-            // 前情提要正文：作为一条独立背景消息插在聊天记录之前。
-            const recapBlockText = __s.buildStoryRecapBlock ? __s.buildStoryRecapBlock() : '';
-            if (recapBlockText) {
-                chatHistoryForContext = [
-                    { role: 'user', content: recapBlockText, _sourceIndexes: [], _preventContextMerge: true },
-                    ...chatHistoryForContext
-                ];
+            // 前情提要：摘要 + 最近 RP/微信原文各自成一条独立背景消息，插在聊天记录之前。
+            const recapMessages = __s.buildStoryRecapMessages ? __s.buildStoryRecapMessages() : [];
+            if (recapMessages.length) {
+                chatHistoryForContext = [...recapMessages, ...chatHistoryForContext];
             }
 
             // 添加聊天记录

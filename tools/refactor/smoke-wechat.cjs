@@ -858,6 +858,9 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
       await new Promise(r => setTimeout(r, 250));
     }
     await root.closeWechat();
+    // 保留窗口：压缩前设成「保留最近 2 轮 RP + 6 条微信」，验证注入块贴回近期原文
+    // （微信每轮会带回助手回复，所以条数要够多才盖得到用户消息「丙」）
+    await root.setRecapKeepSettings({ rpTurns: 2, wechatCount: 6 });
     // 压缩：全量（压缩点之前的所有 RP 轮次 + 全部微信）
     await root.runStoryRecap();
   });
@@ -872,7 +875,8 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     const wx = root.wechatTimeline.filter(i => i.channel === 'wechat' && i.role !== 'system');
     return {
       text: r?.text || '', ct: r?.coversThroughTurn, cw: r?.coversWechatCount,
-      totalWx: wx.length, firstWx: wx[0]?.content
+      keepRP: r?.keepRPTurns, keepWx: r?.keepWechatCount,
+      totalWx: wx.length, firstWx: wx[0]?.content, lastWx: wx[wx.length - 1]?.content
     };
   });
   check('前情提要已生成，覆盖全部 3 轮 RP',
@@ -881,6 +885,9 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('覆盖全部微信消息（全量压缩）',
     recapState.cw === recapState.totalWx && recapState.totalWx > 0,
     `cw=${recapState.cw} total=${recapState.totalWx}`);
+  check('保留条数随压缩快照进 recap 对象',
+    recapState.keepRP === 2 && recapState.keepWx === 6,
+    `keepRP=${recapState.keepRP} keepWx=${recapState.keepWx}`);
 
   // 生成一轮 RP：上下文应含提要、被覆盖的老轮次全部剔除（全量压缩后只剩提要 + 本轮）
   await page.evaluate(async () => {
@@ -892,9 +899,13 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   const recapRp = [...captured].reverse().find(c => !c.isWechat && !c.isRecap);
   check('RP 上下文含前情提要块',
     !!recapRp && recapRp.contents.some(c => c.includes('【前情提要')));
-  check('全量压缩后被覆盖的旧轮次全部剔除',
-    !!recapRp && !recapRp.contents.some(c => c.includes('RP第一助手句'))
-    && !recapRp.contents.some(c => c.includes('RP第三助手句')));
+  check('保留窗口把最近 2 轮 RP 原文放进独立消息（摘要之后）',
+    !!recapRp && recapRp.contents.some(c => c.includes('最近 RP 原文'))
+    && recapRp.contents.some(c => c.includes('RP第二助手句'))
+    && recapRp.contents.some(c => c.includes('RP第三助手句')),
+    'tail 应含第 2、3 轮原文');
+  check('超出保留窗口的更早轮次仍剔除',
+    !!recapRp && !recapRp.contents.some(c => c.includes('RP第一助手句')));
 
   // 进微信：system 含提要、历史剔除被覆盖的旧内容
   await page.evaluate(async () => {
@@ -914,6 +925,10 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('微信历史剔除被覆盖的旧微信段',
     !!recapWx && !!recapState.firstWx && !recapWx.contents.some(c => c.includes(recapState.firstWx)),
     recapState.firstWx);
+  check('微信侧保留窗口把最近微信原文放进独立消息',
+    !!recapWx && recapWx.contents.some(c => c.includes('最近微信原文'))
+    && !!recapState.lastWx && recapWx.contents.some(c => c.includes(recapState.lastWx)),
+    recapState.lastWx);
   check('微信历史保留未覆盖的新微信段',
     !!recapWx && recapWx.contents.some(c => c.includes('微信后续')));
 

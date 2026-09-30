@@ -194,12 +194,17 @@ IndexedDB 持久化回读、角色间时间线隔离、编辑/重新生成后的
 ### 8.2 机制
 
 - **前情提要 `storyRecap`**：每个「角色×分支」存一份
-  `{ text, coversThroughTurn, coversWechatCount, createdAt }`。`text` 是人类可读的第三人称
-  「前情提要」，概括到压缩那一刻为止的全部 RP + 微信内容。
+  `{ text, coversThroughTurn, coversWechatCount, keepRPTurns, keepWechatCount, createdAt }`。`text` 是人类
+  可读的第三人称「前情提要」，概括到压缩那一刻为止的全部 RP + 微信内容。
 - **手动全量压缩**：入口在聊天输入框旁的**快捷面板**（`#chat-quick-panel`）里的「压缩上下文」按钮。
   点击即把**当前全部** RP 轮次 + 全部微信消息（连同更早的旧提要）交给模型，生成新提要并覆盖旧的
-  ——压缩点之前的内容全部塌成一条提要，之后只追加新内容。不自动触发，也没有保留窗口
-  （`coversThroughTurn`/`coversWechatCount` 恒等于压缩那一刻的全部计数）。
+  ——覆盖点之前的内容全部塌成一条提要，之后只追加新内容。不自动触发，覆盖计数恒等于压缩那一刻的
+  全部计数（`coversThroughTurn`/`coversWechatCount`）。
+- **保留窗口（缓解摘要损耗）**：摘要是压缩产物，难免漏细节，用户接下一轮时会「割裂」。所以摘要在
+  注入时**下面再贴回被覆盖范围内最新的若干条原文**（见 8.3）。保留条数由用户在前情提要按钮下方调，
+  `keepRPTurns`（保留几轮 RP 原文，0–10）/`keepWechatCount`（保留几条微信原文，0–30），存进 recap 对象
+  （压缩那一刻的快照），改设置只对**下一次**压缩生效。注意保留的原文与 `text` 里对应内容是**有意重复**
+  的——摘要负责长期背景，原文负责近期细节。
 - **素材顺序走统一时间线**：素材不是「先全部 RP、再全部微信」，而是按 `wechat_timeline` 交错还原
   （RP1→微信1→RP2→微信2→RP3）。时间线里 `channel:'rp'` 的镜像带 `rpIndex`（对应 chatHistory 下标），
   `channel:'wechat'` 就是微信消息本身；正文取自 chatHistory（已清洗 CoT/UI 模板/下一句提示），
@@ -217,20 +222,29 @@ IndexedDB 持久化回读、角色间时间线隔离、编辑/重新生成后的
 `coversThroughTurn`（覆盖到第几轮 RP）+ `coversWechatCount`（覆盖多少条微信消息）。
 
 - **RP 侧**：`storyRecap.text` 作为一条独立 message（user 角色 + 明显标题）注入；被覆盖的老轮次
-  从上下文剔除。这样那些轮次的**原文和它们的 per-turn 记忆摘要一起消失**（记忆挂在轮次上），
-  天然不与提要重复——提要是那段旧内容的唯一代表。
+  从上下文剔除。那些轮次的**per-turn 记忆摘要随之消失**（记忆挂在轮次上），不与提要重复——提要是
+  那段旧内容的唯一代表。老轮次的原文不再逐条进上下文，但最近 `keepRPTurns` 轮会作为保留窗口随提要
+  一起回来（见下条）。
+- **保留窗口（最近的原文）**：`buildStoryRecapMessages` 产出**三条独立的 user 背景消息**——摘要、
+  最近 RP 原文、最近微信原文，各自带 `_preventContextMerge`（否则相邻同 role 会被合并回一坨；早期
+  把三段拼进同一条 content，模型/用户都分不清哪段是什么，看起来像「没带微信」）。RP 段取**被覆盖
+  范围内最新的** `keepRPTurns` 轮（「【第 N 轮】」格式），微信段取最新的 `keepWechatCount` 条逐条成行。
+  两侧的注入（`15-generate.js` RP 侧 `[...recapMessages, ...history]`、`25-wechat.js` 微信侧
+  `head.unshift(...recapMessages)`）都走这同一组消息，所以保留窗口是对称的。这段与摘要正文有意重复：
+  摘要是长期背景，原文是近期语气/细节，让上下文接得自然。
 - **微信侧**：`storyRecap.text` 作为**对话记录的第一条**注入（夹在 system 与聊天记录之间），**不进
   system prompt**——它是对话内容的一员，不是角色设定；被覆盖的旧 RP 块与微信老段从历史剔除
-  （取代原 `dropEarlierRpBlocks` 的「只留最后一段」粗暴做法）。
+  （取代原 `dropEarlierRpBlocks` 的「只留最后一段」粗暴做法）。被覆盖的最近微信由上面的保留窗口带回。
 - **和记忆的关系**：记忆继续负责**未被提要覆盖**的轮次。`buildWechatMemory` 只注入
   `turnEnd > coversThroughTurn` 的记忆，避免同一段出现「提要 + 记忆」两份。
 
 ### 8.4 存储与联动
 
 scoped key `story_recap`，粒度跟随剧情分支（与 `wechat_timeline` 一致），注册进
-`CHARACTER_SCOPED_STORAGE_NAMES`，随角色删除/存储清理一并处理。`clearChat`（清空聊天记录）
-会一并调用 `clearStoryRecapSilently()`——提要是 `chatHistory` 之外的独立状态，不清就会在清空后
-继续作为对话首条出现（用户看到的「清空没效果」）。压缩入口（`runStoryRecap`）先
+`CHARACTER_SCOPED_STORAGE_NAMES`，随角色删除/存储清理一并处理。保留条数设置存 **全局 key
+`story_recap_keep_settings`**（不随分支切、跨分支共享，改一次对以后所有压缩生效）。`clearChat`
+（清空聊天记录）会一并调用 `clearStoryRecapSilently()`——提要是 `chatHistory` 之外的独立状态，
+不清就会在清空后继续作为对话首条出现（用户看到的「清空没效果」）。压缩入口（`runStoryRecap`）先
 `ensureWechatTimelineLoaded()`：微信时间线只在打开微信面板时载入，记忆页直接点压缩时可能为空，
 否则素材会漏掉微信对话。
 

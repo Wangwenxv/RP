@@ -9,6 +9,9 @@
  * - 原文不销毁：chatHistory 与 wechat_timeline 原样保留，只是不再进上下文，前情提要代表它们。
  * - 覆盖范围用前缀计数表达：coversThroughTurn（覆盖到第几轮 RP）+ coversWechatCount（覆盖多少条微信）。
  *   压缩即全量，所以这两个计数恒等于「压缩那一刻」的全部内容。
+ * - 保留窗口：摘要有损耗，除摘要外再各发一条最近 RP 原文、一条最近微信原文（独立 user 消息，不揉在
+ *   摘要里）。最近这段原文能让模型接得上当下语气与细节，用户也没有「割裂感」。保留条数
+ *   keepRPTurns / keepWechatCount 用户可调，存进 recap 对象（见下）。
  * - RP 侧：recap 作为独立 message 注入，被覆盖的老轮次（及其 per-turn 记忆）从上下文剔除。
  * - 微信侧：recap 作为对话记录首条注入（不进 system），被覆盖的旧 RP 块与微信老段剔除；记忆只注入
  *   未被覆盖的轮次。
@@ -19,7 +22,21 @@
     window.RPHubAppSections = window.RPHubAppSections || {};
     window.RPHubAppSections.recap = function (__s) {
         const STORY_RECAP_KEY = 'story_recap';
+        // 保留条数设置与 recap 同库不同 scope：跨分支共享，改一次即对以后所有压缩生效。
+        const RECAP_KEEP_SETTINGS_KEY = 'story_recap_keep_settings';
+        const RECAP_KEEP_RP_TURNS_DEFAULT = 3;
+        const RECAP_KEEP_RP_TURNS_MIN = 0;
+        const RECAP_KEEP_RP_TURNS_MAX = 10;
+        const RECAP_KEEP_WECHAT_COUNT_DEFAULT = 6;
+        const RECAP_KEEP_WECHAT_COUNT_MIN = 0;
+        const RECAP_KEEP_WECHAT_COUNT_MAX = 30;
         const recapScopeId = () => __s.getCurrentStoryBranchScopeId();
+
+        const clampInt = (value, min, max, fallback) => {
+            const number = Math.floor(Number(value));
+            if (!Number.isFinite(number)) return fallback;
+            return Math.min(max, Math.max(min, number));
+        };
 
         const storyRecap = ref(null);
         __s.storyRecap = storyRecap;
@@ -35,9 +52,55 @@
                 text,
                 coversThroughTurn: Math.max(0, Number(value.coversThroughTurn) || 0),
                 coversWechatCount: Math.max(0, Number(value.coversWechatCount) || 0),
+                keepRPTurns: clampInt(value.keepRPTurns, RECAP_KEEP_RP_TURNS_MIN, RECAP_KEEP_RP_TURNS_MAX, RECAP_KEEP_RP_TURNS_DEFAULT),
+                keepWechatCount: clampInt(value.keepWechatCount, RECAP_KEEP_WECHAT_COUNT_MIN, RECAP_KEEP_WECHAT_COUNT_MAX, RECAP_KEEP_WECHAT_COUNT_DEFAULT),
                 createdAt: Number(value.createdAt) || 0
             };
         };
+
+        // 快捷面板上的保留条数选择（跨分支），未载入前用默认值。
+        const recapKeepSettings = reactive({
+            rpTurns: RECAP_KEEP_RP_TURNS_DEFAULT,
+            wechatCount: RECAP_KEEP_WECHAT_COUNT_DEFAULT
+        });
+        __s.recapKeepSettings = recapKeepSettings;
+        let loadedKeepSettings = false;
+
+        const ensureRecapKeepSettingsLoaded = async () => {
+            if (loadedKeepSettings) return;
+            loadedKeepSettings = true;
+            try {
+                if (!getMainDb()) await initDB();
+                const stored = await getStoredValue(RECAP_KEEP_SETTINGS_KEY);
+                if (stored && typeof stored === 'object') {
+                    recapKeepSettings.rpTurns = clampInt(stored.rpTurns, RECAP_KEEP_RP_TURNS_MIN, RECAP_KEEP_RP_TURNS_MAX, RECAP_KEEP_RP_TURNS_DEFAULT);
+                    recapKeepSettings.wechatCount = clampInt(stored.wechatCount, RECAP_KEEP_WECHAT_COUNT_MIN, RECAP_KEEP_WECHAT_COUNT_MAX, RECAP_KEEP_WECHAT_COUNT_DEFAULT);
+                }
+            } catch (error) {
+                console.error('读取保留条数设置失败:', error);
+            }
+        };
+        __s.ensureRecapKeepSettingsLoaded = ensureRecapKeepSettingsLoaded;
+
+        /** 面板上改保留条数：立即落盘，供**下一次**压缩使用（已生成的提要沿用当时的值）。 */
+        const setRecapKeepSettings = async (patch = {}) => {
+            if (patch.rpTurns !== undefined) {
+                recapKeepSettings.rpTurns = clampInt(patch.rpTurns, RECAP_KEEP_RP_TURNS_MIN, RECAP_KEEP_RP_TURNS_MAX, RECAP_KEEP_RP_TURNS_DEFAULT);
+            }
+            if (patch.wechatCount !== undefined) {
+                recapKeepSettings.wechatCount = clampInt(patch.wechatCount, RECAP_KEEP_WECHAT_COUNT_MIN, RECAP_KEEP_WECHAT_COUNT_MAX, RECAP_KEEP_WECHAT_COUNT_DEFAULT);
+            }
+            try {
+                if (!getMainDb()) await initDB();
+                await setStoredValue(RECAP_KEEP_SETTINGS_KEY, {
+                    rpTurns: recapKeepSettings.rpTurns,
+                    wechatCount: recapKeepSettings.wechatCount
+                });
+            } catch (error) {
+                console.error('保存保留条数设置失败:', error);
+            }
+        };
+        __s.setRecapKeepSettings = setRecapKeepSettings;
 
         /** 作用域切换后首次调用从 DB 载入。 */
         const ensureStoryRecapLoaded = async (force = false) => {
@@ -48,6 +111,7 @@
             try {
                 if (!getMainDb()) await initDB();
                 storyRecap.value = normalizeRecap(await getScopedStoredValue(STORY_RECAP_KEY, scope));
+                await ensureRecapKeepSettingsLoaded();
             } catch (error) {
                 console.error('读取前情提要失败:', error);
                 storyRecap.value = null;
@@ -63,21 +127,13 @@
         };
         __s.saveStoryRecapNow = saveStoryRecapNow;
 
-        /** 注入用：system/上下文里的前情提要块。无提要时返回空串。 */
-        const buildStoryRecapBlock = () => {
-            const text = String(storyRecap.value?.text || '').trim();
-            if (!text) return '';
-            return `【前情提要｜此前剧情的压缩摘要，作为你已知的背景】\n${text}`;
-        };
-        __s.buildStoryRecapBlock = buildStoryRecapBlock;
-
         const countWechatMessages = () => (__s.wechatTimeline?.value || [])
             .filter(item => item.channel === 'wechat' && item.role !== 'system').length;
 
         /**
-         * 压缩覆盖范围：**全部** RP 轮次 + 全部微信消息（保留窗口为 0）。
-         * 与前情提要是「压缩点之前全部内容的代表」这一设计一致：点一次压缩，
-         * 截止当前的所有内容都塌成一条提要，之后只追加新内容。
+         * 压缩覆盖范围：**全部** RP 轮次 + 全部微信消息。
+         * 覆盖点仍是「压缩那一刻的全部内容」；摘要下面另按 keepRPTurns/keepWechatCount 贴回最新原文，
+         * 但那是注入层的保留窗口，不改覆盖计数。之后只追加新内容。
          */
         const computeRecapCoverage = () => {
             const turns = (__s.buildConversationTurnSnapshot(__s.chatHistory.value, { includeSystem: false }).turns || []).length;
@@ -167,10 +223,106 @@
         };
         __s.buildRecapMaterial = buildRecapMaterial;
 
+        /**
+         * 保留窗口的 RP 原文：被覆盖范围内最新的 keepRPTurns 轮，按时间线贴回，带「【第 N 轮】」前缀。
+         */
+        const buildRecapRecentRpText = () => {
+            const recap = storyRecap.value;
+            if (!recap) return '';
+            const keepRPTurns = Math.max(0, Number(recap.keepRPTurns) || 0);
+            if (!keepRPTurns) return '';
+            const coveredTurns = Math.max(0, Number(recap.coversThroughTurn) || 0);
+            const rpStartTurn = Math.max(1, coveredTurns - keepRPTurns + 1);
+
+            const rpEntries = collectRecapRpEntries(coveredTurns);
+            const byIndex = new Map(rpEntries.map(entry => [entry.index, entry]));
+            const lines = [];
+            const emittedIndexes = new Set();
+            const emittedTurns = new Set();
+            const emitRp = (index) => {
+                const entry = byIndex.get(index);
+                if (!entry || emittedIndexes.has(index) || entry.turn < rpStartTurn) return;
+                emittedIndexes.add(index);
+                const prefix = emittedTurns.has(entry.turn) ? '' : `【第 ${entry.turn} 轮】`;
+                emittedTurns.add(entry.turn);
+                lines.push(`${prefix}${entry.text}`);
+            };
+            // 时间线里没有镜像的 RP 正文按原文顺序补（微信未启用 / 镜像缺失）
+            for (const item of (__s.wechatTimeline?.value || [])) {
+                if (item.channel === 'rp') emitRp(item.rpIndex);
+            }
+            rpEntries.forEach(entry => emitRp(entry.index));
+            return lines.join('\n');
+        };
+        __s.buildRecapRecentRpText = buildRecapRecentRpText;
+
+        /**
+         * 保留窗口的微信原文：被覆盖范围内最新的 keepWechatCount 条，逐条成行。
+         */
+        const buildRecapRecentWechatText = () => {
+            const recap = storyRecap.value;
+            if (!recap) return '';
+            const keepWechat = Math.max(0, Number(recap.keepWechatCount) || 0);
+            if (!keepWechat) return '';
+            const coveredWx = Math.max(0, Number(recap.coversWechatCount) || 0);
+            const wxStartSeen = Math.max(1, coveredWx - keepWechat + 1);
+
+            const characterName = String(__s.currentCharacter.value?.wechatPeerName || '').trim()
+                || __s.currentCharacter.value?.name || '角色';
+            const lines = [];
+            let wxSeen = 0;
+            for (const item of (__s.wechatTimeline?.value || [])) {
+                if (item.channel !== 'wechat' || item.role === 'system') continue;
+                wxSeen += 1;
+                if (wxSeen < wxStartSeen || wxSeen > coveredWx) continue;
+                lines.push(formatRecapWechatLine(item, characterName));
+            }
+            return lines.join('\n');
+        };
+        __s.buildRecapRecentWechatText = buildRecapRecentWechatText;
+
+        /**
+         * 注入用：前情提要「背景消息」序列。无提要时返回空数组。
+         * 摘要、最近 RP 原文、最近微信原文各自成**独立的 user 消息**——原来揉成一条 content 会糊在一起，
+         * 模型分不清哪段是摘要、哪段是 RP、哪段是微信（用户也会以为「没带微信」）。每条都带
+         * `_preventContextMerge`，避免被相邻同 role 消息合并回去。
+         */
+        const buildStoryRecapMessages = () => {
+            const text = String(storyRecap.value?.text || '').trim();
+            if (!text) return [];
+            const messages = [{
+                role: 'user',
+                content: `【前情提要｜此前剧情的压缩摘要，作为你已知的背景】\n${text}`,
+                _sourceIndexes: [],
+                _preventContextMerge: true
+            }];
+            const rpTail = buildRecapRecentRpText().trim();
+            if (rpTail) {
+                messages.push({
+                    role: 'user',
+                    content: `【最近 RP 原文｜以上摘要已覆盖到这段，这里是最近的原文，接下文时保持连贯】\n${rpTail}`,
+                    _sourceIndexes: [],
+                    _preventContextMerge: true
+                });
+            }
+            const wxTail = buildRecapRecentWechatText().trim();
+            if (wxTail) {
+                messages.push({
+                    role: 'user',
+                    content: `【最近微信原文｜摘要覆盖到的最近微信对话原文，作为背景】\n${wxTail}`,
+                    _sourceIndexes: [],
+                    _preventContextMerge: true
+                });
+            }
+            return messages;
+        };
+        __s.buildStoryRecapMessages = buildStoryRecapMessages;
+
         /** 手动压缩：生成并落盘前情提要。 */
         const runStoryRecap = async () => {
             if (isRecapGenerating.value) return;
             await ensureStoryRecapLoaded();
+            await ensureRecapKeepSettingsLoaded();
             // 微信时间线只在打开微信面板时载入；在记忆页直接点压缩时它可能还是空的，
             // 那样素材里就没有微信对话（用户看到的「压缩没带微信记忆」）。先确保载入。
             if (__s.ensureWechatTimelineLoaded) await __s.ensureWechatTimelineLoaded();
@@ -212,11 +364,16 @@
                     text,
                     coversThroughTurn: coverage.coversThroughTurn,
                     coversWechatCount: coverage.coversWechatCount,
+                    keepRPTurns: recapKeepSettings.rpTurns,
+                    keepWechatCount: recapKeepSettings.wechatCount,
                     createdAt: Date.now()
                 });
                 storyRecap.value = next;
                 await saveStoryRecapNow(next);
-                __s.showToast(`已压缩 ${coverage.coversThroughTurn} 轮 RP + ${coverage.coversWechatCount} 条微信为前情提要`, 'success');
+                const keepNote = next.keepRPTurns || next.keepWechatCount
+                    ? `，保留最近 ${next.keepRPTurns} 轮 RP + ${next.keepWechatCount} 条微信原文`
+                    : '';
+                __s.showToast(`已压缩 ${coverage.coversThroughTurn} 轮 RP + ${coverage.coversWechatCount} 条微信为前情提要${keepNote}`, 'success');
             } catch (error) {
                 console.error('生成前情提要失败:', error);
                 __s.showToast(`压缩失败：${error.message}`, 'error');
@@ -247,5 +404,7 @@
         const recapLoadingKey = computed(() => `${__s.currentCharacter.value?.uuid || ''}::${recapScopeId()}`);
         watch(recapLoadingKey, () => { ensureStoryRecapLoaded(true).catch(() => {}); });
         ensureStoryRecapLoaded().catch(() => {});
+        // 保留条数设置跨分支共享，无论有无作用域都先载入，面板才不会一直显示默认值
+        ensureRecapKeepSettingsLoaded().catch(() => {});
     };
 })();

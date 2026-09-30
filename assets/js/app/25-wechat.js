@@ -610,11 +610,11 @@
             });
 
             const head = merged.slice(-WECHAT_HISTORY_LIMIT).map(entry => entry.message);
-            // 前情提要是对话记录的第一条（不是 system 预设）：它代表被覆盖的老内容，
-            // 排在所有未被覆盖的对话之前，夹在 system 与聊天记录之间。
-            const recapBlock = __s.buildStoryRecapBlock ? __s.buildStoryRecapBlock() : '';
-            if (recapBlock) {
-                head.unshift({ role: 'user', content: recapBlock, _sourceIndexes: [], _preventContextMerge: true });
+            // 前情提要是对话记录的开头（不是 system 预设）：摘要、最近 RP 原文、最近微信原文各自成条，
+            // 排在被覆盖的老内容之前（老内容已剔除），夹在 system 与聊天记录之间。
+            const recapMessages = __s.buildStoryRecapMessages ? __s.buildStoryRecapMessages() : [];
+            if (recapMessages.length) {
+                head.unshift(...recapMessages);
             }
             return head;
         };
