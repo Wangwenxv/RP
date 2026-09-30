@@ -7,6 +7,10 @@
  * 用 JSON 而非分隔符：每条消息可带类型（文字/表情/图片/语音），后续扩展"撤回""发图"
  * 时不用改协议。解析层容忍代码块包裹、think 块、缺外层包裹、纯文本降级。
  *
+ * sticker 的 content 是「库里的名字」（如「伤心猫」），不再是 emoji 字符——但协议层
+ * 不校验、不解释 content，只保证 type 为 "sticker"。名字是否命中库、渲染成图还是回退
+ * 文本，都归 25-wechat.js / 前端管（见 docs/ARCHITECTURE.md §9）。
+ *
  * 表情包频率不靠模型自觉：档位同时作用于提示词（stickerRuleFor）和生成后的硬裁剪
  * （applyStickerPolicy），两者共用同一组 STICKER_TIERS。
  */
@@ -25,7 +29,7 @@
 - messages：数组，代表你要连着发出的多条消息，按顺序发送。
 - type 只能是 "text"（文字）或 "sticker"（单独发一个表情）。
 - text 的 content：一条短消息。
-- sticker 的 content：一个最贴切的 emoji（如 😼 🙄 😂 👍 🤔），代表你发了一个表情包。
+- sticker 的 content：默认是一个最贴切的 emoji（如 😼 🙄 😂 👍 🤔）；若下方出现了【表情包库】目录，则只能从目录里挑一个名字，原样照抄，其余情况一律用 emoji。
 
 【怎么分段 — 这是最重要的一点】
 你要模仿真人在微信上打字：想到什么就发什么，不会攒成一大段。
@@ -65,7 +69,7 @@
      * RP 相关的上下文（长期记忆、近况摘要）一律排在最后：越靠近生成位置，模型越当回事，
      * 而协议/人设/世界设定这些静态前提放在前面。
      * @param {string} persona 人设文本（通常是完整角色卡）
-     * @param {{characterName?:string, presetRules?:string, worldInfo?:string, userInfo?:string, relation?:string, scene?:string, memory?:string, rpSummary?:string, stickerRule?:string, extraRules?:string}} [extra]
+     * @param {{characterName?:string, presetRules?:string, worldInfo?:string, userInfo?:string, relation?:string, scene?:string, memory?:string, rpSummary?:string, stickerRule?:string, stickerCatalog?:string, extraRules?:string}} [extra]
      */
     function buildSystemPrompt(persona, extra = {}) {
         const who = String(extra.characterName || '').trim();
@@ -78,6 +82,8 @@
         if (extra.presetRules) parts.push(`【预设规则】\n${String(extra.presetRules).trim()}`);
         parts.push(PROTOCOL);
         if (extra.stickerRule) parts.push(String(extra.stickerRule).trim());
+        // 表情包库目录紧跟在频率策略之后：PROTOCOL 里说的「下方【表情包库】」指的就是它。
+        if (extra.stickerCatalog) parts.push(String(extra.stickerCatalog).trim());
         parts.push('【你的人设】', String(persona || '').trim() || '一个普通的年轻人。');
         // 世界书设定：与 RP 侧同源的 [条目名] + 正文，让微信侧的称呼/设定和 RP 对齐。
         if (extra.worldInfo) parts.push(`【世界设定】\n${String(extra.worldInfo).trim()}`);
@@ -150,6 +156,10 @@
 
     const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|️|‍|\s|[!?~.。]|\[[^\]]{1,8}\])+$/u;
 
+    /**
+     * 纯 emoji 判定：模型把表情当成 text 发时，据此升级成 sticker 气泡。
+     * 表情包库的「名字」是中文（Han 不属于 Extended_Pictographic），不会被误升级。
+     */
     function isPureEmoji(text) {
         const t = String(text).trim();
         if (!t || t.length > 16) return false;
@@ -281,7 +291,6 @@
         buildSystemPrompt,
         stripThinking,
         extractJSON,
-        isPureEmoji,
         normalizeMessages,
         parseReply,
         normalizeStickerTier,

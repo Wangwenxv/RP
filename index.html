@@ -2798,13 +2798,20 @@
                     <div v-if="item.kind === 'day'" class="wx-day">{{ item.label }}</div>
                     <div v-else-if="item.kind === 'system'" class="wx-sys">{{ item.content }}</div>
                     <div v-else class="wx-row" :class="{ me: item.role === 'user' }">
-                        <img v-if="item.role === 'user' ? user?.avatar : wechatAvatar" class="wx-avatar"
-                            :src="item.role === 'user' ? user?.avatar : wechatAvatar">
-                        <div v-else class="wx-avatar wx-avatar--fallback">
-                            {{ item.role === 'user' ? '我' : (wechatPeerName || '?').charAt(0) }}</div>
+                        <label class="wx-avatar-pick"
+                            :title="(item.role === 'user' ? '点击更换我的头像' : '点击更换对方头像')">
+                            <img v-if="(item.role === 'user' ? wechatUserAvatar : wechatAvatar)" class="wx-avatar"
+                                :src="item.role === 'user' ? wechatUserAvatar : wechatAvatar">
+                            <div v-else class="wx-avatar wx-avatar--fallback">
+                                {{ item.role === 'user' ? '我' : (wechatPeerName || '?').charAt(0) }}</div>
+                            <input type="file" accept="image/*" class="wx-file-hidden"
+                                @change="handleWechatAvatarSelection(item.role === 'user' ? 'user' : 'peer', $event)">
+                        </label>
                         <div class="wx-bubble"
                             :class="{ sticker: item.type === 'sticker', image: item.type === 'image' }">
                             <img v-if="item.type === 'image'" :src="item.content" alt="图片" loading="lazy">
+                            <img v-else-if="item.type === 'sticker' && item.stickerImage" class="wx-sticker-img"
+                                :src="item.stickerImage" :alt="item.content">
                             <span v-else-if="item.type === 'sticker'" class="wx-sticker-inner">{{ item.content }}</span>
                             <template v-else>{{ item.content }}</template>
                         </div>
@@ -2830,7 +2837,10 @@
                         <input type="file" accept="image/*" class="wx-file-hidden"
                             @change="handleWechatImageSelection">
                     </label>
-                    <textarea v-model="wechatInput" rows="1" class="wx-input" placeholder="发消息…"
+                    <button class="wx-icon-btn wx-sticker-btn" title="表情包"
+                        @click="openWechatStickers">😀</button>
+                    <textarea v-model="wechatInput" rows="1" class="wx-input" placeholder="发消息…（可粘贴图片）"
+                        @paste="handleWechatPaste"
                         @keydown.enter.exact.prevent="sendWechatMessage"></textarea>
                     <button v-if="!isWechatGenerating" class="wx-send"
                         :disabled="!wechatInput.trim() && !wechatPendingImage"
@@ -2838,6 +2848,118 @@
                     <button v-else class="wx-send wx-send--stop" @click="stopWechatGeneration">停止</button>
                 </div>
             </footer>
+
+            <div v-if="showWechatStickers" class="wx-drawer-mask wx-drawer-mask--center" @click.self="showWechatStickers = false">
+                <div class="wx-modal">
+                    <div class="wx-drawer-head">
+                        <h2>表情包</h2>
+                        <button class="wx-icon-btn" @click="showWechatStickers = false">✕</button>
+                    </div>
+                    <div class="wx-drawer-body">
+                        <div v-if="wechatStickers.length" class="wx-sticker-grid">
+                            <button v-for="sticker in wechatStickers" :key="sticker.id" class="wx-sticker-card"
+                                :title="sticker.description || '通用'" @click="sendWechatSticker(sticker)">
+                                <img :src="sticker.image" :alt="sticker.name">
+                                <span class="wx-sticker-card-name">{{ sticker.name }}</span>
+                            </button>
+                        </div>
+                        <p v-else class="wx-hint">还没有表情包。上传一张图、起个名字、写一句「什么时候用」，模型就能调用它了。</p>
+                        <button class="wx-primary" @click="openStickerStore">从开源表情包导入</button>
+                        <button class="wx-ghost wx-ghost--full" @click="openStickerManager">管理表情包库</button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="showStickerManager" class="wx-drawer-mask wx-drawer-mask--center" @click.self="showStickerManager = false">
+                <div class="wx-modal wx-modal--tall">
+                    <div class="wx-drawer-head">
+                        <h2>表情包库</h2>
+                        <button class="wx-icon-btn" @click="showStickerManager = false">✕</button>
+                    </div>
+                    <div class="wx-drawer-body">
+                        <label class="wx-field"><span>名字 <small>模型调用时用的名字</small></span>
+                            <input type="text" v-model="stickerDraft.name" placeholder="伤心猫"></label>
+                        <label class="wx-field"><span>什么时候用 <small>给模型看的描述，越具体越好</small></span>
+                            <input type="text" v-model="stickerDraft.description"
+                                placeholder="委屈、想被安慰、撒娇求关注时用"></label>
+                        <div class="wx-field">
+                            <span>图片</span>
+                            <div class="wx-sticker-upload">
+                                <img v-if="stickerDraft.image" :src="stickerDraft.image" class="wx-sticker-preview"
+                                    alt="表情包预览">
+                                <label class="wx-btn-file">
+                                    {{ stickerDraft.image ? '换一张' : '上传图片' }}
+                                    <input type="file" accept="image/*" class="wx-file-hidden"
+                                        @change="handleStickerImageSelection">
+                                </label>
+                            </div>
+                        </div>
+                        <div class="wx-sticker-actions">
+                            <button class="wx-primary" @click="saveSticker">
+                                {{ stickerDraft.id ? '保存修改' : '添加到库' }}</button>
+                            <button v-if="stickerDraft.id" class="wx-ghost" @click="resetStickerDraft">取消编辑</button>
+                        </div>
+                        <div class="wx-field">
+                            <span>库里的表情包 <small>{{ wechatStickers.length }} 个</small></span>
+                            <div v-if="wechatStickers.length" class="wx-sticker-manage">
+                                <div v-for="sticker in wechatStickers" :key="sticker.id" class="wx-sticker-manage-item">
+                                    <img :src="sticker.image" :alt="sticker.name">
+                                    <div class="wx-sticker-manage-meta">
+                                        <span class="wx-sticker-manage-name">{{ sticker.name }}</span>
+                                        <span class="wx-sticker-manage-desc">{{ sticker.description || '通用' }}</span>
+                                    </div>
+                                    <button class="wx-icon-btn" title="编辑" @click="editSticker(sticker)">✎</button>
+                                    <button class="wx-icon-btn" title="删除" @click="deleteSticker(sticker)">🗑</button>
+                                </div>
+                            </div>
+                            <p v-else class="wx-hint">库是空的，现在回退成 emoji 模式。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="showStickerStore" class="wx-drawer-mask wx-drawer-mask--center" @click.self="closeStickerStore">
+                <div class="wx-modal wx-modal--tall">
+                    <div class="wx-drawer-head">
+                        <h2>开源表情包 <small style="font-weight:400;color:#999;font-size:12px">来自 getActivity/EmojiPackage</small></h2>
+                        <button class="wx-icon-btn" @click="closeStickerStore">✕</button>
+                    </div>
+                    <div class="wx-drawer-body">
+                        <div v-if="!stickerStoreCatalog" class="wx-hint">
+                            表情包目录未加载（emoji-catalog.js）。重新打开页面试试。
+                        </div>
+                        <template v-else>
+                            <div class="wx-store-cats">
+                                <button v-for="cat in stickerStoreCategories" :key="cat.name" class="wx-store-cat"
+                                    :class="{ on: stickerStoreActiveCat === cat.name }"
+                                    @click="setStickerStoreCat(cat.name)">{{ cat.label }}</button>
+                            </div>
+                            <div class="wx-store-toolbar">
+                                <button class="wx-ghost" @click="toggleStickerStorePickAll">
+                                    {{ stickerStorePicked.length ? '取消全选' : '全选' }}</button>
+                                <button class="wx-primary" :disabled="!stickerStorePicked.length || stickerStoreImporting"
+                                    @click="importStickerStorePicked">
+                                    导入选中 {{ stickerStorePicked.length ? '(' + stickerStorePicked.length + ')' : '' }}</button>
+                                <button class="wx-ghost" :disabled="stickerStoreImporting"
+                                    @click="importStickerStoreCategory">导入本类全部</button>
+                                <span v-if="stickerStoreImporting" class="wx-hint">导入中…（静态图会压缩，稍等）</span>
+                            </div>
+                            <div class="wx-store-grid">
+                                <button v-for="item in stickerStoreVisible" :key="item.key" class="wx-store-cell"
+                                    :class="{ picked: stickerStoreIsPicked(item.key), loaded: stickerStoreItemState(item.cat, item.file) === 'loaded' }"
+                                    :title="item.cat + ' / ' + item.file"
+                                    @click="toggleStickerStorePick(item.key)">
+                                    <img :src="stickerStoreFileUrl(item.cat, item.file)" loading="lazy" :alt="item.file">
+                                    <span class="wx-store-cell-name">{{ item.file }}</span>
+                                    <span v-if="stickerStoreItemState(item.cat, item.file) === 'loaded'"
+                                        class="wx-store-badge">已加入</span>
+                                </button>
+                            </div>
+                            <p class="wx-hint">静态图会压缩后存到本地（离线可用）；动图 GIF 保留动画、直接引用 CDN 地址（需联网）。</p>
+                        </template>
+                    </div>
+                </div>
+            </div>
 
             <div v-if="showWechatSettings" class="wx-drawer-mask" @click.self="showWechatSettings = false">
                 <aside class="wx-drawer">
@@ -2918,6 +3040,13 @@
                             </div>
                             <small class="wx-hint">越少越像真人。提示词和生成后裁剪都会按这档收紧，模型想多发也发不出来。</small>
                         </div>
+                        <div class="wx-field">
+                            <span>表情包库 <small>全局共用，{{ wechatStickers.length }} 个</small></span>
+                            <button class="wx-primary" @click="openStickerStore">从开源表情包导入</button>
+                            <button class="wx-ghost wx-ghost--full" @click="openStickerManager">
+                                管理表情包库（上传图 / 起名 / 写适用场景）</button>
+                            <small class="wx-hint">库里没有表情包时，模型会用 emoji。加了库以后，模型从「名字｜适用场景」里挑名字发，前端按名字贴图。</small>
+                        </div>
                         <button class="wx-primary" @click="saveWechatSettings">保存</button>
                     </div>
                 </aside>
@@ -2931,6 +3060,7 @@
         document.write('<script src="assets/js/core-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/api-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-protocol.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/emoji-catalog.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/data-services.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/runtime-services.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/update-check.js?v=' + new Date().getTime() + '"><\/script>');

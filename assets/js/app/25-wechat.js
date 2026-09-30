@@ -32,6 +32,14 @@
         const WECHAT_RP_SEGMENT_MESSAGES = 16;
         const WECHAT_MEMORY_LIMIT = 10;
         const WECHAT_TIMELINE_KEY = 'wechat_timeline';
+        // 表情包库是全局的（用户自己的收藏，所有角色共用），非角色作用域。
+        const WECHAT_STICKERS_KEY = 'wechat_stickers';
+        // 目录注入上限：库再大也只把前 N 条塞进 system prompt，剩下的只影响手动发送。
+        const WECHAT_STICKER_CATALOG_LIMIT = 50;
+        const WECHAT_STICKER_DESC_LIMIT = 15;
+        // 开源表情包商店（getActivity/EmojiPackage，Apache-2.0）——静态清单见 emoji-catalog.js
+        const WECHAT_STICKER_ACTIVE_CAT = '__all__';
+        const WECHAT_STICKER_NAME_LIMIT = 24;
 
         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const rand = (a, b) => a + Math.random() * (b - a);
@@ -51,6 +59,22 @@
         __s.wechatInput = wechatInput;
         const wechatPendingImage = ref(null);
         __s.wechatPendingImage = wechatPendingImage;
+        const showWechatStickers = ref(false);
+        __s.showWechatStickers = showWechatStickers;
+        const showStickerManager = ref(false);
+        __s.showStickerManager = showStickerManager;
+        const showStickerStore = ref(false);
+        __s.showStickerStore = showStickerStore;
+        const wechatStickers = ref([]);
+        __s.wechatStickers = wechatStickers;
+        const stickerDraft = reactive({ id: '', name: '', description: '', image: '' });
+        __s.stickerDraft = stickerDraft;
+        const stickerStoreActiveCat = ref(WECHAT_STICKER_ACTIVE_CAT);
+        __s.stickerStoreActiveCat = stickerStoreActiveCat;
+        const stickerStorePicked = ref([]);
+        __s.stickerStorePicked = stickerStorePicked;
+        const stickerStoreImporting = ref(false);
+        __s.stickerStoreImporting = stickerStoreImporting;
         const isWechatGenerating = ref(false);
         __s.isWechatGenerating = isWechatGenerating;
         const wechatTyping = ref(false);
@@ -79,6 +103,37 @@
         __s.wechatPeerName = wechatPeerName;
         const wechatAvatar = computed(() => __s.currentCharacter.value?.avatar || '');
         __s.wechatAvatar = wechatAvatar;
+        // 用户头像：25 号模块在 app.js 之前求值，__s.user 那时还没赋值，
+        // 所以必须惰性 computed（直接写 __s.user?.avatar 会在初始化时炸）。
+        const wechatUserAvatar = computed(() => __s.user?.avatar || '');
+        __s.wechatUserAvatar = wechatUserAvatar;
+
+        /** 表情包条目归一化：补齐字段、裁剪描述长度。 */
+        const normalizeSticker = (raw) => {
+            const item = raw && typeof raw === 'object' ? raw : {};
+            return {
+                id: String(item.id || '').trim() || generateUUID(),
+                name: String(item.name || '').trim(),
+                description: String(item.description || '').trim().slice(0, WECHAT_STICKER_DESC_LIMIT),
+                image: String(item.image || ''),
+                createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now()
+            };
+        };
+        __s.normalizeSticker = normalizeSticker;
+
+        /** name → image，渲染时按名字贴图。同名时后写入的覆盖前者（保存时已去重）。 */
+        const stickerImageMap = computed(() => {
+            const map = new Map();
+            for (const sticker of wechatStickers.value) {
+                if (sticker?.name && sticker?.image) map.set(sticker.name, sticker.image);
+            }
+            return map;
+        });
+        __s.stickerImageMap = stickerImageMap;
+
+        /** 命中库则返回图片 dataURL，否则返回 null（调用方回退当文本渲染）。 */
+        const stickerImageOf = (content) => stickerImageMap.value.get(String(content || '').trim()) || null;
+        __s.stickerImageOf = stickerImageOf;
 
         const wechatScopeId = () => __s.getCurrentStoryBranchScopeId();
         const wechatSpeedKey = () => {
@@ -117,6 +172,29 @@
             }, 300);
         };
         __s.scheduleWechatSave = scheduleWechatSave;
+
+        // ---- 表情包库持久化（全局，不随角色/分支）----
+        const loadWechatStickers = async () => {
+            try {
+                const saved = await getStoredValue(WECHAT_STICKERS_KEY);
+                wechatStickers.value = Array.isArray(saved) ? saved.map(normalizeSticker) : [];
+            } catch (error) {
+                console.error('读取表情包库失败:', error);
+                wechatStickers.value = [];
+            }
+        };
+        __s.loadWechatStickers = loadWechatStickers;
+
+        const saveWechatStickers = async () => {
+            try {
+                if (!getMainDb()) await initDB();
+                await setStoredValue(WECHAT_STICKERS_KEY, cloneForStorage(wechatStickers.value), { clone: false });
+            } catch (error) {
+                console.error('保存表情包库失败:', error);
+                __s.showToast('表情包保存失败，请稍后重试', 'error');
+            }
+        };
+        __s.saveWechatStickers = saveWechatStickers;
 
         // ---- 时间线写入 ----
         const pushWechatItem = (item) => {
@@ -488,6 +566,27 @@
             }).join('\n');
         };
 
+        /**
+         * 组装「可用表情包目录」注入 system prompt（docs/ARCHITECTURE.md §9.4）。
+         * 只带 name + description——模型全程看不到图，靠描述挑名字，前端按名字贴图。
+         * 库为空时返回空串：不注入，模型退回 PROTOCOL 里的 emoji 模式（零配置默认不变）。
+         */
+        const buildWechatStickerCatalog = () => {
+            const all = wechatStickers.value.filter(sticker => sticker?.name);
+            if (!all.length) return '';
+            const list = all.slice(0, WECHAT_STICKER_CATALOG_LIMIT);
+            const lines = list.map((sticker) => `- ${sticker.name}｜${sticker.description || '通用'}`);
+            if (all.length > list.length) {
+                console.warn(`表情包库共 ${all.length} 条，目录只注入前 ${list.length} 条`);
+            }
+            return [
+                '【表情包库】',
+                '你可以发送下列表情包，sticker 的 content 只能从下面这些名字里选（原样照抄，不要改动）：',
+                ...lines
+            ].join('\n');
+        };
+        __s.buildWechatStickerCatalog = buildWechatStickerCatalog;
+
         const buildWechatSystemPrompt = () => {
             const char = __s.currentCharacter.value || {};
             return wxProtocol.buildSystemPrompt(buildWechatCharacterCard(), {
@@ -498,6 +597,7 @@
                 relation: String(char.wechatRelation || '').trim(),
                 scene: String(char.wechatScene || '').trim(),
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
+                stickerCatalog: buildWechatStickerCatalog(),
                 extraRules: `【重要】你们既是 roleplay 里的关系，也是现实里互加微信的人。`
                     + `把 roleplay 中已建立的称呼、关系、默契带进微信，像真人一样随口聊天，不要重来一遍自我介绍。`,
                 memory: buildWechatMemory()
@@ -765,6 +865,9 @@
             }
             showWechatPanel.value = false;
             showWechatSettings.value = false;
+            showWechatStickers.value = false;
+            showStickerManager.value = false;
+            showStickerStore.value = false;
             wechatTyping.value = false;
             wechatStatusText.value = '';
             stopWechatStatusTicker();
@@ -864,6 +967,348 @@
             reader.readAsDataURL(file);
         });
 
+        // ---- 剪贴板粘贴图片 / 头像上传 ----
+        /** 微信输入框粘贴：从剪贴板里捞出图片文件，走和 📎 同一条压缩链路。 */
+        const handleWechatPaste = async (event) => {
+            const items = event?.clipboardData?.items;
+            if (!items) return;
+            const file = [...items]
+                .find(item => item.type && item.type.startsWith('image/'))
+                ?.getAsFile();
+            if (!file) return; // 纯文字粘贴交给 textarea 原生行为
+            event.preventDefault();
+            try {
+                const dataUrl = await fileToDataURL(file);
+                wechatPendingImage.value = await compressImage(dataUrl, 1024, 0.82);
+            } catch (error) {
+                __s.showToast(`图片处理失败：${error.message}`, 'error');
+            }
+        };
+        __s.handleWechatPaste = handleWechatPaste;
+
+        /**
+         * 头像上传（微信内点击头像触发，靠 <label> 包隐藏 input 弹出选择器）。
+         * which 为 'user' 改自己头像（__s.user，走 saveData），否则改当前角色头像。
+         */
+        const handleWechatAvatarSelection = async (which, event) => {
+            const file = event?.target?.files?.[0];
+            if (event?.target) event.target.value = '';
+            if (!file) return;
+            if (!file.type.startsWith('image/')) {
+                __s.showToast('只能上传图片文件', 'warning');
+                return;
+            }
+            try {
+                const dataUrl = await compressImage(await fileToDataURL(file), 200, 0.7);
+                if (which === 'user') {
+                    __s.user.avatar = dataUrl;
+                    await __s.saveData({ saveMemories: false, saveCharacters: false });
+                } else {
+                    const char = __s.currentCharacter.value;
+                    if (!char) return;
+                    char.avatar = dataUrl;
+                    await __s.saveCharactersNow();
+                }
+                __s.showToast('头像已更新', 'success');
+            } catch (error) {
+                __s.showToast(`头像处理失败：${error.message}`, 'error');
+            }
+        };
+        __s.handleWechatAvatarSelection = handleWechatAvatarSelection;
+
+        // ---- 表情包库 CRUD ----
+        const openWechatStickers = () => {
+            showStickerStore.value = false;
+            showWechatStickers.value = true;
+        };
+        __s.openWechatStickers = openWechatStickers;
+
+        const openStickerManager = () => {
+            resetStickerDraft();
+            showWechatStickers.value = false;
+            showWechatSettings.value = false;
+            showStickerStore.value = false;
+            showStickerManager.value = true;
+        };
+        __s.openStickerManager = openStickerManager;
+
+        const resetStickerDraft = () => {
+            stickerDraft.id = '';
+            stickerDraft.name = '';
+            stickerDraft.description = '';
+            stickerDraft.image = '';
+        };
+        __s.resetStickerDraft = resetStickerDraft;
+
+        const editSticker = (sticker) => {
+            stickerDraft.id = sticker.id;
+            stickerDraft.name = sticker.name;
+            stickerDraft.description = sticker.description || '';
+            stickerDraft.image = sticker.image;
+        };
+        __s.editSticker = editSticker;
+
+        const handleStickerImageSelection = async (event) => {
+            const file = event?.target?.files?.[0];
+            if (event?.target) event.target.value = '';
+            if (!file) return;
+            if (!file.type.startsWith('image/')) {
+                __s.showToast('只能上传图片文件', 'warning');
+                return;
+            }
+            try {
+                const dataUrl = await fileToDataURL(file);
+                stickerDraft.image = await compressImage(dataUrl, 1024, 0.82);
+            } catch (error) {
+                __s.showToast(`图片处理失败：${error.message}`, 'error');
+            }
+        };
+        __s.handleStickerImageSelection = handleStickerImageSelection;
+
+        /** 保存（新增或改名）：name 必须唯一——重名会让「名字→图」映射二义，直接拒绝。 */
+        const saveSticker = async () => {
+            const name = String(stickerDraft.name || '').trim();
+            if (!name) {
+                __s.showToast('请填写表情包名字', 'warning');
+                return;
+            }
+            if (!stickerDraft.image) {
+                __s.showToast('请先上传表情包图片', 'warning');
+                return;
+            }
+            const duplicate = wechatStickers.value.find(
+                sticker => sticker.name === name && sticker.id !== stickerDraft.id
+            );
+            if (duplicate) {
+                __s.showToast(`已有叫「${name}」的表情包，换个名字`, 'warning');
+                return;
+            }
+            const existing = stickerDraft.id
+                ? wechatStickers.value.find(sticker => sticker.id === stickerDraft.id)
+                : null;
+            if (existing) {
+                existing.name = name;
+                existing.description = String(stickerDraft.description || '').trim().slice(0, WECHAT_STICKER_DESC_LIMIT);
+                existing.image = stickerDraft.image;
+            } else {
+                wechatStickers.value.push(normalizeSticker({
+                    name,
+                    description: stickerDraft.description,
+                    image: stickerDraft.image
+                }));
+            }
+            resetStickerDraft();
+            await saveWechatStickers();
+            __s.showToast('已保存', 'success');
+        };
+        __s.saveSticker = saveSticker;
+
+        const deleteSticker = (sticker) => {
+            __s.confirmAction(`确定删除表情包「${sticker.name}」吗？历史记录里发过的会回退成文本。`, async () => {
+                wechatStickers.value = wechatStickers.value.filter(item => item.id !== sticker.id);
+                if (stickerDraft.id === sticker.id) resetStickerDraft();
+                await saveWechatStickers();
+                __s.showToast('已删除', 'success');
+            });
+        };
+        __s.deleteSticker = deleteSticker;
+
+        /**
+         * 用户发一个表情包：写进时间线的 type=sticker + content=名字，
+         * 与模型发的那条走同一个渲染路径（§9.6「双方都能发」）。
+         */
+        const sendWechatSticker = async (sticker) => {
+            if (!sticker?.name) return;
+            if (!__s.currentCharacter.value) {
+                __s.showToast('请先选择一个角色', 'warning');
+                return;
+            }
+            if (isWechatGenerating.value) return;
+            pushWechatItem({ channel: 'wechat', role: 'user', type: 'sticker', content: sticker.name });
+            scheduleWechatSave();
+            showWechatStickers.value = false;
+            scrollWechatToBottom();
+            await runWechatGeneration();
+        };
+        __s.sendWechatSticker = sendWechatSticker;
+
+        // ---- 开源表情包商店（CDN 清单 → 导入本地库）----
+        const stickerStoreKey = (cat, file) => `${cat} ${file}`;
+        const stickerStorePickName = (file) => String(file || '').replace(/\.[^.]+$/, '').trim();
+        /** 有意义的文件名当「适用场景」；QQ图片xxx 这类无意义名退回分类名。 */
+        const stickerStorePickDesc = (cat, name) => {
+            const meaningful = name && /[一-龥A-Za-z]/.test(name)
+                && !/^(QQ图片|IMG[_-]?\d|DSC[_-]?\d|\d{6,})/i.test(name);
+            return (meaningful ? name : cat).slice(0, WECHAT_STICKER_DESC_LIMIT);
+        };
+        /** 导入后的库内名字：分类前缀保证唯一，同时把「这是什么」带进名字。 */
+        const stickerStoreItemName = (cat, file) =>
+            `${cat}-${stickerStorePickName(file)}`.slice(0, WECHAT_STICKER_NAME_LIMIT);
+
+        const stickerStoreFileUrl = (cat, file, useFallback = false) => {
+            const catalog = window.RPHubEmojiCatalog || {};
+            const base = (useFallback ? catalog.fallbackBase : catalog.base) || catalog.base || '';
+            if (!base) return '';
+            return `${base}/${[cat, file].map(encodeURIComponent).join('/')}`;
+        };
+        __s.stickerStoreFileUrl = stickerStoreFileUrl;
+
+        /**
+         * 跨域图片 → dataURL。必须 crossOrigin='anonymous'（CDN 已给 ACAO:*），
+         * 否则 canvas 被污染、toDataURL 抛 SecurityError。失败返回 null 由调用方回退存 URL。
+         */
+        const remoteImageToDataURL = (url, maxWidth, quality) => new Promise((resolve) => {
+            const image = new Image();
+            image.crossOrigin = 'anonymous';
+            image.onload = () => {
+                try {
+                    const w = image.naturalWidth || image.width;
+                    const h = image.naturalHeight || image.height;
+                    const scale = Math.min(1, maxWidth / w);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, Math.round(w * scale));
+                    canvas.height = Math.max(1, Math.round(h * scale));
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                } catch (_) {
+                    resolve(null);
+                }
+            };
+            image.onerror = () => resolve(null);
+            image.src = url;
+        });
+        __s.remoteImageToDataURL = remoteImageToDataURL;
+
+        const stickerStoreCatalog = computed(() => window.RPHubEmojiCatalog || null);
+        __s.stickerStoreCatalog = stickerStoreCatalog;
+
+        /** 分类列表（含「全部」）。用于商店顶部筛选。 */
+        const stickerStoreCategories = computed(() => {
+            const catalog = stickerStoreCatalog.value;
+            if (!catalog) return [];
+            const total = catalog.categories.reduce((sum, cat) => sum + cat.files.length, 0);
+            return [
+                { name: WECHAT_STICKER_ACTIVE_CAT, label: `全部 ${total}` },
+                ...catalog.categories.map(cat => ({ name: cat.name, label: `${cat.name} ${cat.files.length}` }))
+            ];
+        });
+        __s.stickerStoreCategories = stickerStoreCategories;
+
+        /** 当前筛选下要展示的条目（带 key / 加载状态）。 */
+        const stickerStoreVisible = computed(() => {
+            const catalog = stickerStoreCatalog.value;
+            if (!catalog) return [];
+            const active = stickerStoreActiveCat.value;
+            const cats = active === WECHAT_STICKER_ACTIVE_CAT
+                ? catalog.categories
+                : catalog.categories.filter(cat => cat.name === active);
+            const out = [];
+            for (const cat of cats) {
+                for (const file of cat.files) {
+                    out.push({ key: stickerStoreKey(cat.name, file), cat: cat.name, file });
+                }
+            }
+            return out;
+        });
+        __s.stickerStoreVisible = stickerStoreVisible;
+
+        /** 已在库里的条目（按库内名字判重），用于商店里标「已加入」。 */
+        const stickerStoreLoadedNames = computed(() =>
+            new Set(wechatStickers.value.map(sticker => sticker.name)));
+        __s.stickerStoreLoadedNames = stickerStoreLoadedNames;
+        const stickerStoreItemState = (cat, file) =>
+            stickerStoreLoadedNames.value.has(stickerStoreItemName(cat, file)) ? 'loaded' : 'new';
+        __s.stickerStoreItemState = stickerStoreItemState;
+
+        const stickerStoreIsPicked = (key) => stickerStorePicked.value.includes(key);
+        __s.stickerStoreIsPicked = stickerStoreIsPicked;
+        const toggleStickerStorePick = (key) => {
+            const next = stickerStorePicked.value.slice();
+            const i = next.indexOf(key);
+            if (i >= 0) next.splice(i, 1);
+            else next.push(key);
+            stickerStorePicked.value = next;
+        };
+        __s.toggleStickerStorePick = toggleStickerStorePick;
+
+        /** 选中/取消「当前筛选下」的整类未导入项。 */
+        const toggleStickerStorePickAll = () => {
+            const visible = stickerStoreVisible.value;
+            const allPicked = visible.length > 0 && visible.every(item => stickerStoreIsPicked(item.key));
+            stickerStorePicked.value = allPicked ? [] : visible.map(item => item.key);
+        };
+        __s.toggleStickerStorePickAll = toggleStickerStorePickAll;
+
+        const openStickerStore = () => {
+            showWechatStickers.value = false;
+            showStickerManager.value = false;
+            showWechatSettings.value = false;
+            // 默认停在第一个分类，而不是「全部」——全部有 2000+ 张，一次铺开会很重
+            stickerStoreActiveCat.value = window.RPHubEmojiCatalog?.categories?.[0]?.name
+                || WECHAT_STICKER_ACTIVE_CAT;
+            stickerStorePicked.value = [];
+            showStickerStore.value = true;
+        };
+        __s.openStickerStore = openStickerStore;
+        const closeStickerStore = () => { showStickerStore.value = false; };
+        __s.closeStickerStore = closeStickerStore;
+        const setStickerStoreCat = (name) => { stickerStoreActiveCat.value = name; };
+        __s.setStickerStoreCat = setStickerStoreCat;
+
+        /**
+         * 导入一批：静态图压缩存本地 dataURL（离线可用），动图 GIF 保留动画、直接存 CDN 引用。
+         * 跨域压缩失败时退到备用 CDN 的 URL 引用；同名（已导入过）跳过。
+         */
+        const importStickerStoreItems = async (items) => {
+            if (!items.length || stickerStoreImporting.value) return;
+            stickerStoreImporting.value = true;
+            let added = 0, dup = 0, failed = 0;
+            try {
+                for (const { cat, file } of items) {
+                    const name = stickerStoreItemName(cat, file);
+                    if (wechatStickers.value.some(sticker => sticker.name === name)) { dup++; continue; }
+                    const isGif = /\.gif$/i.test(file);
+                    let image = '';
+                    if (isGif) {
+                        image = stickerStoreFileUrl(cat, file);
+                    } else {
+                        image = await remoteImageToDataURL(stickerStoreFileUrl(cat, file), 1024, 0.82)
+                            || stickerStoreFileUrl(cat, file, true);
+                    }
+                    if (!image) { failed++; continue; }
+                    wechatStickers.value.push(normalizeSticker({
+                        name,
+                        description: stickerStorePickDesc(cat, stickerStorePickName(file)),
+                        image
+                    }));
+                    added++;
+                }
+                if (added) await saveWechatStickers();
+            } finally {
+                stickerStoreImporting.value = false;
+            }
+            const parts = [`导入 ${added} 个`];
+            if (dup) parts.push(`跳过重复 ${dup}`);
+            if (failed) parts.push(`失败 ${failed}`);
+            __s.showToast(parts.join('，'), added ? 'success' : 'info');
+            if (added) stickerStorePicked.value = [];
+        };
+        __s.importStickerStoreItems = importStickerStoreItems;
+
+        const importStickerStorePicked = () =>
+            importStickerStoreItems(stickerStoreVisible.value.filter(item => stickerStoreIsPicked(item.key)));
+        __s.importStickerStorePicked = importStickerStorePicked;
+
+        /** 一键导入本类全部：已导入的会按名字跳过。 */
+        const importStickerStoreCategory = () => {
+            const items = stickerStoreVisible.value.map(({ cat, file }) => ({ cat, file }));
+            importStickerStoreItems(items);
+        };
+        __s.importStickerStoreCategory = importStickerStoreCategory;
+
         // ---- 生成 ----
         const requestWechatReply = async (signal) => {
             const model = __s.settings.model;
@@ -907,10 +1352,12 @@
             }
         };
 
-        const sendWechatMessage = async () => {
-            const text = String(wechatInput.value || '').trim();
-            const image = wechatPendingImage.value;
-            if ((!text && !image) || isWechatGenerating.value) return;
+        /**
+         * 生成一轮微信回复（纯生成 + 播放，不负责把触发消息写进时间线）。
+         * 发文字/发图/发表情包共用：调用方先把触发的消息 push 进时间线，再调这里。
+         */
+        const runWechatGeneration = async () => {
+            if (isWechatGenerating.value) return;
             if (!__s.currentCharacter.value) {
                 __s.showToast('请先选择一个角色', 'warning');
                 return;
@@ -919,14 +1366,6 @@
                 __s.showToast('请先在设置里填写 API 地址、Key 和模型', 'warning');
                 return;
             }
-
-            wechatInput.value = '';
-            wechatPendingImage.value = null;
-
-            if (text) pushWechatItem({ channel: 'wechat', role: 'user', type: 'text', content: text });
-            if (image) pushWechatItem({ channel: 'wechat', role: 'user', type: 'image', content: image });
-            scheduleWechatSave();
-            scrollWechatToBottom();
 
             isWechatGenerating.value = true;
             __s.wechatAbortController = new AbortController();
@@ -966,6 +1405,23 @@
                 await saveWechatTimelineNow().catch(() => {});
             }
         };
+        __s.runWechatGeneration = runWechatGeneration;
+
+        const sendWechatMessage = async () => {
+            const text = String(wechatInput.value || '').trim();
+            const image = wechatPendingImage.value;
+            if ((!text && !image) || isWechatGenerating.value) return;
+
+            wechatInput.value = '';
+            wechatPendingImage.value = null;
+
+            if (text) pushWechatItem({ channel: 'wechat', role: 'user', type: 'text', content: text });
+            if (image) pushWechatItem({ channel: 'wechat', role: 'user', type: 'image', content: image });
+            scheduleWechatSave();
+            scrollWechatToBottom();
+
+            await runWechatGeneration();
+        };
         __s.sendWechatMessage = sendWechatMessage;
 
         const stopWechatGeneration = () => {
@@ -1004,7 +1460,15 @@
                     items.push({ kind: 'day', id: `day-${item.id}`, label: formatWechatDayLabel(item.ts) });
                 }
                 lastTs = item.ts;
-                items.push({ kind: 'message', id: item.id, role: item.role, type: item.type, content: item.content });
+                items.push({
+                    kind: 'message',
+                    id: item.id,
+                    role: item.role,
+                    type: item.type,
+                    content: item.content,
+                    // 命中表情包库则带上图，前端据此渲染成图；未命中为 null，回退文本。
+                    stickerImage: item.type === 'sticker' ? stickerImageOf(item.content) : null
+                });
             }
             return items;
         });

@@ -128,6 +128,7 @@
                 await setStoredValue('global_worldinfo', __s.globalWorldInfo.value);
                 await setStoredValue('worldinfo_settings', __s.worldInfoSettings);
                 await setStoredValue('global_ui_templates', __s.globalUiTemplates.value);
+                await setStoredValue('wechat_stickers', unwrapForStorage(__s.wechatStickers.value), { clone: false });
                 await setStoredValue('active_tools', __s.normalizeActiveTools(), { clone: false });
                 // 守卫：初始化完成前不写入用户/记忆数据，防止默认值覆盖服务端已有数据
                 if (__s._initComplete) {
@@ -286,6 +287,10 @@
 
                 const savedActiveTools = await getStoredValue('active_tools');
                 __s.normalizeActiveTools(savedActiveTools || __s.activeTools.value);
+
+                // 表情包库：全局的，跟着 loadData 一次性读进来，
+                // 免得首轮 saveData（初始化后可能触发）用空数组把它覆盖掉。
+                await __s.loadWechatStickers();
 
                 const savedWISettings = await getStoredValue('worldinfo_settings');
                 if (savedWISettings) {

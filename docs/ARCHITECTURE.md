@@ -251,10 +251,13 @@ scoped key `story_recap`，粒度跟随剧情分支（与 `wechat_timeline` 一�
 
 ## 9. 微信表情包库
 
+> 状态：已于 2026-09-30 落地实现（表情包库 + 用户发表情包 + 微信内改头像 + 粘贴图片）。
+> 本节记录设计；「实现落点」小节标出代码位置。
+
 ### 9.1 现状与问题
 
-当前微信的「表情」并非表情包：模型在 `{"type":"sticker","content":"😼"}` 里直接吐一个 **emoji 字符**
-（`wechat-protocol.js` 的 `PROTOCOL` 明写「一个最贴切的 emoji」），前端 `index.html` 把它当文本渲染，
+原微信的「表情」并非表情包：模型在 `{"type":"sticker","content":"😼"}` 里直接吐一个 **emoji 字符**
+（`wechat-protocol.js` 的 `PROTOCOL` 旧文案「一个最贴切的 emoji」），前端 `index.html` 把它当文本渲染，
 `.wx-bubble.sticker`（`wechat.css` §表情包）放大到 68px。问题：
 
 - 渲染出来是**系统字体 emoji**（Windows 上是彩色豆腐块），跟真人微信里的表情包是两回事，观感差；
@@ -263,7 +266,7 @@ scoped key `story_recap`，粒度跟随剧情分支（与 `wechat_timeline` 一�
 目标：把「表情」从 **emoji 字符**换成 **用户自建的表情包库 + 按名字调用**。模型全程**不需要看到图**——
 它从一份「名字｜适用场景」目录里挑名字输出，前端按名字贴图。
 
-### 9.2 调用模型（核心，不改协议）
+### 9.2 调用模型（核心）
 
 表情包的 `type` 仍是 `"sticker"`，但 `content` 从 emoji 变成**库里的名字**（如 `伤心猫`）：
 
@@ -271,12 +274,17 @@ scoped key `story_recap`，粒度跟随剧情分支（与 `wechat_timeline` 一�
 {"messages":[{"type":"text","content":"哼"},{"type":"sticker","content":"伤心猫"}]}
 ```
 
-三件事天然成立，**protocol 与解析层无需改动**：
+三件事天然成立，**解析层（`parseReply` / `normalizeMessages`）无需改动**：
 
 - **回灌上下文**：`25-wechat.js` 的 `buildWechatRpBlock` / 微信历史还原本就把 `content` 原样拼成
   `[表情 伤心猫]` 塞回上下文——模型据此知道「自己刚发过伤心猫」，延续语境。这一段**现成**。
 - **频率档位**：`stickerRuleFor` / `applyStickerPolicy` 只看 `type === 'sticker'`，与 `content` 无关，照常生效。
 - **协议容错**：`parseReply` 的降级、`isPureEmoji` 判定都不受影响。
+
+协议层只有一处**措辞**改动：`PROTOCOL` 里 sticker 的说明从「一个最贴切的 emoji」改成两态
+（「若下方出现【表情包库】目录就照抄目录里的名字，否则用 emoji」），好让模型知道两种模式怎么切换。
+`isPureEmoji` **保留**——表情包名字是中文（Han 不属于 `Extended_Pictographic`），不会被它误升级成
+sticker；它继续负责把模型「把 emoji 当成 text 发」的情况升格成 sticker 气泡。
 
 ### 9.3 数据模型与存储
 
@@ -304,27 +312,85 @@ scoped key `story_recap`，粒度跟随剧情分支（与 `wechat_timeline` 一�
 - **库非空** → 注入目录，并把 `PROTOCOL` 里 sticker 的说明从「一个 emoji」改为「库里的名字」。
 - **库为空** → **不注入目录，回退现状**（emoji 模式），即零配置时的默认行为不变。
 - 目录**只带 name + description**；回灌历史只带 name，轻量。
-- 体积控制：描述 ≤ 15 字；库超过上限（如 50 条）时只注入前 N 条并 `log` 提示被截断，避免吃 token。
+- 体积控制：描述 ≤ 15 字；库超过上限（50 条）时只注入前 N 条并 `console.warn` 提示被截断，避免吃 token。
 
 ### 9.5 前端渲染与匹配回退
 
 `index.html` 气泡模板改为按名字查库：
 
-- `content` **精确命中**库中 `name`（trim 后比较）→ 渲染 `<img :src="stickerImageOf(content)">`，走 `.wx-bubble.sticker` 的无气泡大图样式；
+- `content` **精确命中**库中 `name`（trim 后比较）→ 渲染 `<img :src="item.stickerImage">`（`stickerImage` 由
+  `wechatDisplayItems` 经 `stickerImageOf(content)` 填好），走 `.wx-bubble.sticker` 的无气泡大图样式；
 - **未命中** → **回退当文本渲染**。旧记录里存的是 emoji、或库被删条目后遗留的名字，都走这条，**无需数据迁移**，也不会白屏。
 
-### 9.6 管理 UI
+### 9.6 双方都能发（用户侧）
 
-微信设置面板加「表情包管理」入口，模态内做增删改：上传图（复用 `compressImage`）→ 起名 → 填描述 → 保存。
-最小版**纯手动录入**；后续可选接模型 vision 能力**自动打标签**（工程已具备把图片当 `image_url` 发给模型的能力，
-`25-wechat.js` 微信发图即用此路）。
+表情包不是模型专属——用户也能从输入框的 😀 按钮打开表情面板，点一个即发出：
 
-### 9.7 边界与取舍
+- `sendWechatSticker(sticker)` 往时间线写一条 `{role:'user', type:'sticker', content:name}`，
+  与模型发的那条**走同一个渲染路径**，然后触发一轮生成（用户是发起方）。
+- 因此回灌上下文时这段同样拼成 `[表情 伤心猫]`——模型能看见「对方发了个伤心猫」。
+- 用户发的表情不走 `applyStickerPolicy`（那是约束模型的），发什么是什么。
+
+管理 UI：微信设置面板加「表情包库」入口，模态内做增删改——上传图（复用 `compressImage`）→ 起名 → 填描述 → 保存。
+最小版**纯手动录入**；后续可选接模型 vision 能力**自动打标签**（`25-wechat.js` 微信发图即用 `image_url` 那条路）。
+
+### 9.7 微信内改头像 + 粘贴图片
+
+让微信看起来更像真的：
+
+- **改头像**：微信里双方头像可点，弹出文件选择器。自己 → 写 `__s.user.avatar`（走 `saveData`）；对方 →
+  写 `char.avatar`（走 `saveCharactersNow`）。压缩复用 `compressImage(…, 200, 0.7)`。注意 `25-wechat.js`
+  在 `app.js` 之前求值，`__s.user` 那时还没赋值，所以用户头像必须用 **惰性 `computed(() => __s.user?.avatar)`**，
+  不能直接读。
+- **粘贴图片**：输入框 `@paste` 取 `clipboardData` 里的图片文件，走和 📎 同一条压缩链路进待发送区；纯文字粘贴不拦截。
+
+### 9.8 开源表情包商店（免手动一张张传）
+
+一张张上传太慢，直接对接开源表情包合集 [getActivity/EmojiPackage](https://github.com/getActivity/EmojiPackage)
+（Apache-2.0，3022 star）：55 个主题分类、2092 张图。商店面板按分类浏览 CDN 缩略图，可多选或「导入本类全部」。
+
+- **静态清单**：`assets/js/emoji-catalog.js`（`window.RPHubEmojiCatalog`）内置「分类 + 文件名」，共 ~35 KB。
+  只存文件名、不含图——图走 CDN 按路径取。清单由仓库 tree 生成；重生成方法见 §9.10。
+- **取图**：`base` = `https://cdn.jsdelivr.net/gh/getActivity/EmojiPackage@master`（jsDelivr 对超 50 MB 仓库只
+  禁了**列表 API**，按路径取图正常）；CDN 都带 `Access-Control-Allow-Origin: *`。
+- **导入策略**（静态存本地、动图存引用）：
+  - 静态图（jpg/png/webp）→ `remoteImageToDataURL(url)` 走 `crossOrigin='anonymous'` 取图 → canvas 压缩
+    （1024 / 0.82）→ 存本地 dataURL，离线可用。**必须 crossOrigin**，否则 canvas 被污染、`toDataURL` 抛
+    SecurityError；压缩失败退回备用 CDN（raw.githubusercontent）的 URL 引用。
+  - 动图 GIF → 直接存 CDN URL（保留动画、不占 IndexedDB）。需联网，且不随库图一起被本地化。
+- **名字与描述**：9 成文件名本身就是描述（`难过/委屈地哭了起来.jpg`、`滑稽/不向恶势力低头.jpeg`），
+  据此生成——库内 name = `分类-文件名`（分类前缀保证唯一），description = 文件名（限 15 字）；`QQ图片xxx`
+  这类无意义名退回分类名。词表/名字在导入时定死，沿用 §9.8 边界里「不改写历史」的口径。
+- **判重**：按库内 name 判重，商店里已导入的标「已加入」并置灰；重复导入自动跳过。
+- **许可**：Apache-2.0，商店头部注明来源；如需完全自包含可改为整体复制进仓库（代价是体积）。
+
+### 9.9 边界与取舍
 
 - **改名/删条**：旧聊天记录存的是旧 name，改名后旧气泡回退为文本——**不改写历史**（与 §7「原文不销毁」一致）。
-- **重名**：保存时拒绝或提示，保证 name → 单张图。
+- **重名**：保存时拒绝或提示，保证 name → 单张图。商店导入靠 `分类-文件名` 前缀天然去重。
 - **删空库**：回到 9.4 的「库为空 → emoji 模式」。
 - **token**：目录每轮进 system prompt，靠 9.4 的条数上限 + 描述字数上限兜底。
+- **初始化顺序**：表情包库随 `loadData` 一次性读入（`06-persistence.js`），否则首轮 `saveData`
+  会用空数组把已存的库覆盖掉；`saveData` 里也一并写入 `wechat_stickers`。
+- **GIF 联网依赖**：GIF 走 CDN，离线时裂图；静态图已本地化不受影响。
+
+### 9.10 实现落点
+
+| 关注点 | 位置 |
+| --- | --- |
+| 协议措辞两态 | `wechat-protocol.js` `PROTOCOL` |
+| 目录注入槽位 | `wechat-protocol.js` `buildSystemPrompt({stickerCatalog})` |
+| 状态 / 目录 / 匹配 / CRUD / 发送 / 粘贴 / 头像 / 商店导入 | `assets/js/app/25-wechat.js` |
+| 开源表情清单（生成物） | `assets/js/emoji-catalog.js` |
+| 持久化（读写 + saveData + loadData） | `assets/js/app/06-persistence.js` |
+| 模板暴露 | `assets/js/app.js` 的 setup 返回对象 |
+| 气泡贴图 / 头像可点 / 表情面板 / 管理模态 / 商店模态 | `index.html` |
+| 贴图 `.wx-sticker-img`、居中模态、管理列表、商店网格 | `assets/css/wechat.css` |
+| 短验证 | `tools/refactor/smoke-wechat-stickers.cjs` |
+
+**重生成表情清单**：抓 `https://api.github.com/repos/getActivity/EmojiPackage/git/trees/master?recursive=1`，
+取一级目录下的图片 blob（`分类/文件名`，排除嵌套与 `.zip/.rar`），按 `name` 排序后写成
+`window.RPHubEmojiCatalog` 的字面量即可（去掉 `size` 字段可把清单压到 ~35 KB）。
 
 ## 10. 已知遗留
 
