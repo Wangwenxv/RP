@@ -276,8 +276,10 @@ scoped key `story_recap`，粒度跟随剧情分支（与 `wechat_timeline` 一�
 
 三件事天然成立，**解析层（`parseReply` / `normalizeMessages`）无需改动**：
 
-- **回灌上下文**：`25-wechat.js` 的 `buildWechatRpBlock` / 微信历史还原本就把 `content` 原样拼成
-  `[表情 伤心猫]` 塞回上下文——模型据此知道「自己刚发过伤心猫」，延续语境。这一段**现成**。
+- **回灌上下文**：两个方向都把 sticker 的 `content` 渲染成 `[表情 名字]` 塞回上下文——模型据此知道
+  「自己/对方刚发过伤心猫」，延续语境。**微信方向**由 `buildWechatModelMessages` 拼（与相邻文字合并时也保留标记）；
+  **RP 方向**由 `buildWechatRpSegment` 拼。这个标记是必须的：名字本身可能是句话（如「安排-被安排的明明白白」），
+  不标的话模型会把表情包名当普通文字读、进而幻觉。
 - **频率档位**：`stickerRuleFor` / `applyStickerPolicy` 只看 `type === 'sticker'`，与 `content` 无关，照常生效。
 - **协议容错**：`parseReply` 的降级、`isPureEmoji` 判定都不受影响。
 
@@ -331,6 +333,16 @@ sticker；它继续负责把模型「把 emoji 当成 text 发」的情况升格
 - 因此回灌上下文时这段同样拼成 `[表情 伤心猫]`——模型能看见「对方发了个伤心猫」。
 - 用户发的表情不走 `applyStickerPolicy`（那是约束模型的），发什么是什么。
 
+**多消息攒发（连发模式）**：表情包本身就占一条，发完就轮到对方，有时想「一条条说完再等回应」。
+输入框旁的「连发」开关打开后：
+
+- `sendWechatMessage` / `sendWechatSticker` **只把气泡落进时间线、不请求回复**（`wechatBurstMode` 为真时提前 return）。
+- 有未回应发言时，输入区上方出现「让对方回复（攒了 N 条）」按钮，点它才调 `requestWechatReplyNow()`
+  → `runWechatGeneration()`，把这批气泡一次性带进上下文。
+- `N` = `wechatUnansweredCount`：最近一条 assistant 之后的 user 消息数（只数微信消息，RP 镜像不算）。
+- 触发按钮只在**有未回应发言时**才显示（不限于连发模式）——否则中途关掉连发会把这些发言困住。
+- 关掉连发即恢复「发一条 = 立刻回复」的旧行为。
+
 管理 UI：微信设置面板加「表情包库」入口，模态内做增删改——上传图（复用 `compressImage`）→ 起名 → 填描述 → 保存。
 最小版**纯手动录入**；后续可选接模型 vision 能力**自动打标签**（`25-wechat.js` 微信发图即用 `image_url` 那条路）。
 
@@ -380,11 +392,11 @@ sticker；它继续负责把模型「把 emoji 当成 text 发」的情况升格
 | --- | --- |
 | 协议措辞两态 | `wechat-protocol.js` `PROTOCOL` |
 | 目录注入槽位 | `wechat-protocol.js` `buildSystemPrompt({stickerCatalog})` |
-| 状态 / 目录 / 匹配 / CRUD / 发送 / 粘贴 / 头像 / 商店导入 | `assets/js/app/25-wechat.js` |
+| 状态 / 目录 / 匹配 / CRUD / 发送 / 粘贴 / 头像 / 商店导入 / 连发 | `assets/js/app/25-wechat.js` |
 | 开源表情清单（生成物） | `assets/js/emoji-catalog.js` |
 | 持久化（读写 + saveData + loadData） | `assets/js/app/06-persistence.js` |
 | 模板暴露 | `assets/js/app.js` 的 setup 返回对象 |
-| 气泡贴图 / 头像可点 / 表情面板 / 管理模态 / 商店模态 | `index.html` |
+| 气泡贴图 / 头像可点 / 表情面板 / 管理模态 / 商店模态 / 连发开关与回复按钮 | `index.html` |
 | 贴图 `.wx-sticker-img`、居中模态、管理列表、商店网格 | `assets/css/wechat.css` |
 | 短验证 | `tools/refactor/smoke-wechat-stickers.cjs` |
 

@@ -2832,6 +2832,11 @@
                         <button class="wx-pending-del" @click="removeWechatPendingImage">✕</button>
                     </div>
                 </div>
+                <div v-if="wechatUnansweredCount > 0 && !isWechatGenerating" class="wx-reply-trigger-row">
+                    <button class="wx-reply-trigger" @click="requestWechatReplyNow">
+                        让对方回复（攒了 {{ wechatUnansweredCount }} 条）
+                    </button>
+                </div>
                 <div class="wx-composer-row">
                     <label class="wx-icon-btn wx-attach" title="发送图片">📎
                         <input type="file" accept="image/*" class="wx-file-hidden"
@@ -2842,6 +2847,9 @@
                     <textarea v-model="wechatInput" rows="1" class="wx-input" placeholder="发消息…（可粘贴图片）"
                         @paste="handleWechatPaste"
                         @keydown.enter.exact.prevent="sendWechatMessage"></textarea>
+                    <button class="wx-burst-toggle" :class="{ on: wechatBurstMode }"
+                        :title="wechatBurstMode ? '连发中：发送只落气泡，攒够点右侧让对方回复' : '开启连发：你可以一条条发完再让对方回复'"
+                        @click="wechatBurstMode = !wechatBurstMode">连发</button>
                     <button v-if="!isWechatGenerating" class="wx-send"
                         :disabled="!wechatInput.trim() && !wechatPendingImage"
                         @click="sendWechatMessage">发送</button>

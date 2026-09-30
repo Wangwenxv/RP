@@ -76,7 +76,11 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     const msgs = body?.messages || [];
     const sysContent = String(msgs[0]?.content || '');
     const isWechat = sysContent.includes('你只能输出一个 JSON 对象');
-    captured.push({ isWechat, sysContent });
+    captured.push({
+      isWechat, sysContent,
+      // 聊天记录（不含 system），用来验表情包在上下文里怎么呈现
+      chatContents: msgs.slice(1).map(m => typeof m.content === 'string' ? m.content : '[parts]')
+    });
     const content = isWechat
       ? JSON.stringify({ messages: [{ type: 'sticker', content: '伤心猫' }] })
       : '（继续画着）……嗯。';
@@ -281,6 +285,52 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     }, 150));
   });
   check('商店模态渲染出缩略图网格', storeRendered.cells > 0, JSON.stringify(storeRendered));
+
+  console.log('\n== 表情包上下文标记（模型知道这是表情包）==');
+  const stickerCtx = await page.evaluate(async () => {
+    const r = window.__APP_PROXY__;
+    // 用户发一个库里已有的表情包（走连发，先不请求回复）
+    r.wechatBurstMode = true;
+    await r.sendWechatSticker(r.wechatStickers.find(s => s.name === '伤心猫'));
+    await new Promise(res => setTimeout(res, 400));
+    r.wechatBurstMode = false;
+    await r.requestWechatReplyNow();
+    await new Promise(res => setTimeout(res, 500));
+    return r.wechatTimeline.filter(i => i.channel === 'wechat' && i.type === 'sticker').map(i => i.content);
+  });
+  const wxLast = captured.filter(c => c.isWechat).pop();
+  const ctxHasMark = !!wxLast && wxLast.chatContents.some(c => c.includes('[表情 伤心猫]'));
+  const ctxNoBareName = !!wxLast && !wxLast.chatContents.some(c => c.trim() === '伤心猫');
+  check('模型上下文里表情包标为 [表情 名字]', ctxHasMark, (wxLast?.chatContents || []).filter(c => c.includes('[表情')).join(' | '));
+  check('不再把表情包名当裸文字发', ctxNoBareName);
+
+  console.log('\n== 连发：多条攒发再回复 ==');
+  const burst = await page.evaluate(async () => {
+    const r = window.__APP_PROXY__;
+    const countUser = () => r.wechatTimeline.filter(i => i.channel === 'wechat' && i.role === 'user').length;
+    const before = countUser();
+    r.wechatPendingImage = null; // 前面粘贴测试残留的待发图会多算一条
+    r.wechatBurstMode = true;
+    for (const t of ['先说一句', '再说一句', '还有一句']) {
+      r.wechatInput = t;
+      await r.sendWechatMessage();
+    }
+    await new Promise(res => setTimeout(res, 300));
+    return { added: countUser() - before, generating: r.isWechatGenerating, unanswered: r.wechatUnansweredCount };
+  });
+  check('连发时只落气泡、不立刻请求回复',
+    burst.added === 3 && burst.generating === false, JSON.stringify(burst));
+
+  const callsBefore = captured.filter(c => c.isWechat).length;
+  const reply = await page.evaluate(async () => {
+    const r = window.__APP_PROXY__;
+    await r.requestWechatReplyNow();
+    await new Promise(res => setTimeout(res, 600));
+    return { generating: r.isWechatGenerating };
+  });
+  const callsAfter = captured.filter(c => c.isWechat).length;
+  check('点「让对方回复」触发一次带上下文请求',
+    callsAfter === callsBefore + 1, JSON.stringify({ added: callsAfter - callsBefore, ...reply }));
 
   console.log('\nERRORS(' + errors.length + '):');
   errors.forEach(e => console.log('  ' + e));

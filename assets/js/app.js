@@ -657,6 +657,8 @@ const app = createApp({
             handleWechatImageSelection: __s.handleWechatImageSelection,
             removeWechatPendingImage: __s.removeWechatPendingImage,
             sendWechatMessage: __s.sendWechatMessage, stopWechatGeneration: __s.stopWechatGeneration,
+            wechatBurstMode: __s.wechatBurstMode, wechatUnansweredCount: __s.wechatUnansweredCount,
+            requestWechatReplyNow: __s.requestWechatReplyNow,
             // 表情包库 + 粘贴 + 头像
             wechatStickers: __s.wechatStickers, showWechatStickers: __s.showWechatStickers,
             showStickerManager: __s.showStickerManager,

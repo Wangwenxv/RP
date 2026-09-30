@@ -65,6 +65,9 @@
         __s.showStickerManager = showStickerManager;
         const showStickerStore = ref(false);
         __s.showStickerStore = showStickerStore;
+        // 连发模式：发送/表情包只落成气泡、不立刻请求回复，攒够了自己点「让对方回复」
+        const wechatBurstMode = ref(false);
+        __s.wechatBurstMode = wechatBurstMode;
         const wechatStickers = ref([]);
         __s.wechatStickers = wechatStickers;
         const stickerDraft = reactive({ id: '', name: '', description: '', image: '' });
@@ -676,7 +679,10 @@
                     // content 是数组，拼不了，也就不参与合并
                     entries.push({ message: { role: 'user', content: parts.length ? parts : '(图片)' }, mergeable: false, wxSeen });
                 } else if (item.type === 'sticker') {
-                    entries.push({ message: { role: item.role, content: item.content }, mergeable: true, wxSeen });
+                    // 标成 [表情 名字]：名字本身可能是句话（如「安排-被安排的明明白白」），
+                    // 不标的话模型会把它当普通文字读、进而幻觉。与 RP 方向 buildWechatRpSegment 一致。
+                    const name = String(item.content || '').trim();
+                    entries.push({ message: { role: item.role, content: name ? `[表情 ${name}]` : '[表情]' }, mergeable: true, wxSeen });
                 } else {
                     const text = String(item.content || '').trim();
                     if (text) entries.push({ message: { role: item.role, content: text }, mergeable: true, wxSeen });
@@ -885,6 +891,21 @@
             if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
         };
         __s.scrollWechatToBottom = scrollWechatToBottom;
+
+        /**
+         * 最近一条对方（assistant）消息之后、自己（user）还没被回应了几条。
+         * 连发模式下用它提示「你攒了 N 条，还没让对方回」。只在微信消息里数，RP 镜像不算。
+         */
+        const wechatUnansweredCount = computed(() => {
+            let count = 0;
+            for (const item of wechatTimeline.value) {
+                if (item.channel !== 'wechat') continue;
+                if (item.role === 'assistant') count = 0;
+                else if (item.role === 'user') count++;
+            }
+            return count;
+        });
+        __s.wechatUnansweredCount = wechatUnansweredCount;
 
         // ---- 设置面板（写回角色字段）----
         const openWechatSettings = () => {
@@ -1128,6 +1149,7 @@
             scheduleWechatSave();
             showWechatStickers.value = false;
             scrollWechatToBottom();
+            if (wechatBurstMode.value) return;
             await runWechatGeneration();
         };
         __s.sendWechatSticker = sendWechatSticker;
@@ -1420,9 +1442,21 @@
             scheduleWechatSave();
             scrollWechatToBottom();
 
+            // 连发模式：只落成气泡，攒到你点「让对方回复」再发请求
+            if (wechatBurstMode.value) return;
             await runWechatGeneration();
         };
         __s.sendWechatMessage = sendWechatMessage;
+
+        /**
+         * 连发模式下，把攒着的发言一次性交给对方回应。
+         * 没攒任何东西就不触发（避免空请求）。
+         */
+        const requestWechatReplyNow = async () => {
+            if (isWechatGenerating.value || !wechatUnansweredCount.value) return;
+            await runWechatGeneration();
+        };
+        __s.requestWechatReplyNow = requestWechatReplyNow;
 
         const stopWechatGeneration = () => {
             __s.wechatAbortController?.abort();
