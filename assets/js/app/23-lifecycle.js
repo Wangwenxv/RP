@@ -38,7 +38,7 @@
             await __s.loadData();
             __s.fetchQuota(); // Fetch quota after saved settings are loaded
 
-            __s.updateModalRef.value?.check(); // 必须在 loadData 之后检查，否则同步存储尚未加载
+            // 更新公告弹窗已停用；如需恢复，在此重新调用 __s.updateModalRef.value?.check()
 
             // Check for default username
             if (__s.user.name === '请前往设置自定义你的名称') {
