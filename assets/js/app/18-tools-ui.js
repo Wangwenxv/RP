@@ -75,6 +75,9 @@
             if (toolCall?.toolType === ACTIVE_TOOL_RANDOM_TYPE || baseCallName === 'tool_random') {
                 return ACTIVE_TOOL_RANDOM_TYPE;
             }
+            if (toolCall?.toolType === ACTIVE_TOOL_WECHAT_TYPE || baseCallName === 'tool_wechat') {
+                return ACTIVE_TOOL_WECHAT_TYPE;
+            }
             return '';
         };
         __s.getActiveToolUiGroupKey = getActiveToolUiGroupKey;
@@ -83,6 +86,7 @@
             if (groupKey === ACTIVE_TOOL_WEB_TYPE) return 'Tavily 联网搜索';
             if (groupKey === ACTIVE_TOOL_KEYWORD_TYPE) return '关键词检索';
             if (groupKey === ACTIVE_TOOL_RANDOM_TYPE) return '随机数生成';
+            if (groupKey === ACTIVE_TOOL_WECHAT_TYPE) return '主动发微信';
             return toolCall?.name || '工具调用';
         };
         __s.getToolCallDisplayName = getToolCallDisplayName;
@@ -99,6 +103,7 @@
                 return '关键词检索';
             }
             if (groupKey === ACTIVE_TOOL_RANDOM_TYPE) return '生成随机数';
+            if (groupKey === ACTIVE_TOOL_WECHAT_TYPE) return '发起微信';
             return '工具调用';
         };
         __s.getToolCallModeText = getToolCallModeText;
@@ -270,17 +275,21 @@
                         if (!__s.getEnabledActiveTools().some(tool => tool.callName === call.function.name)) throw new Error('该工具已关闭');
                         toolUi.status = 'running';
                         const isRandom = toolCall.tool.type === ACTIVE_TOOL_RANDOM_TYPE;
-                        const results = isRandom
-                            ? [__s.generateRandomNumberForTool(toolCall.min, toolCall.max)]
-                            : __s.isWebActiveTool(toolCall.tool)
-                                ? await __s.searchWebByTavilyForTool(toolCall.query, toolCall.tool, toolAbort.signal)
-                                : __s.searchDialogueByKeywordForTool(toolCall.query, toolCall.tool.resultCount, { excludeMessageId: assistantMessage.id });
+                        const isWechat = toolCall.tool.type === ACTIVE_TOOL_WECHAT_TYPE;
+                        const results = isWechat
+                            ? [__s.deliverActiveWechatMessage(toolCall.content)]
+                            : isRandom
+                                ? [__s.generateRandomNumberForTool(toolCall.min, toolCall.max)]
+                                : __s.isWebActiveTool(toolCall.tool)
+                                    ? await __s.searchWebByTavilyForTool(toolCall.query, toolCall.tool, toolAbort.signal)
+                                    : __s.searchDialogueByKeywordForTool(toolCall.query, toolCall.tool.resultCount, { excludeMessageId: assistantMessage.id });
                         if (toolAbort.signal.aborted) throw __s.createAbortReason();
                         payload = {
                             status: results.length ? 'ok' : 'empty',
                             query: toolCall.query,
                             results,
                             ...(isRandom ? { operation: 'random' } : {}),
+                            ...(isWechat ? { operation: 'wechat' } : {}),
                             ...(results.tavilyMode ? { operation: results.tavilyMode } : {}),
                             ...(results.tavilyFailedResults?.length ? { failed_sources: results.tavilyFailedResults } : {})
                         };

@@ -14,8 +14,14 @@
 (function () {
     window.RPHubAppSections = window.RPHubAppSections || {};
     window.RPHubAppSections.toolsRuntime = function (__s) {
+        const isWechatActiveTool = (tool) => tool?.type === ACTIVE_TOOL_WECHAT_TYPE
+            || __s.normalizeActiveToolBaseCallName(tool?.callName) === 'tool_wechat'
+            || tool?.id === 'tool_wechat';
+        __s.isWechatActiveTool = isWechatActiveTool;
         const getEnabledActiveTools = () => __s.normalizeActiveTools()
-            .filter(tool => tool.enabled !== false && tool.callName);
+            .filter(tool => tool.enabled !== false && tool.callName)
+            // 主动发微信依赖角色开着微信才有落点，未开启时不向模型暴露该工具。
+            .filter(tool => !isWechatActiveTool(tool) || __s.currentCharacter.value?.wechatEnabled);
         __s.getEnabledActiveTools = getEnabledActiveTools;
         const isWebActiveTool = (tool) => tool?.type === ACTIVE_TOOL_WEB_TYPE
             || __s.normalizeActiveToolBaseCallName(tool?.callName) === 'tool_web'
@@ -49,7 +55,15 @@
             function: {
                 name: tool.callName,
                 description: tool.resultCount ? `${tool.description} 每次最多返回 ${tool.resultCount} 条。` : tool.description,
-                parameters: tool.type === ACTIVE_TOOL_RANDOM_TYPE ? {
+                parameters: tool.type === ACTIVE_TOOL_WECHAT_TYPE ? {
+                    type: 'object',
+                    properties: {
+                        content: { type: 'string', description: '这条微信的正文：真人微信口吻的短消息，口语、可带语气词，不要写成旁白、括号动作或小说描写。' },
+                        reason: { type: 'string', description: '可选，一句话说明为什么现在发这条微信。' }
+                    },
+                    required: ['content'],
+                    additionalProperties: false
+                } : tool.type === ACTIVE_TOOL_RANDOM_TYPE ? {
                     type: 'object',
                     properties: {
                         min: { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER, description: '随机整数的下限，包含该值。' },

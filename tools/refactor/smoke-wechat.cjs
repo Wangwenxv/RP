@@ -81,6 +81,8 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     const sysContent = String(msgs[0]?.content || '');
     const isWechat = sysContent.includes('你只能输出一个 JSON 对象');
     const isRecap = sysContent.includes('上下文压缩器');
+    const hasToolResult = msgs.some(m => m && m.role === 'tool');
+    const toolNames = (Array.isArray(body?.tools) ? body.tools : []).map(t => t?.function?.name).filter(Boolean);
     let lastUser = '';
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role === 'user') {
@@ -91,10 +93,33 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
       }
     }
     captured.push({
-      isWechat, isRecap, sysContent, lastUser,
+      isWechat, isRecap, sysContent, lastUser, hasToolResult, toolNames,
       roles: msgs.map(m => m.role).join(','),
       contents: msgs.map(m => typeof m.content === 'string' ? m.content.slice(0, 400) : '[parts]')
     });
+    // RP 主动发起微信探针：本轮首次请求（还没有 tool 结果回传）且用户输入带标记时，
+    // 让模型先调用 tool_wechat，再在续写请求里正常出正文。
+    const probeSent = msgs.some(m => typeof m.content === 'string' && m.content.includes('触发微信'));
+    if (!isWechat && !isRecap && !hasToolResult && probeSent) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          choices: [{
+            message: {
+              role: 'assistant', content: '',
+              tool_calls: [{
+                id: 'call_wx_1', type: 'function',
+                function: { name: 'tool_wechat', arguments: JSON.stringify({ content: '在吗，睡了吗', reason: '想私下找你' }) }
+              }]
+            },
+            finish_reason: 'tool_calls'
+          }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
+        })
+      });
+      return;
+    }
     const content = isRecap
       ? '林晚与 lin 在微信上聊过天，约定晚些时候再联系。'
       : (isWechat ? REPLY : '（继续画着，头也没抬）……嗯，那你歇会儿。');
@@ -953,6 +978,103 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     && at('RP乙轮输入') > at('微信甲段') && at('微信乙段') > at('RP乙轮输入')
     && at('RP丙轮输入') > at('微信乙段'),
     `rp1=${at('RP甲轮输入')} wx1=${at('微信甲段')} rp2=${at('RP乙轮输入')} wx2=${at('微信乙段')} rp3=${at('RP丙轮输入')}`);
+
+  console.log('\n== RP 主动发起微信：tool_wechat ==');
+
+  // 未开微信的角色：即使工具是开着的，也不该进模型工具表（没有落点）
+  const noWxTool = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.memorySettings.enabled = false;
+    root.settings.apiUrl = 'https://mock.local/v1';
+    root.settings.apiKey = 'k';
+    root.settings.model = 'mock-model';
+    root.characters.push({
+      name: '小N', description: '未开微信', personality: 'x', first_mes: '开场N。',
+      avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
+      uuid: 'test-uuid-no-wx', createdAt: Date.now(), wechatEnabled: false
+    });
+    await root.selectCharacter(root.characters.length - 1, false, { silent: true });
+    const tool = root.activeTools.find(t => t.id === 'tool_wechat');
+    const existed = !!tool;
+    const defaultEnabled = tool?.enabled;
+    if (tool) tool.enabled = true;
+    root.userInput = '普通一轮';
+    await root.sendMessage();
+    await new Promise(r => setTimeout(r, 400));
+    const after = root.activeTools.find(t => t.id === 'tool_wechat');
+    if (after) after.enabled = defaultEnabled === true;
+    return { existed, defaultEnabled };
+  });
+  const noWxCall = [...captured].reverse().find(c => !c.isWechat && !c.isRecap);
+  check('内置默认存在 tool_wechat 且默认关闭',
+    noWxTool.existed === true && noWxTool.defaultEnabled === false,
+    JSON.stringify(noWxTool));
+  check('未开微信的角色：tool_wechat 不进模型工具表',
+    !!noWxCall && !noWxCall.toolNames.includes('tool_wechat'),
+    noWxCall ? 'tools=[' + noWxCall.toolNames.join(',') + ']' : 'no call');
+
+  // 开微信的角色：模型调用 tool_wechat → 面板在本轮 RP 结束后自动弹出并发出这条微信
+  const activeWx = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    const waitFor = async (fn, timeout = 6000) => {
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        if (fn()) return true;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      return false;
+    };
+    root.characters.push({
+      name: '小W', description: '主动微信', personality: 'x', first_mes: '开场W。',
+      avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==',
+      uuid: 'test-uuid-active-wx', createdAt: Date.now(),
+      wechatEnabled: true, wechatPeerName: '小W', wechatSpeed: 'fast', wechatStickerRate: 'off'
+    });
+    await root.selectCharacter(root.characters.length - 1, false, { silent: true });
+    root.settings.apiUrl = 'https://mock.local/v1';
+    root.settings.apiKey = 'k';
+    root.settings.model = 'mock-model';
+    const enable = (value) => {
+      const tool = root.activeTools.find(t => t.id === 'tool_wechat');
+      if (tool) tool.enabled = value;
+    };
+    enable(true);
+    root.userInput = '触发微信：今天先这样吧';
+    await root.sendMessage();
+    const panelOpened = await waitFor(() => root.showWechatPanel === true);
+    const delivered = await waitFor(() => root.wechatTimeline.some(i => i.channel === 'wechat' && i.content === '在吗，睡了吗'));
+    await waitFor(() => root.isWechatGenerating === false);
+    const last = root.chatHistory[root.chatHistory.length - 1];
+    const result = {
+      panelOpened,
+      delivered,
+      wechatContents: root.wechatTimeline.filter(i => i.channel === 'wechat').map(i => i.content),
+      lastRole: last?.role,
+      lastContent: String(last?.content || ''),
+      toolIds: (last?.toolCalls || []).map(toolCall => toolCall.toolId),
+      generating: root.isWechatGenerating
+    };
+    enable(false);
+    await root.closeWechat();
+    return result;
+  });
+  check('微信面板在本轮 RP 结束后自动弹出', activeWx.panelOpened === true);
+  check('角色的那句话发进了微信时间线', activeWx.delivered === true, JSON.stringify(activeWx.wechatContents));
+  check('RP 正文照常生成（未被工具吞掉）',
+    activeWx.lastRole === 'assistant' && activeWx.lastContent.includes('那你歇会儿'),
+    activeWx.lastContent.slice(0, 30));
+  check('工具调用记为 tool_wechat', activeWx.toolIds.includes('tool_wechat'), JSON.stringify(activeWx.toolIds));
+  check('消息发完后不再处于「正在输入」', activeWx.generating === false);
+
+  const wxRounds = captured.filter(c => !c.isWechat && !c.isRecap && c.toolNames.includes('tool_wechat'));
+  const wxFirstCall = wxRounds.find(c => !c.hasToolResult);
+  check('开启后模型工具表暴露 tool_wechat', wxRounds.length >= 1, 'rounds=' + wxRounds.length);
+  check('工具结果以 tool 消息回传后才续写正文',
+    wxRounds.some(c => !c.hasToolResult) && wxRounds.some(c => c.hasToolResult),
+    wxRounds.map(c => (c.hasToolResult ? 'tool' : 'first')).join(','));
+  check('切角色后不把上个角色的微信记录带进 RP 上下文',
+    !!wxFirstCall && !wxFirstCall.contents.some(c => c.includes('微信甲段') || c.includes('微信乙段')),
+    wxFirstCall ? JSON.stringify(wxFirstCall.contents.map(c => c.slice(0, 14))) : 'no call');
 
   console.log('\n== 清空聊天记录联动清除前情提要 ==');
   const afterClear = await page.evaluate(async () => {

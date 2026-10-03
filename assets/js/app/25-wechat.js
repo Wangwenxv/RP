@@ -70,6 +70,8 @@
         __s.wechatSettingsDraft = wechatSettingsDraft;
         __s.wechatAbortController = null;
         __s.wechatStatusTimer = null;
+        // 本轮 RP 里由主动工具（tool_wechat）攒下、还没发出去的微信消息。
+        __s.pendingActiveWechatMessages = [];
 
         const wechatPeerName = computed(() => {
             const char = __s.currentCharacter.value;
@@ -978,6 +980,70 @@
         };
         __s.stopWechatGeneration = stopWechatGeneration;
 
+        // ---- RP 主动发起微信（主动工具 tool_wechat）----
+        //
+        // 时序：模型在 RP 回合里调用 tool_wechat（工具执行阶段）→ 这里先把消息攒进队列，
+        // 因为此时 RP 正文还没生成完，面板不能提前弹；整轮 RP 结束后由 15-generate 调用
+        // flushActiveWechatMessages：复用 openWechat 对齐时间线并弹出面板，再按打字节奏发出。
+        const deliverActiveWechatMessage = (content) => {
+            const text = String(content || '').trim();
+            if (!text) throw new Error('微信消息内容为空');
+            __s.pendingActiveWechatMessages.push(text);
+            return { delivered: true, content: text };
+        };
+        __s.deliverActiveWechatMessage = deliverActiveWechatMessage;
+
+        /** 逐条按打字节奏发出主动发起的微信消息，复用被动回复一致的表情档位与节奏。 */
+        const playActiveWechatMessages = async (contents) => {
+            if (!contents.length) return;
+            const tier = wechatStickerTier();
+            const controller = new AbortController();
+            __s.wechatAbortController = controller;
+            const signal = controller.signal;
+            isWechatGenerating.value = true;
+            try {
+                for (const raw of contents) {
+                    const text = String(raw || '').trim();
+                    if (!text) continue;
+                    const [message] = wxProtocol.applyStickerPolicy([
+                        { type: wxProtocol.isPureEmoji(text) ? 'sticker' : 'text', content: text }
+                    ], tier);
+                    if (!message) continue;
+                    await sleep(rand(160, 420));
+                    wechatTyping.value = true;
+                    wechatStatusText.value = '对方正在输入…';
+                    scrollWechatToBottom();
+                    await sleep(typingDuration(message));
+                    if (signal.aborted) return;
+                    wechatTyping.value = false;
+                    wechatStatusText.value = '';
+                    pushWechatItem({ channel: 'wechat', role: 'assistant', type: message.type, content: message.content });
+                    scheduleWechatSave();
+                    scrollWechatToBottom();
+                }
+            } finally {
+                if (__s.wechatAbortController === controller) __s.wechatAbortController = null;
+                wechatTyping.value = false;
+                wechatStatusText.value = '';
+                isWechatGenerating.value = false;
+                await saveWechatTimelineNow().catch(() => {});
+            }
+        };
+
+        /**
+         * 整轮 RP（含工具续写）结束后调用：把队列里的微信消息补进时间线并弹出面板。
+         * 弹面板复用 openWechat —— 它内含载入/补齐 RP 历史/对账，保证 RP 与微信两条流
+         * 对齐后才播放，消息落点不会错。
+         */
+        const flushActiveWechatMessages = async () => {
+            const pending = __s.pendingActiveWechatMessages.splice(0, __s.pendingActiveWechatMessages.length);
+            if (!pending.length) return;
+            await openWechat();
+            if (!showWechatPanel.value) return;
+            await playActiveWechatMessages(pending);
+        };
+        __s.flushActiveWechatMessages = flushActiveWechatMessages;
+
         // ---- 展示用：日期分隔 + 时间 ----
         const pad2 = (value) => String(value).padStart(2, '0');
         const isSameDay = (a, b) => {
@@ -1011,15 +1077,20 @@
         __s.wechatDisplayItems = wechatDisplayItems;
 
         // ---- 角色切换 / 分支切换时重载 ----
+        //
+        // 内存里的时间线属于切走前的 scope，必须一并作废：面板关着时 appendWechatDigestToMessages
+        // 仍会读它，不作废就会把上一个角色（或上一条分支）的微信记录带进当前 RP 上下文。
+        const invalidateWechatTimelineScope = () => {
+            loadedWechatScopeId = null;
+            if (!showWechatPanel.value) wechatTimeline.value = [];
+        };
         watch(() => __s.currentCharacter.value?.uuid, () => {
-            if (showWechatPanel.value) {
-                openWechat();
-            }
+            invalidateWechatTimelineScope();
+            if (showWechatPanel.value) openWechat();
         });
         watch(() => __s.activeStoryBranchId.value, () => {
-            if (showWechatPanel.value) {
-                openWechat();
-            }
+            invalidateWechatTimelineScope();
+            if (showWechatPanel.value) openWechat();
         });
     };
 })();

@@ -33,6 +33,8 @@
                 : null;
             if (!continuationTargetMessage && activeToolDepth === 0) {
                 __s.resetActiveToolResultContext();
+                // 主动工具攒下的微信消息只属于本轮 RP，开新一轮前清干净。
+                __s.pendingActiveWechatMessages.length = 0;
             }
 
             __s.isGenerating.value = true;
@@ -683,6 +685,13 @@
                 // 记忆提取：在对话正常完成后异步提取记忆（用户取消时不触发）
                 if (hasCompletedTurns && __s.memorySettings.enabled) {
                     nextTick(__s.startAutomaticMemoryPatrol);
+                }
+
+                // 主动工具发的微信：等含工具续写的整轮 RP 全部结束、RP 消息已镜像进时间线后，
+                // 才弹面板并发出（在 depth 0 收尾）。中止/失败则丢弃队列，不弹面板。
+                if (activeToolDepth === 0) {
+                    if (wasCancelled || generationFailed) __s.pendingActiveWechatMessages.length = 0;
+                    else __s.flushActiveWechatMessages().catch((error) => console.error('主动微信发送失败:', error));
                 }
             }
         };

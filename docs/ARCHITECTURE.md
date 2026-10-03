@@ -168,12 +168,43 @@ JSON 分段协议与打字节奏：逐条 `typingDuration`（基线 + 字数×�
 **不触发** RP 的世界书/正则/记忆抽取/UI 模板管线，避免互相污染。微信图片经 `compressImage`
 压到长边 ≤1024 后作为 `image_url` 多模态 part 发送。
 
-### 7.5 验证
+### 7.5 RP 主动发起微信（`tool_wechat` 主动工具）
+
+角色可以在 roleplay 里**主动**把你拉进微信：模型在 RP 回合中通过原生 function call 调用
+`tool_wechat`，工具参数 `content` 就是角色要发的那条微信；整轮 RP 回完后微信面板自动弹出，
+消息按打字节奏发出。它复用既有主动工具链路（开关 / 提示词注入 / 工具 UI 时间线 / 多轮续写循环），
+不新增一套并行机制。
+
+挂点（按数据流）：
+
+- 定义：`built-in-content.js` 的 `activeTools.types.wechat = 'wechat_message'` + `defaults` 里的
+  `tool_wechat`（`enabled: false`，无 `resultCount`）；`app.js` 的 `ACTIVE_TOOL_WECHAT_TYPE`。
+- 归一化：`04-state-memory-tools.js` 的 `normalizeActiveTool` 把 wechat 与 random 同列——
+  走 `{ ...fallback, enabled }` 直通，不套返回条数迁移。
+- 暴露条件：`14-tools-runtime.js` 的 `getEnabledActiveTools()` 里，wechat 工具**仅当当前角色
+  `wechatEnabled`** 才进模型工具表；未开微信的角色看不到这个工具，也不会被「强制」策略逼着调用。
+  参数 schema：`{ content: string(必填), reason?: string }`，与检索工具的 query 分支并列。
+- 解析：`17-retrieval-web-tools.js` 的 `parseNativeActiveToolCall` 新增 wechat 分支
+  （只认 `content` / `reason`，`content` 非空）。
+- 执行：`18-tools-ui.js` 的 `handleActiveToolCallFromAssistant` 里 wechat 分支调用
+  `deliverActiveWechatMessage(content)`，把消息**攒进队列**并回一条 tool 结果；同时给出
+  工具 UI 分组名「主动发微信」、动作文案「发起微信」。
+- 弹出与发送：`25-wechat.js` 的 `deliverActiveWechatMessage` / `playActiveWechatMessages` /
+  `flushActiveWechatMessages`。队列 `__s.pendingActiveWechatMessages` 属于**本轮 RP**：
+  `15-generate.js` 在 depth 0 开始时清空，在整轮（含工具续写）结束、且非中止/非失败的收尾处
+  调 `flushActiveWechatMessages()`——它复用 `openWechat()` 载入/补齐/对账时间线并弹出面板，
+  再逐条按 `typingDuration` 发出（表情分档与被动回复一致）。
+
+面板**延迟到 RP 回复结束才弹**：工具执行发生在 RP 正文生成之前，此时弹面板会打断正文；
+延迟后「先说 RP、回完自动弹微信」的观感才自然。中止或生成失败则丢弃队列，不弹面板。
+
+### 7.6 验证
 
 `tools/refactor/smoke-wechat.cjs`（无头 Edge，`node tools/refactor/smoke-wechat.cjs`）覆盖：
 协议解析、建角色开微聊、入口按钮显隐、覆盖层渲染、分段气泡（含表情）、气泡全量合并、
 IndexedDB 持久化回读、角色间时间线隔离、编辑/重新生成后的镜像对账、
-`{{user}}` 占位符解析与长文不截断、以及**双向衔接**（黑盒拦截真实请求体，验证进微信带 RP 摘要、
+`{{user}}` 占位符解析与长文不截断、**RP 主动发起微信**（模型返回 tool_wechat → 消息进时间线 +
+面板自动弹出 + 工具面板开关控制）、以及**双向衔接**（黑盒拦截真实请求体，验证进微信带 RP 摘要、
 回 RP 注入微信聊天记录块且保留原文，含「微信1→RP1→微信2→RP2」两段微信都进 RP2 背景）、
 角色编辑器开关。`tools/refactor/shot-wechat.cjs` 生成覆盖层截图。
 

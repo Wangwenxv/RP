@@ -2220,6 +2220,10 @@
                                     class="mt-1 text-[11px] font-bold text-amber-600">
                                     需要填写 Tavily API Key
                                 </div>
+                                <div v-if="isWechatActiveTool(tool) && tool.enabled && !(currentCharacter && currentCharacter.wechatEnabled)"
+                                    class="mt-1 text-[11px] font-bold text-amber-600">
+                                    当前角色未开启微信，该工具不会触发
+                                </div>
                             </div>
                         </button>
                         <div class="sortable-item-actions">

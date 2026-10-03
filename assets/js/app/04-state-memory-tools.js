@@ -162,7 +162,9 @@
                 .find(item => item.id === (isLegacyWebTool ? 'tool_web' : tool.id) || item.callName === callName);
             if (!defaultTool) return null;
             const fallback = defaultTool;
-            if (fallback.type === ACTIVE_TOOL_RANDOM_TYPE) return { ...fallback, enabled: tool.enabled !== false };
+            if (fallback.type === ACTIVE_TOOL_RANDOM_TYPE || fallback.type === ACTIVE_TOOL_WECHAT_TYPE) {
+                return { ...fallback, enabled: tool.enabled !== false };
+            }
             const normalizedCallName = fallback.callName;
             const resultCountVersion = Number(tool.resultCountVersion) || 1;
             const normalizedType = fallback.type;
