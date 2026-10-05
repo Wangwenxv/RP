@@ -198,6 +198,16 @@ JSON 分段协议与打字节奏：逐条 `typingDuration`（基线 + 字数×�
 面板**延迟到 RP 回复结束才弹**：工具执行发生在 RP 正文生成之前，此时弹面板会打断正文；
 延迟后「先说 RP、回完自动弹微信」的观感才自然。中止或生成失败则丢弃队列，不弹面板。
 
+**两道开关必须同时成立**（工具开关 + 角色 `wechatEnabled`），任一边没开该工具都被静默过滤。
+静默正是问题所在——用户只会看到「开了没反应」。所以：
+
+- `built-in-content.js` 的 `buildActiveToolSystemPrompt` 按本轮**实际启用的工具类型**裁剪说明：
+  只开微信工具时不下发「检索工具的 query 填…」「检索未命中…」「对话片段和网页…」这些检索专用
+  规则，反之亦然；工具清单本身始终列全。避免模型把微信消息当检索来理解。
+- `25-wechat.js` 的 `wechatActiveToolNotice`（computed）在聊天页给一条可见提示，覆盖两种错配：
+  工具开但角色未开微信（「去开启」→ 打开角色编辑器）、角色开了微信但工具没开（「去打开」→ 跳工具页）。
+  两边一致时不提示；可关闭，切换角色后重置。模板在 `index.html` 聊天页头部下方（`.wx-tool-notice`）。
+
 ### 7.6 验证
 
 `tools/refactor/smoke-wechat.cjs`（无头 Edge，`node tools/refactor/smoke-wechat.cjs`）覆盖：

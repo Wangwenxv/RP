@@ -113,6 +113,42 @@
         const wechatUserAvatar = computed(() => __s.user?.avatar || '');
         __s.wechatUserAvatar = wechatUserAvatar;
 
+        // ---- 主动发微信：开关错配时的可见提示 ----
+        //
+        // 工具说明只有在「工具开启 + 当前角色开启微信」同时成立时才进 RP 请求；任一边没开，
+        // 该工具都会被静默过滤掉，用户只会看到「功能没反应」。这里把两种错配在聊天页显式说出来。
+        const wechatActiveToolNoticeDismissed = ref(false);
+        __s.wechatActiveToolNoticeDismissed = wechatActiveToolNoticeDismissed;
+        const dismissWechatActiveToolNotice = () => { wechatActiveToolNoticeDismissed.value = true; };
+        __s.dismissWechatActiveToolNotice = dismissWechatActiveToolNotice;
+
+        const wechatActiveToolNotice = computed(() => {
+            if (wechatActiveToolNoticeDismissed.value) return null;
+            const char = __s.currentCharacter.value;
+            if (!char) return null;
+            // 直接读 activeTools，不走 normalizeActiveTools()——后者会回写 activeTools.value，
+            // 在 computed 里产生副作用。
+            const tool = __s.activeTools.value.find(item => __s.isWechatActiveTool(item));
+            if (!tool) return null;
+            const toolOn = tool.enabled !== false;
+            if (toolOn && !char.wechatEnabled) {
+                return { kind: 'char-off', actionLabel: '去开启', text: '「主动发微信」已打开，但当前角色未开启微信，该工具不会触发。' };
+            }
+            if (!toolOn && char.wechatEnabled) {
+                return { kind: 'tool-off', actionLabel: '去打开', text: '想让角色主动在微信里找你？到「工具」里打开「主动发微信」。' };
+            }
+            return null;
+        });
+        __s.wechatActiveToolNotice = wechatActiveToolNotice;
+
+        const goFixWechatActiveTool = () => {
+            const notice = wechatActiveToolNotice.value;
+            if (!notice) return;
+            if (notice.kind === 'char-off') __s.editCharacter(__s.currentCharacterIndex.value);
+            else __s.currentView.value = 'tools';
+        };
+        __s.goFixWechatActiveTool = goFixWechatActiveTool;
+
         /** 表情包条目归一化：补齐字段、裁剪描述长度。 */
         const normalizeSticker = (raw) => {
             const item = raw && typeof raw === 'object' ? raw : {};
@@ -1589,6 +1625,8 @@
             if (!showWechatPanel.value) wechatTimeline.value = [];
         };
         watch(() => __s.currentCharacter.value?.uuid, () => {
+            // 换了角色，之前的「不再提示」不再适用（不同角色可能想开也可能不想开）。
+            wechatActiveToolNoticeDismissed.value = false;
             invalidateWechatTimelineScope();
             if (showWechatPanel.value) openWechat();
         });

@@ -365,6 +365,32 @@
                     </div>
                 </div>
 
+                <!-- 主动发微信：工具开关与角色微信开关不一致时的提示 -->
+                <div v-if="wechatActiveToolNotice"
+                    class="absolute top-12 md:top-14 left-0 right-0 z-10 px-4 flex justify-center pointer-events-none">
+                    <div
+                        class="wx-tool-notice pointer-events-auto flex items-center gap-2 max-w-full rounded-full border border-amber-200 bg-amber-50/95 backdrop-blur-sm px-3 py-1.5 shadow-sm">
+                        <svg class="w-3.5 h-3.5 flex-shrink-0 text-amber-600" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z">
+                            </path>
+                        </svg>
+                        <span class="truncate text-[12px] text-amber-800">{{ wechatActiveToolNotice.text }}</span>
+                        <button type="button" @click="goFixWechatActiveTool"
+                            class="flex-shrink-0 text-[12px] font-bold text-amber-900 underline underline-offset-2 hover:text-amber-950">
+                            {{ wechatActiveToolNotice.actionLabel }}
+                        </button>
+                        <button type="button" @click="dismissWechatActiveToolNotice"
+                            class="flex-shrink-0 p-0.5 -mr-0.5 text-amber-500 hover:text-amber-800" title="不再提示">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Chat Messages -->
                 <div ref="chatContainer" @click="showChatModelSelector = false"
                     @scroll="handleChatScroll"

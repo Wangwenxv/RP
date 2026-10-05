@@ -1097,6 +1097,91 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     !!wxFirstCall && !wxFirstCall.contents.some(c => c.includes('微信甲段') || c.includes('微信乙段')),
     wxFirstCall ? JSON.stringify(wxFirstCall.contents.map(c => c.slice(0, 14))) : 'no call');
 
+  // 提示词：模型光看到 tools 数组还不够，system 里必须有「怎么用」的说明
+  check('RP system prompt 含 active_tools 区块',
+    !!wxFirstCall && wxFirstCall.sysContent.includes('<active_tools>'));
+  check('RP system prompt 含 tool_wechat 调用说明',
+    !!wxFirstCall && wxFirstCall.sysContent.includes('主动发微信工具只在剧情自然需要私下联系时使用'),
+    wxFirstCall ? wxFirstCall.sysContent.split('\n').filter(l => l.includes('微信')).join(' | ').slice(0, 160) : 'no call');
+  check('RP system prompt 列出 tool_wechat 及其描述',
+    !!wxFirstCall
+    && wxFirstCall.sysContent.includes('tool_wechat（主动发微信）')
+    && wxFirstCall.sysContent.includes('content 写成真人微信口吻的短消息'),
+    '');
+  check('未开微信的角色：system prompt 不含 tool_wechat 说明',
+    !!noWxCall && !noWxCall.sysContent.includes('tool_wechat'));
+
+  console.log('\n== 工具说明按类型裁剪 + 开关错配提示 ==');
+  check('只开微信工具时不下发检索专用说明',
+    !!wxFirstCall
+    && !wxFirstCall.sysContent.includes('检索工具的 query')
+    && !wxFirstCall.sysContent.includes('检索未命中')
+    && !wxFirstCall.sysContent.includes('对话片段和网页'),
+    wxFirstCall ? wxFirstCall.sysContent.split('\n').filter(l => l.includes('检索')).join(' | ').slice(0, 120) : 'no call');
+
+  const notice = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    const read = () => {
+      const n = root.wechatActiveToolNotice;
+      return n ? `${n.kind}:${n.actionLabel}` : null;
+    };
+    const domText = () => {
+      const el = document.querySelector('.chat-view-root .wx-tool-notice');
+      return el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+    };
+    const setTool = (value) => {
+      const tool = root.activeTools.find(item => item.id === 'tool_wechat');
+      if (tool) tool.enabled = value;
+    };
+    const wait = () => new Promise(r => setTimeout(r, 80));
+    const noWxIndex = root.characters.findIndex(c => c.uuid === 'test-uuid-no-wx');
+    const wxIndex = root.characters.findIndex(c => c.uuid === 'test-uuid-active-wx');
+    const out = {};
+
+    // 角色没开微信 + 工具开着 → 提示「角色未开启微信」
+    await root.selectCharacter(noWxIndex, false, { silent: true });
+    setTool(true);
+    await wait();
+    out.charOff = read();
+    out.charOffDom = domText();
+
+    // 两边都没开 → 不提示
+    setTool(false);
+    await wait();
+    out.bothOff = read();
+
+    // 角色开了微信 + 工具没开 → 提示去打开工具
+    await root.selectCharacter(wxIndex, false, { silent: true });
+    await wait();
+    out.toolOff = read();
+    out.toolOffDom = domText();
+
+    // 两边都开 → 不提示
+    setTool(true);
+    await wait();
+    out.bothOn = read();
+
+    // 关掉后不再提示
+    root.dismissWechatActiveToolNotice();
+    setTool(false);
+    await wait();
+    out.afterDismiss = read();
+
+    setTool(false);
+    return out;
+  });
+  check('工具开/角色微信关 → 提示角色未开启微信',
+    notice.charOff === 'char-off:去开启', String(notice.charOff));
+  check('该提示渲染进聊天页 DOM',
+    !!notice.charOffDom && notice.charOffDom.includes('未开启微信'), String(notice.charOffDom));
+  check('两边都没开 → 不提示', notice.bothOff === null, String(notice.bothOff));
+  check('角色微信开/工具关 → 提示去打开工具',
+    notice.toolOff === 'tool-off:去打开', String(notice.toolOff));
+  check('该提示渲染进聊天页 DOM',
+    !!notice.toolOffDom && notice.toolOffDom.includes('主动发微信'), String(notice.toolOffDom));
+  check('两边都开 → 不提示', notice.bothOn === null, String(notice.bothOn));
+  check('关掉后不再提示', notice.afterDismiss === null, String(notice.afterDismiss));
+
   console.log('\n== 清空聊天记录联动清除前情提要 ==');
   const afterClear = await page.evaluate(async () => {
     const root = window.__APP_PROXY__;

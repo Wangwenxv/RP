@@ -660,6 +660,9 @@ const app = createApp({
             sendWechatMessage: __s.sendWechatMessage, stopWechatGeneration: __s.stopWechatGeneration,
             wechatBurstMode: __s.wechatBurstMode, wechatUnansweredCount: __s.wechatUnansweredCount,
             requestWechatReplyNow: __s.requestWechatReplyNow,
+            wechatActiveToolNotice: __s.wechatActiveToolNotice,
+            goFixWechatActiveTool: __s.goFixWechatActiveTool,
+            dismissWechatActiveToolNotice: __s.dismissWechatActiveToolNotice,
             // 表情包库 + 粘贴 + 头像
             wechatStickers: __s.wechatStickers, showWechatStickers: __s.showWechatStickers,
             showStickerManager: __s.showStickerManager,
