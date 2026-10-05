@@ -312,6 +312,7 @@ const app = createApp({
             activeKeepFloors: __s.activeKeepFloors, keepFloorsSlider: __s.keepFloorsSlider, keepFloorsSliderMin: __s.keepFloorsSliderMin, keepFloorsSliderMax: __s.keepFloorsSliderMax,
             storyRecap: __s.storyRecap, isRecapGenerating: __s.isRecapGenerating,
             recapCoverage: computed(() => __s.computeRecapCoverage()),
+            recapKeepSettings: __s.recapKeepSettings, setRecapKeepSettings: __s.setRecapKeepSettings,
             runStoryRecap: __s.runStoryRecap, clearStoryRecap: __s.clearStoryRecap,
             clearStoryRecapSilently: __s.clearStoryRecapSilently,
             // 滑块值映射：4-10 为变量分析消息层数。
@@ -645,6 +646,7 @@ const app = createApp({
             isWechatGenerating: __s.isWechatGenerating, wechatTyping: __s.wechatTyping,
             wechatStatusText: __s.wechatStatusText, wechatSettingsDraft: __s.wechatSettingsDraft,
             wechatPeerName: __s.wechatPeerName, wechatAvatar: __s.wechatAvatar,
+            wechatUserAvatar: __s.wechatUserAvatar,
             wechatWorldInfoOptions: __s.wechatWorldInfoOptions,
             wechatPresetOptions: __s.wechatPresetOptions,
             wechatDisplayItems: __s.wechatDisplayItems,
@@ -655,7 +657,33 @@ const app = createApp({
             reconcileRpTimeline: __s.reconcileRpTimeline,
             handleWechatImageSelection: __s.handleWechatImageSelection,
             removeWechatPendingImage: __s.removeWechatPendingImage,
-            sendWechatMessage: __s.sendWechatMessage, stopWechatGeneration: __s.stopWechatGeneration
+            sendWechatMessage: __s.sendWechatMessage, stopWechatGeneration: __s.stopWechatGeneration,
+            wechatBurstMode: __s.wechatBurstMode, wechatUnansweredCount: __s.wechatUnansweredCount,
+            requestWechatReplyNow: __s.requestWechatReplyNow,
+            // 表情包库 + 粘贴 + 头像
+            wechatStickers: __s.wechatStickers, showWechatStickers: __s.showWechatStickers,
+            showStickerManager: __s.showStickerManager,
+            stickerDraft: __s.stickerDraft,
+            openWechatStickers: __s.openWechatStickers, openStickerManager: __s.openStickerManager,
+            resetStickerDraft: __s.resetStickerDraft,
+            editSticker: __s.editSticker, saveSticker: __s.saveSticker, deleteSticker: __s.deleteSticker,
+            handleStickerImageSelection: __s.handleStickerImageSelection,
+            sendWechatSticker: __s.sendWechatSticker,
+            handleWechatPaste: __s.handleWechatPaste,
+            handleWechatAvatarSelection: __s.handleWechatAvatarSelection,
+            // 开源表情包商店
+            showStickerStore: __s.showStickerStore, stickerStoreCatalog: __s.stickerStoreCatalog,
+            stickerStoreCategories: __s.stickerStoreCategories, stickerStoreActiveCat: __s.stickerStoreActiveCat,
+            stickerStoreVisible: __s.stickerStoreVisible, stickerStorePicked: __s.stickerStorePicked,
+            stickerStoreImporting: __s.stickerStoreImporting,
+            stickerStoreItemState: __s.stickerStoreItemState, stickerStoreIsPicked: __s.stickerStoreIsPicked,
+            stickerStoreFileUrl: __s.stickerStoreFileUrl,
+            openStickerStore: __s.openStickerStore, closeStickerStore: __s.closeStickerStore,
+            setStickerStoreCat: __s.setStickerStoreCat,
+            toggleStickerStorePick: __s.toggleStickerStorePick, toggleStickerStorePickAll: __s.toggleStickerStorePickAll,
+            importStickerStoreItems: __s.importStickerStoreItems,
+            importStickerStorePicked: __s.importStickerStorePicked,
+            importStickerStoreCategory: __s.importStickerStoreCategory
         };
     }
 });

@@ -317,6 +317,47 @@
     padding: 0 2px 8px;
 }
 
+/* 连发：攒够了显示「让对方回复」；平时是输入框旁的小开关 */
+.wx-reply-trigger-row {
+    display: flex;
+    justify-content: center;
+    padding: 0 2px 6px;
+}
+
+.wx-reply-trigger {
+    border: 0;
+    border-radius: 999px;
+    padding: 6px 16px;
+    font: inherit;
+    font-size: 13px;
+    background: var(--wx-accent);
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .15);
+}
+
+.wx-reply-trigger:hover {
+    filter: brightness(1.05);
+}
+
+.wx-burst-toggle {
+    flex: 0 0 auto;
+    border: 1px solid var(--wx-line);
+    border-radius: 6px;
+    background: #fff;
+    color: #666;
+    font: inherit;
+    font-size: 13px;
+    padding: 9px 10px;
+    cursor: pointer;
+}
+
+.wx-burst-toggle.on {
+    background: var(--wx-accent);
+    border-color: var(--wx-accent);
+    color: #fff;
+}
+
 .wx-pending-item {
     position: relative;
 }
@@ -579,6 +620,284 @@
     background: var(--wx-accent);
     color: #fff;
     cursor: pointer;
+}
+
+/* ---------- 表情包：库命中贴图，未命中回退文字 ---------- */
+.wx-bubble.sticker .wx-sticker-img {
+    display: block;
+    max-width: min(160px, 40vw);
+    max-height: min(160px, 40vh);
+    border-radius: 8px;
+    /* 透明表情包在灰底上不好看，垫一层浅色 */
+    background: #f2f2f2;
+}
+
+/* ---------- 点击换头像 ---------- */
+.wx-avatar-pick {
+    flex: 0 0 auto;
+    cursor: pointer;
+    display: block;
+    border-radius: 6px;
+}
+
+.wx-avatar-pick:hover .wx-avatar {
+    filter: brightness(.92);
+}
+
+/* ---------- 表情包选择/管理（居中模态） ---------- */
+.wx-drawer-mask--center {
+    justify-content: center;
+    align-items: center;
+    padding: 24px;
+}
+
+.wx-modal {
+    width: min(520px, 100%);
+    max-height: 80vh;
+    background: #fff;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: wx-pop .18s ease-out;
+}
+
+.wx-modal--tall {
+    max-height: 88vh;
+}
+
+.wx-sticker-btn {
+    font-size: 20px;
+}
+
+.wx-sticker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 10px;
+}
+
+.wx-sticker-card {
+    border: 1px solid var(--wx-line);
+    border-radius: 8px;
+    background: #fafafa;
+    padding: 6px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.wx-sticker-card:hover {
+    border-color: var(--wx-accent);
+    background: #f0fff5;
+}
+
+.wx-sticker-card img {
+    width: 100%;
+    height: 64px;
+    object-fit: contain;
+}
+
+.wx-sticker-card-name {
+    width: 100%;
+    font-size: 11px;
+    line-height: 1.2;
+    color: #333;
+    text-align: center;
+    /* 名字可能不短（如「难过-委屈地哭了起来」）：最多两行，超出省略 */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-all;
+}
+
+.wx-sticker-upload {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.wx-sticker-preview {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    border: 1px solid var(--wx-line);
+    border-radius: 8px;
+    background: #fafafa;
+}
+
+.wx-btn-file {
+    display: inline-block;
+    border: 1px dashed #bbb;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #444;
+    cursor: pointer;
+}
+
+.wx-btn-file:hover {
+    border-color: var(--wx-accent);
+    color: var(--wx-accent);
+}
+
+.wx-sticker-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.wx-ghost {
+    border: 1px solid var(--wx-line);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font: inherit;
+    background: #fff;
+    color: #444;
+    cursor: pointer;
+}
+
+.wx-ghost--full {
+    width: 100%;
+}
+
+.wx-sticker-manage {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.wx-sticker-manage-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px;
+    border: 1px solid var(--wx-line);
+    border-radius: 8px;
+}
+
+.wx-sticker-manage-item img {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+    border-radius: 6px;
+    background: #fafafa;
+}
+
+.wx-sticker-manage-meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.wx-sticker-manage-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #222;
+}
+
+.wx-sticker-manage-desc {
+    font-size: 12px;
+    color: var(--wx-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---------- 开源表情包商店 ---------- */
+.wx-store-cats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.wx-store-cat {
+    border: 1px solid var(--wx-line);
+    border-radius: 999px;
+    background: #fafafa;
+    padding: 3px 10px;
+    font-size: 12px;
+    color: #444;
+    cursor: pointer;
+}
+
+.wx-store-cat.on {
+    background: var(--wx-accent);
+    border-color: var(--wx-accent);
+    color: #fff;
+}
+
+.wx-store-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.wx-store-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+    gap: 8px;
+    max-height: 46vh;
+    overflow-y: auto;
+}
+
+.wx-store-cell {
+    position: relative;
+    border: 1px solid var(--wx-line);
+    border-radius: 8px;
+    background: #fafafa;
+    padding: 4px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+}
+
+.wx-store-cell.picked {
+    border-color: var(--wx-accent);
+    background: #eafff2;
+    box-shadow: 0 0 0 2px rgba(7, 193, 96, .25);
+}
+
+.wx-store-cell.loaded {
+    opacity: .5;
+}
+
+.wx-store-cell img {
+    width: 100%;
+    height: 60px;
+    object-fit: contain;
+}
+
+.wx-store-cell-name {
+    width: 100%;
+    font-size: 10px;
+    line-height: 1.2;
+    color: #666;
+    text-align: center;
+    /* 文件名可能很长：最多两行，超出省略 */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-all;
+}
+
+.wx-store-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    background: rgba(0, 0, 0, .55);
+    color: #fff;
+    font-size: 10px;
+    border-radius: 4px;
+    padding: 0 4px;
 }
 
 @media (max-width: 480px) {
