@@ -61,7 +61,6 @@ Roleplay-Hub/
 │       ├── api-utils.js           # API 端点与请求客户端
 │       ├── data-services.js       # 存储、记忆、上下文、分支与 UI 状态
 │       ├── runtime-services.js    # API 请求、消息渲染与运行状态
-│       ├── update-check.js        # 更新检查
 │       ├── ui-components.js       # 选择器、侧边栏、弹窗与页面组件
 │       ├── app/                   # 应用模块（01~24，原 app.js setup() 的拆分）
 │       └── app.js                 # 主业务入口：引导常量、组件注册、按序调用模块并挂载

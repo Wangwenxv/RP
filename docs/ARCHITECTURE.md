@@ -22,7 +22,6 @@
 | 3.5 | `assets/js/wechat-protocol.js` | `RPHubWeChatProtocol` | 微信分段回复协议：JSON 分段 prompt + 容错解析（见 §7） |
 | 4 | `assets/js/data-services.js` | `RPHubStorage` / `RPHubMemoryUtils` / `RPHubContextUtils` / `RPHubStoryBranches` / `RPHubUiTemplateUtils` | IndexedDB 存储层、记忆/向量工具、上下文组装、剧情分支、UI 模板工具 |
 | 5 | `assets/js/runtime-services.js` | `RPHubMessageRenderer` / `RPHubComposables` | 消息渲染器、存储统计与 token 用量两个 composable |
-| 6 | `assets/js/update-check.js` | `RPHubUpdateCheck` | 更新检查 |
 | 7 | `assets/js/ui-components.js` | `RPHubCustomSelect` / `RPHubLayoutComponents` / `RPHubComponents` | 全部弹窗/导航/卡片等 Vue 组件 |
 | 8 | `assets/js/app/*.js`（25 个） | `RPHubAppSections.<模块名>` | **应用模块**（原 app.js setup() 的拆分，见 §3） |
 | 9 | `assets/js/app.js` | — | 引导：全局常量解构、`RollingText` 组件、createApp、按序调用 25 个模块、mount |

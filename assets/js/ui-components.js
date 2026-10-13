@@ -322,7 +322,6 @@
         emits: ['update:current-view', 'close'],
         setup(props, { emit }) {
             const { ref, watch, nextTick, onMounted, onBeforeUnmount } = Vue;
-            window.RPHubUpdateCheck.useUpdateCheck();
             const isDark = ref(window.RPHubTheme.current === 'dark');
             const syncTheme = event => { isDark.value = event.detail === 'dark'; };
             const toggleTheme = () => window.RPHubTheme.set(isDark.value ? 'light' : 'dark');
