@@ -1819,13 +1819,6 @@
             background: linear-gradient(#dbe4f0, #dbe4f0) center / 100% 3px no-repeat;
         }
 
-        .chat-model-slots > .segmented-switch__indicator {
-            inset-block-end: auto;
-            width: calc(100% - 0.5rem);
-            height: calc((100% - 1.25rem) / 3);
-            transform: translateY(calc(var(--slot-index, 0) * (100% + 0.375rem)));
-        }
-
         .compact-range::-webkit-slider-thumb {
             width: 13px;
             height: 13px;

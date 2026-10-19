@@ -19,3 +19,6 @@
 - （2026-09-28 已完成）微信聊天子系统集成：25-wechat 模块 + wechat-protocol.js + wechat.css + `.wx-root` 覆盖层；
   角色级 wechatEnabled 开关；统一时间线 scoped key `wechat_timeline`（跟随剧情分支）；RP↔微信双向衔接。
   验证：tools/refactor/smoke-wechat.cjs（27 项，全过）。详见 docs/ARCHITECTURE.md §7。
+- （2026-10-19 已完成）聊天模型选择改成输入框左侧下拉（`#chat-model-menu`）：直接选 `/models` 拉到的模型 + 搜索 + 家族分类；
+  快捷面板里的 3 个固定槽位 UI 移除。`settings.model` 是唯一入口，槽位数据（quality/balanced/fast）只留给设置页与角色卡。
+  验证：tools/refactor/smoke-chat-model-menu.cjs（16 项）。

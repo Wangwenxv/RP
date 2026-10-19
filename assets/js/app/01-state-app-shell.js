@@ -56,6 +56,13 @@
         __s.modelSelectionTarget = modelSelectionTarget;
         const showChatModelSelector = ref(false);
         __s.showChatModelSelector = showChatModelSelector;
+        // 聊天区模型下拉菜单（替代快捷面板里的 3 个固定槽位）
+        const showChatModelMenu = ref(false);
+        __s.showChatModelMenu = showChatModelMenu;
+        const chatModelMenuQuery = ref('');
+        __s.chatModelMenuQuery = chatModelMenuQuery;
+        const chatModelMenuTag = ref('all');
+        __s.chatModelMenuTag = chatModelMenuTag;
         const showCharacterEditor = ref(false);
         __s.showCharacterEditor = showCharacterEditor;
         const showPresetEditor = ref(false);

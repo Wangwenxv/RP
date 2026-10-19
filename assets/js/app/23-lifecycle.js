@@ -269,6 +269,9 @@
                 if (__s.showApiProviderSelector.value && !e.target.closest('.api-provider-selector-container')) {
                     __s.showApiProviderSelector.value = false;
                 }
+                if (__s.showChatModelMenu.value && !e.target.closest('.chat-model-menu-container')) {
+                    __s.showChatModelMenu.value = false;
+                }
             });
         });
         onBeforeUnmount(() => {

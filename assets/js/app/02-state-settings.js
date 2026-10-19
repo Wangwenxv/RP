@@ -365,24 +365,6 @@
         __s.isGeminiModel = isGeminiModel;
         const isTruncationEnabled = computed(() => isGeminiModel.value && settings.preventTruncation);
         __s.isTruncationEnabled = isTruncationEnabled;
-        const modelMode = computed({
-            get: () => {
-                return currentModelMode.value;
-            },
-            set: (val) => {
-                currentModelMode.value = val;
-                if (val === 'fast') {
-                    settings.model = settings.fastModel;
-                } else if (val === 'balanced') {
-                    settings.model = settings.balancedModel;
-                } else {
-                    settings.model = settings.qualityModel;
-                }
-                __s.showModelSelector.value = false;
-                __s.showChatModelSelector.value = false;
-            }
-        });
-        __s.modelMode = modelMode;
         const reasoningEffortOptions = [
             { value: 'none', label: '关闭' },
             { value: 'low', label: '低（Low）' },
@@ -405,11 +387,51 @@
             { mode: 'fast', model: settings.fastModel }
         ]);
         __s.chatModelSlots = chatModelSlots;
-        const selectChatModelSlot = (slot) => {
-            if (!slot?.model) return;
-            currentModelMode.value = slot.mode;
-            settings.model = slot.model;
+
+        // 聊天区模型下拉菜单：直接选用接口拉取的模型，不再依赖上面 3 个固定槽位。
+        // 槽位数据仍保留（设置页的槽位选择、角色卡自定义模型还在读 quality/balanced/fast）。
+        const chatModelMenuModels = computed(() => {
+            const query = String(__s.chatModelMenuQuery.value || '').trim().toLowerCase();
+            const tag = __s.chatModelMenuTag.value || 'all';
+            return (__s.availableModels.value || [])
+                .filter(model => {
+                    const id = String(model?.id || '').toLowerCase();
+                    if (!id) return false;
+                    if (tag === 'other') {
+                        if (popularModelFamilies.some(family => id.includes(family))) return false;
+                    } else if (tag !== 'all' && !id.includes(tag)) {
+                        return false;
+                    }
+                    return !query || id.includes(query);
+                })
+                .slice()
+                .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        });
+        __s.chatModelMenuModels = chatModelMenuModels;
+        const closeChatModelMenu = () => {
+            __s.showChatModelMenu.value = false;
         };
-        __s.selectChatModelSlot = selectChatModelSlot;
+        __s.closeChatModelMenu = closeChatModelMenu;
+        const toggleChatModelMenu = () => {
+            const next = !__s.showChatModelMenu.value;
+            __s.showChatModelMenu.value = next;
+            if (!next) return;
+            __s.showChatModelSelector.value = false;
+            __s.chatModelMenuQuery.value = '';
+            __s.chatModelMenuTag.value = 'all';
+            // 首次打开还没拉过列表时静默补一次，避免只看到空列表。
+            if (!__s.availableModels.value.length && __s.settings.apiKey) {
+                __s.fetchModels?.();
+            }
+        };
+        __s.toggleChatModelMenu = toggleChatModelMenu;
+        const selectChatModel = (modelId) => {
+            if (!modelId) return;
+            // 直接写 settings.model；settings.model 的 watch 会同步 qualityModel 与模型模式。
+            __s.settings.model = modelId;
+            __s.showChatModelMenu.value = false;
+            __s.showChatModelSelector.value = false;
+        };
+        __s.selectChatModel = selectChatModel;
     };
 })();
