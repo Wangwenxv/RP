@@ -676,6 +676,31 @@
         };
         __s.recapCoverageRange = recapCoverage;
 
+        // 从真实时间线统计，不能把连发的每个气泡或模型失败算成一次沉默。
+        const buildWechatSilenceState = () => {
+            let count = 0;
+            let readCount = 0;
+            let noticedCount = 0;
+            let last = null;
+            for (const item of wechatTimeline.value) {
+                if (item.channel !== 'wechat') continue;
+                if (item.role === 'assistant') { count = 0; readCount = 0; noticedCount = 0; last = null; }
+                else if (item.role === 'user' && item.replyDecision === 'silent') {
+                    count++; last = item;
+                    const { awareness } = wxProtocol.normalizeSilence(item.replySilence);
+                    if (awareness === 'read') readCount++;
+                    else if (awareness === 'noticed') noticedCount++;
+                }
+            }
+            return last ? {
+                role: 'user', _preventContextMerge: true,
+                content: `【此前连续沉默｜内部行为状态，不是微信消息】\n你此前连续 ${count} 轮未发送消息，本轮尚未计入。`
+                    + `其中已看到内容后未回 ${readCount} 轮，只感知提示 ${noticedCount} 轮，其余未感知或未知，不能全算成故意不理。`
+                    + `最近一次${wxProtocol.describeSilence(last.replySilence)}。这些是过去的记录，当前处境按最新剧情重新判断。`
+            } : null;
+        };
+        __s.buildWechatSilenceState = buildWechatSilenceState;
+
         /**
          * 微信历史 → 模型消息。严格按统一时间线的顺序走：
          * 微信消息原样发出，途中每一段连续 RP 合并成一条剧情背景块，插在它原本的时间位置。
@@ -694,6 +719,7 @@
             const entries = [];
             let rpBuffer = [];
             let wxSeen = 0;
+            let silentCount = 0;
             const flushRp = () => {
                 if (!rpBuffer.length) return;
                 const block = buildWechatRpBlock(rpBuffer);
@@ -712,6 +738,7 @@
                 flushRp();
                 if (item.role !== 'user' && item.role !== 'assistant') continue;
                 wxSeen += 1;
+                if (item.role === 'assistant') silentCount = 0;
                 if (item.type === 'image' && item.role === 'user') {
                     const parts = [];
                     if (item.content) parts.push({ type: 'image_url', image_url: { url: item.content } });
@@ -725,6 +752,15 @@
                 } else {
                     const text = String(item.content || '').trim();
                     if (text) entries.push({ message: { role: item.role, content: text }, mergeable: true, wxSeen });
+                }
+                if (item.role === 'user' && item.replyDecision === 'silent') {
+                    silentCount++;
+                    entries.push({
+                        message: { role: 'assistant', _preventContextMerge: true,
+                            content: `【未发送消息的行为记录｜未发送给对方】\n这一轮你没有发微信，这是连续第 ${silentCount} 次。`
+                                + wxProtocol.describeSilence(item.replySilence) + '。不要把这条内部记录当成发过的消息。' },
+                        mergeable: false, wxSeen
+                    });
                 }
             }
             // 时间线以 RP 收尾时（刚 RP 完还没发微信），这段同样是当前对话的背景
@@ -762,6 +798,9 @@
                 windowEntries = [latestRp, ...windowEntries.slice(-(WECHAT_HISTORY_LIMIT - 1))];
             }
             const head = windowEntries.map(entry => entry.message);
+            // 即使历史窗口或前情提要裁掉早先的逐轮标记，也保留当前连续次数与最后归因。
+            const silenceState = buildWechatSilenceState();
+            if (silenceState) head.unshift(silenceState);
             // 前情提要是对话记录的开头（不是 system 预设）：摘要、最近 RP 原文、最近微信原文各自成条，
             // 排在被覆盖的老内容之前（老内容已剔除），夹在 system 与聊天记录之间。
             const recapMessages = __s.buildStoryRecapMessages ? __s.buildStoryRecapMessages() : [];
@@ -787,14 +826,17 @@
             const playerName = String(__s.user?.name || '').trim() || '对方';
             const lines = items.map((item) => {
                 const name = item.role === 'user' ? playerName : who;
-                if (item.type === 'image') return `${name}：[图片]`;
-                if (item.type === 'sticker') return `${name}：[表情 ${item.content}]`;
-                return `${name}：${item.content}`;
+                const text = item.type === 'image' ? '[图片]' : item.type === 'sticker' ? `[表情 ${item.content}]` : item.content;
+                const silent = item.role === 'user' && item.replyDecision === 'silent';
+                return `${name}：${text}` + (silent
+                    ? `\n【未发送消息的行为记录】${who}此轮未发微信；${wxProtocol.describeSilence(item.replySilence)}。这是内部状态，不是微信正文。` : '');
             });
             return {
                 role: 'user',
-                content: `【微信聊天记录｜以下是你们在现实里互加微信后的对话，作为你已知的背景，不是 roleplay 正文】\n`
-                    + `${who}在微信上和你说：\n`
+                content: `【微信聊天记录｜以下是双方微信往来与内部行为背景，不是 roleplay 正文】\n`
+                    + '模型收到这些记录，不等于人物当时读过全部内容。感知记录为未读或未感知时，不能把对应正文当成人物已知，也不能把未回解释为故意不理；只有后续剧情确实查看手机或获知内容后，才能据此回应。\n'
+                    + '未发送行为中的原因描述的是当时状态，不能覆盖后来被叫醒、获救等明确剧情变化；对方只知道消息未获回复，不自动知道角色未回的内在原因。\n'
+                    + `${playerName}与${who}的微信往来及未发送行为：\n`
                     + lines.join('\n'),
                 _sourceIndexes: [],
                 _preventContextMerge: true
@@ -1467,7 +1509,10 @@
                 if (signal.aborted || wechatScopeId() !== scopeId) return;
                 stopWechatStatusTicker();
                 if (reply.silent) {
-                    if (lastUserItem) lastUserItem.replyDecision = 'silent';
+                    if (lastUserItem) {
+                        lastUserItem.replyDecision = 'silent';
+                        lastUserItem.replySilence = { ...wxProtocol.normalizeSilence(reply.silence), decidedAt: Date.now() };
+                    }
                     return;
                 }
                 wechatTyping.value = true;

@@ -60,6 +60,14 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
   context.window.RPHubAppSections.wechat(state);
   return {
     state, protocol: context.window.RPHubWeChatProtocol, stored, requests, toasts,
+    async loadRecap() {
+      context.getStoredValue = async () => null;
+      state.buildConversationTurnSnapshot = () => ({ turns: [] });
+      state.getPostprocessedChatMessages = () => [];
+      vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/app/26-recap.js'), 'utf8'), context);
+      context.window.RPHubAppSections.recap(state);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    },
     setScope: value => { scopeId = value; },
     async send(content) { state.wechatInput.value = content; await state.sendWechatMessage(); }
   };
@@ -141,10 +149,13 @@ test('1+1 → 2 → 好的 → 空回 → 新问题：无空白气泡，状态�
   await h.send('2+2=几？');
   assert.equal(s.wechatTimeline.value.at(-1).content, '4');
   const chat = h.requests.at(-1).messages.slice(1);
-  assert.deepEqual(plain(chat), [
+  assert.ok(chat[0].content.includes('连续 1 轮'));
+  assert.deepEqual(plain(chat.filter(m => !m.content.startsWith('【')).map(m => ({ role: m.role, content: m.content }))), [
     { role: 'user', content: '1+1=几？' }, { role: 'assistant', content: '2' },
-    { role: 'user', content: '好的\n2+2=几？' }
+    { role: 'user', content: '好的' }, { role: 'user', content: '2+2=几？' }
   ]);
+  assert.equal(chat[4].role, 'assistant');
+  assert.ok(chat[4].content.includes('未发送消息的行为记录'));
   assert.ok(!JSON.stringify(chat).includes('replyDecision'));
   assert.equal(h.stored.get('wechat_timeline/branch-a').length, 5);
 });
@@ -325,12 +336,13 @@ test('RP 恢复事件在原时间位置送入下一次微信请求，之前的�
   await h.send('还在忙吗？');
   h.state.wechatTimeline.value.push(rpItem('随后你已被解救，取回手机，但依然疲惫', 1));
   await h.send('现在怎么样？');
-  const chat = h.requests[1].messages.slice(1);
-  assert.deepEqual(plain(chat.map(m => m.role)), ['user', 'user', 'user', 'user']);
+  const chat = h.requests[1].messages.slice(2);
+  assert.deepEqual(plain(chat.map(m => m.role)), ['user', 'user', 'assistant', 'user', 'user']);
   assert.ok(chat[0].content.includes('尚未获救'));
   assert.equal(chat[1].content, '还在忙吗？');
-  assert.ok(chat[2].content.includes('已被解救') && chat[2].content.includes('依然疲惫'));
-  assert.equal(chat[3].content, '现在怎么样？');
+  assert.ok(chat[2].content.includes('未发送消息的行为记录'));
+  assert.ok(chat[3].content.includes('已被解救') && chat[3].content.includes('依然疲惫'));
+  assert.equal(chat[4].content, '现在怎么样？');
   assert.equal(h.state.wechatTimeline.value.at(-1).content, '我安全了');
 });
 
@@ -379,4 +391,149 @@ test('只开主动微信时，强制策略不会强迫调用；其他工具的�
   assert.equal(state.shouldRequireActiveToolCall([web]), true);
   policy = 'adaptive';
   assert.equal(state.shouldRequireActiveToolCall(tools), false);
+});
+
+const silenceReply = (reason, awareness, summary) => ({ content: JSON.stringify({
+  messages: [], silence: { reason, awareness, summary }
+}) });
+const behaviorRecords = request => request.messages.filter(m => typeof m.content === 'string' && m.content.startsWith('【未发送消息的行为记录'));
+
+test('空回元数据归一化，限制长度/字段/思考块，非空回复不采纳沉默归因', () => {
+  const p = harness().protocol;
+  const reply = p.parseReplyResult(silenceReply('upset', 'read', '暂时不想解释').content);
+  assert.deepEqual(plain(reply.silence), { reason: 'upset', awareness: 'read', summary: '暂时不想解释' });
+  const invalid = p.normalizeSilence({ reason: 'garbage', awareness: 'garbage', summary: '<think>不要记录的推理</think>\n' + '难过'.repeat(80), extra: 'ignored' });
+  assert.equal(invalid.reason, 'unknown');
+  assert.equal(invalid.awareness, 'unknown');
+  assert.equal(invalid.summary.length, 80);
+  assert.ok(!invalid.summary.includes('推理'));
+  assert.equal(invalid.extra, undefined);
+  assert.equal(p.parseReplyResult('{"messages":["嗯"],"silence":{"reason":"upset"}}').silence, undefined);
+  assert.deepEqual(plain(p.parseReply(silenceReply('sleeping', 'unseen', '没醒').content)), []);
+});
+
+test('两轮赌气后第三轮模型看到各次沉默及真实次数，回复后连续计数归零', async () => {
+  const h = harness(async (_options, n) => n < 3 ? silenceReply('upset', 'read', '还在介意争吵，想冷静')
+    : { content: '{"messages":[{"content":"我还在生气"}]}' });
+  await h.send('怎么啦');
+  await h.send('有错的话，我可以认的');
+  await h.send('你理理我呗');
+  const third = h.requests[2];
+  assert.ok(third.messages[1].content.includes('连续 2 轮'));
+  assert.ok(third.messages[1].content.includes('已看到内容后未回 2 轮'));
+  const records = behaviorRecords(third);
+  assert.equal(records.length, 2);
+  assert.ok(records[0].content.includes('第 1 次') && records[1].content.includes('第 2 次'));
+  assert.ok(records.every(m => m.role === 'assistant' && m.content.includes('当时看到消息内容')));
+  const history = third.messages.slice(2);
+  assert.deepEqual(plain(history.map(m => m.role)), ['user', 'assistant', 'user', 'assistant', 'user']);
+  assert.equal(history.at(-1).content, '你理理我呗');
+  assert.equal(h.state.wechatTimeline.value.length, 4);
+  assert.equal(h.state.buildWechatSilenceState(), null);
+  assert.equal(h.state.wechatTimeline.value[0].replySilence.reason, 'upset');
+  assert.ok(Number.isFinite(h.state.wechatTimeline.value[0].replySilence.decidedAt));
+  assert.ok(h.state.wechatDisplayItems.value.every(i => !String(i.content || '').includes('行为记录')));
+});
+
+test('重复嗯嗯保留两次自然收尾记录，第三轮可以回复而非合并成首次确认', async () => {
+  const h = harness(async (_options, n) => n < 3 ? silenceReply('topic_closed', 'read', '已确认，暂时没有别的话')
+    : { content: '{"messages":[{"content":"怎么发这么多嗯嗯"}]}' });
+  for (let i = 0; i < 3; i++) await h.send('嗯嗯');
+  assert.equal(behaviorRecords(h.requests[2]).length, 2);
+  assert.equal(h.requests[2].messages.filter(m => m.role === 'user' && m.content === '嗯嗯').length, 3);
+  assert.ok(h.requests[2].messages[1].content.includes('话题自然结束'));
+  assert.equal(h.state.wechatTimeline.value.at(-1).content, '怎么发这么多嗯嗯');
+});
+
+test('睡眠的未感知、仅提示与醒后已读分别保存，不会都变成已读不回', async () => {
+  // 这里只验证状态传递。是否真的被铃声吵醒由真实模型结合已知场景判断。
+  const responses = [
+    silenceReply('sleeping', 'unseen', '还没醒，也没感知到通知'),
+    silenceReply('sleeping', 'noticed', '迷糊中听到铃声，没看内容'),
+    silenceReply('low_energy', 'read', '被铃声吵醒，看过消息但仍疲惫')
+  ];
+  const h = harness(async (_options, n) => responses[n - 1] || { content: '{"messages":["你把我吵醒了"]}' });
+  for (const message of ['今天xxxx', '我觉得可以xxx', '你睡了吗']) await h.send(message);
+  await h.state.closeWechat();
+  await h.state.openWechat();
+  assert.deepEqual(plain(h.state.wechatTimeline.value.map(i => i.replySilence.awareness)), ['unseen', 'noticed', 'read']);
+  await h.send('醒了吗');
+  const records = behaviorRecords(h.requests[3]);
+  assert.ok(h.requests[3].messages[1].content.includes('已看到内容后未回 1 轮，只感知提示 1 轮'));
+  assert.equal(records.length, 3);
+  assert.ok(records[0].content.includes('未读消息，也未感知提示'));
+  assert.ok(records[1].content.includes('只感知到提示，未读内容'));
+  assert.ok(records[2].content.includes('当时看到消息内容'));
+  assert.equal(h.state.wechatTimeline.value.at(-1).content, '你把我吵醒了');
+});
+
+test('连发气泡只算一轮沉默，网络失败不会增加连续次数', async () => {
+  const h = harness(async (_options, n) => {
+    if (n === 2) throw new Error('network failed');
+    return silenceReply('busy', 'unseen', '还在开会');
+  });
+  h.state.wechatBurstMode.value = true;
+  for (const message of ['第一句', '第二句', '第三句']) await h.send(message);
+  await h.state.requestWechatReplyNow();
+  assert.ok(h.state.buildWechatSilenceState().content.includes('连续 1 轮'));
+  await h.send('第四句');
+  await h.state.requestWechatReplyNow();
+  assert.ok(h.state.buildWechatSilenceState().content.includes('连续 1 轮'));
+  assert.equal(h.state.wechatTimeline.value.at(-1).replySilence, undefined);
+  await h.state.requestWechatReplyNow();
+  assert.ok(h.state.buildWechatSilenceState().content.includes('连续 2 轮'));
+  assert.equal(h.state.wechatTimeline.value.filter(i => i.replyDecision === 'silent').length, 2);
+});
+
+test('旧记录保持未知，摘要与历史裁剪后仍保留当前真实连续次数和最近原因', async () => {
+  const h = harness();
+  h.state.wechatTimeline.value = [
+    { id: 'legacy', channel: 'wechat', role: 'user', type: 'text', content: '旧消息', replyDecision: 'silent' },
+    { id: 'recent', channel: 'wechat', role: 'user', type: 'text', content: '上一轮', replyDecision: 'silent',
+      replySilence: { reason: 'upset', awareness: 'read', summary: '仍在赌气' } },
+    ...imageItems(35, 'after-silence')
+  ];
+  assert.ok(h.protocol.describeSilence(h.state.wechatTimeline.value[0].replySilence).includes('原因未记录'));
+  h.state.storyRecap.value = { coversThroughTurn: 0, coversWechatCount: 2 };
+  h.state.buildConversationTurnSnapshot = () => ({ turns: [] });
+  h.state.buildStoryRecapMessages = () => [{ role: 'user', content: '【前情提要】此前两轮未发送消息' }];
+  await h.send('新消息');
+  const chat = h.requests[0].messages;
+  assert.ok(chat[1].content.includes('前情提要'));
+  assert.ok(chat[2].content.includes('连续 2 轮') && chat[2].content.includes('仍在赌气'));
+  assert.equal(behaviorRecords(h.requests[0]).length, 0, '已覆盖的逐轮记录不重新注入');
+  assert.equal(chat.at(-1).content, '新消息');
+  assert.equal(h.state.wechatTimeline.value[0].replySilence, undefined, '不反推旧记录原因');
+});
+
+test('RP 回灌、摘要素材和保留原文携带行为记录，消息覆盖计数不增加', async () => {
+  const h = harness(async () => silenceReply('sleeping', 'unseen', '手机静音，没醒'));
+  await h.send('睡了吗');
+  await h.send('明天见');
+  const rp = h.state.appendWechatDigestToMessages([]);
+  assert.ok(rp[0].content.includes('小A此轮未发微信'));
+  assert.ok(rp[0].content.includes('手机静音') && rp[0].content.includes('未读消息，也未感知提示'));
+  assert.ok(rp[0].content.includes('不能把对应正文当成人物已知'));
+  assert.ok(rp[0].content.includes('不能覆盖后来被叫醒、获救等明确剧情变化'));
+  assert.ok(!rp[0].content.includes('作为你已知的背景'));
+  await h.loadRecap();
+  const material = h.state.buildRecapMaterial(0, 2);
+  assert.equal(material.length, 2, '内部行为附在原消息上，不新增素材消息计数');
+  assert.ok(material.every(line => line.includes('未发送消息的行为记录')));
+  h.state.storyRecap.value = { text: '摘要', coversThroughTurn: 0, coversWechatCount: 2, keepWechatCount: 2 };
+  assert.ok(h.state.buildRecapRecentWechatText().includes('手机静音'));
+  assert.equal(h.state.computeRecapCoverage().coversWechatCount, 2);
+});
+
+test('切换分支后连续沉默和归因不继承旧 scope', async () => {
+  const h = harness(async () => silenceReply('upset', 'read', '在赌气'));
+  await h.send('怎么啦');
+  assert.ok(h.state.buildWechatSilenceState().content.includes('连续 1 轮'));
+  h.setScope('branch-b');
+  h.state.wechatTimeline.value = [];
+  assert.equal(h.state.buildWechatSilenceState(), null);
+  await h.send('新分支的消息');
+  assert.equal(h.requests[1].messages.slice(1).some(m => m.content.startsWith('【此前连续沉默')), false);
+  assert.ok(h.state.buildWechatSilenceState().content.includes('连续 1 轮'));
+  assert.equal(h.stored.get('wechat_timeline/branch-a')[0].replySilence.summary, '在赌气');
 });
