@@ -525,7 +525,7 @@
                     logResponse: true,
                     replyInTool: __s.isTruncationEnabled.value,
                     tools: __s.buildActiveToolDefinitions(requestTools),
-                    requireTool: activeToolDepth === 0 && requestTools.length > 0 && __s.getActiveToolAggressiveness() === 'force',
+                    requireTool: activeToolDepth === 0 && __s.shouldRequireActiveToolCall(requestTools),
                     temperature: __s.settings.temperature,
                     reasoningEffort: __s.settings.reasoningEffort,
                     stream: __s.settings.stream,

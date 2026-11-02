@@ -30,9 +30,18 @@
         __s.isWebActiveTool = isWebActiveTool;
         const getActiveToolDisplayDescription = (tool) => tool?.displayDescription || '暂无说明';
         __s.getActiveToolDisplayDescription = getActiveToolDisplayDescription;
+        // 主动微信是人物行动，不能因全局「强制工具」策略每轮强迫发一条。
+        const shouldRequireActiveToolCall = (tools) => __s.getActiveToolAggressiveness() === 'force'
+            && tools.some(tool => !isWechatActiveTool(tool));
+        __s.shouldRequireActiveToolCall = shouldRequireActiveToolCall;
+        const getActiveToolInvocationReminder = (tools) => tools.every(isWechatActiveTool)
+            ? '主动微信由人物处境和意愿决定：只有能安全通信且想发送时才调用；没有条件或意愿时直接继续 RP 正文，不必调用工具。'
+            : __s.getActiveToolLatestUserReminder();
+        __s.getActiveToolInvocationReminder = getActiveToolInvocationReminder;
         const appendActiveToolReminderToLatestUserMessage = (msgArray) => {
-            if (getEnabledActiveTools().length === 0) return msgArray;
-            const reminder = __s.getActiveToolLatestUserReminder();
+            const tools = getEnabledActiveTools();
+            if (tools.length === 0) return msgArray;
+            const reminder = getActiveToolInvocationReminder(tools);
             const latestUserMessage = [...msgArray].reverse().find(message => {
                 const content = String(message?.content || '');
                 return message?.role === 'user'
@@ -88,8 +97,8 @@
             if (tools.length === 0) return '';
             return BUILTIN_PROMPTS.buildActiveToolSystemPrompt({
                 tools,
-                reminder: __s.getActiveToolLatestUserReminder(),
-                aggressivenessLabel: __s.getActiveToolAggressivenessLabel(),
+                reminder: getActiveToolInvocationReminder(tools),
+                aggressivenessLabel: tools.every(isWechatActiveTool) ? '按人物处境自主决定' : __s.getActiveToolAggressivenessLabel(),
                 maxRounds: ACTIVE_TOOL_MAX_AUTO_CONTINUE
             });
         };

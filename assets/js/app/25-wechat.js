@@ -639,8 +639,9 @@
                 scene: String(char.wechatScene || '').trim(),
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
                 stickerCatalog: buildWechatStickerCatalog(),
-                extraRules: `【重要】你们既是 roleplay 里的关系，也是现实里互加微信的人。`
-                    + `把 roleplay 中已建立的称呼、关系、默契带进微信，像真人一样随口聊天，不要重来一遍自我介绍。`,
+                extraRules: `【跨场景连续性】微信是同一段 roleplay 剧情中人物的通信渠道。`
+                    + `继承已建立的称呼、关系、默契，也继承最新已发生剧情中的处境、行动、身体状态、手机/通信条件和情绪。`
+                    + `打开微信面板或收到消息不会让人物离开原场景、解除限制或自动读到消息；不要重来一遍自我介绍。`,
                 memory: buildWechatMemory()
             });
         };
@@ -750,10 +751,17 @@
                     previous.message.content = `${previous.message.content}\n${entry.message.content}`;
                     return;
                 }
-                merged.push({ message: { ...entry.message }, mergeable: entry.mergeable });
+                merged.push({ message: { ...entry.message }, mergeable: entry.mergeable, rp: entry.rp === true });
             });
 
-            const head = merged.slice(-WECHAT_HISTORY_LIMIT).map(entry => entry.message);
+            let windowEntries = merged.slice(-WECHAT_HISTORY_LIMIT);
+            // 最近未被摘要覆盖的 RP 块承载当前处境，不能因微信记录较长就被挤掉。
+            // 留在其原始时间顺序的位置；仍占 30 条预算，不重复注入已压缩的旧块。
+            const latestRp = [...merged].reverse().find(entry => entry.rp);
+            if (latestRp && !windowEntries.includes(latestRp)) {
+                windowEntries = [latestRp, ...windowEntries.slice(-(WECHAT_HISTORY_LIMIT - 1))];
+            }
+            const head = windowEntries.map(entry => entry.message);
             // 前情提要是对话记录的开头（不是 system 预设）：摘要、最近 RP 原文、最近微信原文各自成条，
             // 排在被覆盖的老内容之前（老内容已剔除），夹在 system 与聊天记录之间。
             const recapMessages = __s.buildStoryRecapMessages ? __s.buildStoryRecapMessages() : [];
@@ -1448,12 +1456,12 @@
             const lastUserItem = [...timeline].reverse().find(item => item.channel === 'wechat' && item.role === 'user');
             const cfg = wechatSpeedConfig();
 
-            wechatTyping.value = true;
-            wechatStatusText.value = '对方正在输入…';
+            // 模型决策不等于人物已读/正在打字；确认有消息要发之后才显示输入状态。
+            wechatTyping.value = false;
+            wechatStatusText.value = '';
             try {
                 await sleep(rand(cfg.read[0], cfg.read[1]));
                 if (signal.aborted || wechatScopeId() !== scopeId) return;
-                startWechatStatusTicker();
                 scrollWechatToBottom();
                 const reply = await requestWechatReply(signal);
                 if (signal.aborted || wechatScopeId() !== scopeId) return;
@@ -1462,6 +1470,9 @@
                     if (lastUserItem) lastUserItem.replyDecision = 'silent';
                     return;
                 }
+                wechatTyping.value = true;
+                startWechatStatusTicker();
+                scrollWechatToBottom();
                 await playWechatReply(reply.messages, signal, scopeId);
             } catch (error) {
                 if (!signal.aborted && wechatScopeId() === scopeId && error?.name !== 'AbortError') {

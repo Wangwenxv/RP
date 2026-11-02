@@ -245,7 +245,7 @@ test('停止后开始新请求：旧请求结束不会清掉新请求的输入�
   await first;
   assert.equal(h.state.wechatAbortController, controller);
   assert.equal(h.state.isWechatGenerating.value, true);
-  assert.equal(h.state.wechatTyping.value, true);
+  assert.equal(h.state.wechatTyping.value, false, '新请求仍在决策，不应冒充人物正在打字');
   response[1].resolve({ content: '{"messages":[{"content":"在"}]}' });
   await second;
   assert.equal(h.state.isWechatGenerating.value, false);
@@ -259,4 +259,124 @@ test('真实表情收尾仍为一条消息，不会被识别成沉默', async ()
   assert.equal(h.state.wechatTimeline.value.at(-1).content, '挥手猫');
   assert.equal(h.state.wechatTimeline.value[0].replyDecision, undefined);
   assert.equal(h.state.wechatUnansweredCount.value, 0);
+});
+
+const rpItem = (content, index = 0) => ({
+  id: `rp-${index}`, ts: index + 1, channel: 'rp', role: 'assistant', content, rpIndex: index
+});
+const imageItems = (count, prefix) => Array.from({ length: count }, (_, i) => ({
+  id: `${prefix}-${i}`, ts: i + 10, channel: 'wechat', role: 'user', type: 'image',
+  content: `data:image/png;base64,${prefix}-${i}`
+}));
+
+test('模型判断期间不显示人物正在输入，主动空回也不产生输入提示', async () => {
+  const started = defer();
+  const response = defer();
+  const h = harness(async () => { started.resolve(); return response.promise; });
+  const running = h.send('在吗？');
+  assert.equal(h.state.isWechatGenerating.value, true);
+  assert.equal(h.state.wechatTyping.value, false);
+  await started.promise;
+  assert.equal(h.state.wechatTyping.value, false);
+  assert.equal(h.state.wechatStatusText.value, '');
+  assert.equal(h.state.wechatStatusTimer, null);
+  assert.ok(h.state.wechatAbortController, '请求仍可中止');
+  response.resolve({ content: '{"messages":[]}' });
+  await running;
+  assert.equal(h.state.wechatTyping.value, false);
+  assert.equal(h.state.wechatStatusText.value, '');
+  assert.equal(h.state.wechatTimeline.value.length, 1);
+});
+
+test('超过微信窗口预算后，最后 RP 处境仍送入模型，保留 30 条预算及时间顺序', async () => {
+  const h = harness();
+  h.state.wechatTimeline.value = [
+    rpItem('早先在画室', 0), ...imageItems(32, 'before'),
+    rpItem('你被绑架，手机被收走，尚未获救', 1), ...imageItems(35, 'after')
+  ];
+  await h.send('还在忙吗？');
+  const chat = h.requests[0].messages.slice(1);
+  assert.equal(chat.length, 30);
+  assert.ok(chat[0].content.includes('尚未获救'));
+  assert.ok(!JSON.stringify(chat).includes('早先在画室'));
+  assert.ok(Array.isArray(chat[1].content));
+  assert.equal(chat.at(-1).content, '还在忙吗？');
+  assert.equal(chat.filter(m => typeof m.content === 'string' && m.content.includes('【roleplay 剧情')).length, 1);
+  assert.equal(h.state.wechatTimeline.value.at(-1).replyDecision, 'silent');
+});
+
+test('未发生新的 RP 事件时，多次空回请求仍携带原处境，不追加虚构恢复事件', async () => {
+  const h = harness();
+  h.state.wechatTimeline.value = [rpItem('你被绑架，无法接触手机，尚未被解救')];
+  for (const message of ['还在忙吗？', '你为什么不回？', '我很担心你']) await h.send(message);
+  for (const request of h.requests) {
+    assert.ok(request.messages.some(m => m.content.includes('无法接触手机')));
+  }
+  assert.equal(h.state.wechatTimeline.value.filter(i => i.channel === 'rp').length, 1);
+  assert.equal(h.state.wechatTimeline.value.filter(i => i.channel === 'wechat').length, 3);
+  assert.equal(h.state.wechatUnansweredCount.value, 0);
+});
+
+test('RP 恢复事件在原时间位置送入下一次微信请求，之前的空回不锁死会话', async () => {
+  // 模型输出由 fixture 控制；此测试验证事件注入与接续，不评判真实模型的语义判断。
+  const h = harness(async (_options, n) => ({ content: n === 1 ? '{"messages":[]}'
+    : '{"messages":[{"type":"text","content":"我安全了"}]}' }));
+  h.state.wechatTimeline.value = [rpItem('你被绑架，手机被收走，尚未获救', 0)];
+  await h.send('还在忙吗？');
+  h.state.wechatTimeline.value.push(rpItem('随后你已被解救，取回手机，但依然疲惫', 1));
+  await h.send('现在怎么样？');
+  const chat = h.requests[1].messages.slice(1);
+  assert.deepEqual(plain(chat.map(m => m.role)), ['user', 'user', 'user', 'user']);
+  assert.ok(chat[0].content.includes('尚未获救'));
+  assert.equal(chat[1].content, '还在忙吗？');
+  assert.ok(chat[2].content.includes('已被解救') && chat[2].content.includes('依然疲惫'));
+  assert.equal(chat[3].content, '现在怎么样？');
+  assert.equal(h.state.wechatTimeline.value.at(-1).content, '我安全了');
+});
+
+test('已压缩的 RP 限制由摘要保留，窗口保留规则不会重新注入已覆盖原文', async () => {
+  const h = harness();
+  h.state.storyRecap.value = { coversThroughTurn: 1, coversWechatCount: 0 };
+  h.state.buildConversationTurnSnapshot = () => ({ turns: [{ messageIndexes: [0] }] });
+  h.state.buildStoryRecapMessages = () => [{ role: 'user', content: '【前情提要】小A仍被绑架，手机被收走。' }];
+  h.state.wechatTimeline.value = [rpItem('被摘要覆盖的 RP 原文', 0), ...imageItems(35, 'covered')];
+  await h.send('在吗？');
+  const chat = h.requests[0].messages.slice(1);
+  assert.equal(chat.length, 31, '30 条历史 + 1 条摘要');
+  assert.ok(chat[0].content.includes('仍被绑架'));
+  assert.ok(!JSON.stringify(chat).includes('被摘要覆盖的 RP 原文'));
+});
+
+test('只开主动微信时，强制策略不会强迫调用；其他工具的强制策略保留', () => {
+  const context = vm.createContext({
+    window: {}, ACTIVE_TOOL_WECHAT_TYPE: 'wechat_message', ACTIVE_TOOL_WEB_TYPE: 'web_search',
+    ACTIVE_TOOL_MAX_AUTO_CONTINUE: 4, isRoleMemoryContextContent: () => false
+  });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/built-in-content.js'), 'utf8'), context);
+  context.BUILTIN_PROMPTS = context.window.RPHubBuiltinContent.prompts;
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/app/14-tools-runtime.js'), 'utf8'), context);
+  let policy = 'force';
+  let tools = [{ id: 'tool_wechat', type: 'wechat_message', callName: 'tool_wechat', name: '主动发微信', description: '' }];
+  const state = {
+    getActiveToolAggressiveness: () => policy, normalizeActiveToolBaseCallName: name => name,
+    normalizeActiveTools: () => tools, currentCharacter: { value: { wechatEnabled: true } },
+    getActiveToolLatestUserReminder: () => policy === 'force' ? '必须先调用至少 1 个工具' : '按需调用',
+    getActiveToolAggressivenessLabel: () => policy === 'force' ? '强制' : '自适应'
+  };
+  context.window.RPHubAppSections.toolsRuntime(state);
+  assert.equal(state.shouldRequireActiveToolCall([]), false);
+  assert.equal(state.shouldRequireActiveToolCall(tools), false);
+  const prompt = state.buildActiveToolSystemPrompt(tools);
+  assert.ok(!prompt.includes('必须先调用至少 1 个工具'));
+  assert.ok(prompt.includes('没有条件或意愿时直接继续 RP 正文'));
+  assert.ok(prompt.includes('限制尚未解除时，不调用主动微信工具'));
+  const messages = [{ role: 'user', content: '她尚未被救出' }];
+  state.appendActiveToolReminderToLatestUserMessage(messages);
+  assert.ok(!messages[0].content.includes('必须先调用'));
+  const web = { type: 'web_search', callName: 'tool_web' };
+  tools = [...tools, web];
+  assert.equal(state.shouldRequireActiveToolCall(tools), true);
+  assert.equal(state.shouldRequireActiveToolCall([web]), true);
+  policy = 'adaptive';
+  assert.equal(state.shouldRequireActiveToolCall(tools), false);
 });
