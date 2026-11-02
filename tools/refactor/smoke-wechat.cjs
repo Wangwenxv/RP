@@ -122,7 +122,8 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     }
     const content = isRecap
       ? '林晚与 lin 在微信上聊过天，约定晚些时候再联系。'
-      : (isWechat ? REPLY : '（继续画着，头也没抬）……嗯，那你歇会儿。');
+      : (isWechat ? (lastUser.trim().endsWith('空回探针：好的') ? '{"messages":[]}' : REPLY)
+        : '（继续画着，头也没抬）……嗯，那你歇会儿。');
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -1194,6 +1195,53 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   });
   check('清空后前情提要被清除（不再作为对话首条）', !afterClear.recap,
     afterClear.recap ? String(afterClear.recap.text || '').slice(0, 20) : 'null');
+
+  console.log('\n== 主动空回：真实气泡、状态与 IndexedDB ==');
+  const silent = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    await root.openWechat();
+    const before = root.wechatDisplayItems.filter(i => i.kind === 'message').length;
+    const assistantBefore = root.wechatTimeline.filter(i => i.channel === 'wechat' && i.role === 'assistant').length;
+    root.wechatInput = '空回探针：好的';
+    await root.sendWechatMessage();
+    await new Promise(resolve => setTimeout(resolve, 80));
+    const out = {
+      before, after: root.wechatDisplayItems.filter(i => i.kind === 'message').length,
+      assistantBefore, assistantAfter: root.wechatTimeline.filter(i => i.channel === 'wechat' && i.role === 'assistant').length,
+      decision: root.wechatTimeline.filter(i => i.channel === 'wechat').at(-1)?.replyDecision,
+      pending: root.wechatUnansweredCount,
+      generating: root.isWechatGenerating, typing: root.wechatTyping, status: root.wechatStatusText,
+      hasPendingButton: !!document.querySelector('.wx-reply-trigger-row'),
+      hasProtocolBubble: [...document.querySelectorAll('.wx-root .wx-bubble')].some(el => el.textContent.includes('"messages"'))
+    };
+    await root.closeWechat();
+    await root.openWechat();
+    out.reopenedPending = root.wechatUnansweredCount;
+    out.reopenedDecision = root.wechatTimeline.filter(i => i.channel === 'wechat').at(-1)?.replyDecision;
+    out.reopenedCount = root.wechatDisplayItems.filter(i => i.kind === 'message').length;
+    return out;
+  });
+  check('空回只增加用户气泡，没有 assistant 或 JSON 气泡',
+    silent.after === silent.before + 1 && silent.assistantAfter === silent.assistantBefore && !silent.hasProtocolBubble,
+    JSON.stringify(silent));
+  check('空回结束正在输入与生成状态', !silent.generating && !silent.typing && silent.status === '');
+  check('空回已处理，攒消息按钮隐藏', silent.pending === 0 && !silent.hasPendingButton && silent.decision === 'silent');
+  check('关闭重开从 IndexedDB 恢复空回状态，气泡数不变',
+    silent.reopenedPending === 0 && silent.reopenedDecision === 'silent' && silent.reopenedCount === silent.after);
+
+  const callsAfterSilent = captured.filter(c => c.isWechat).length;
+  await page.evaluate(() => window.__APP_PROXY__.requestWechatReplyNow());
+  check('已空回的用户消息不重复请求', captured.filter(c => c.isWechat).length === callsAfterSilent);
+  const resumed = await page.evaluate(async () => {
+    const root = window.__APP_PROXY__;
+    root.wechatInput = '新话题探针：在吗';
+    await root.sendWechatMessage();
+    return { last: root.wechatTimeline.at(-1)?.role, pending: root.wechatUnansweredCount };
+  });
+  const resumeCall = [...captured].reverse().find(c => c.isWechat);
+  check('空回后的新消息正常回复，并携带收尾与新话题原文',
+    resumed.last === 'assistant' && resumed.pending === 0
+    && resumeCall.contents.some(c => c.includes('空回探针：好的') && c.includes('新话题探针：在吗')));
 
   console.log('\nERRORS(' + errors.length + '):');
   errors.slice(0, 15).forEach(e => console.log('  ' + e));

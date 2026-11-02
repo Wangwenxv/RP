@@ -934,15 +934,19 @@
         __s.scrollWechatToBottom = scrollWechatToBottom;
 
         /**
-         * 最近一条对方（assistant）消息之后、自己（user）还没被回应了几条。
+         * 最近一次对方回复或主动空回之后、自己（user）还没交给模型处理了几条。
          * 连发模式下用它提示「你攒了 N 条，还没让对方回」。只在微信消息里数，RP 镜像不算。
+         * replyDecision='silent' 是用户消息上的元数据，不添加空白 assistant 消息。
          */
         const wechatUnansweredCount = computed(() => {
             let count = 0;
             for (const item of wechatTimeline.value) {
                 if (item.channel !== 'wechat') continue;
                 if (item.role === 'assistant') count = 0;
-                else if (item.role === 'user') count++;
+                else if (item.role === 'user') {
+                    count++;
+                    if (item.replyDecision === 'silent') count = 0;
+                }
             }
             return count;
         });
@@ -1389,14 +1393,18 @@
             }, 'chat');
             const raw = String(result?.content || '').trim();
             if (!raw) throw new Error('模型返回了空内容');
-            const messages = wxProtocol.parseReply(raw);
-            if (!messages.length) throw new Error('未能从回复中解析出任何消息');
+            if (result?.finishReason === 'length') throw new Error('模型回复被截断，请重试');
+            if (result?.finishReason === 'content_filter') throw new Error('模型回复被 API 拦截');
+            const reply = wxProtocol.parseReplyResult(raw);
+            if (reply.silent) return reply;
+            if (!reply.messages.length) throw new Error('未能从回复中解析出任何消息');
             // 提示词之外再硬裁一道：模型无视档位刷表情时，这里兜底。
-            return wxProtocol.applyStickerPolicy(messages, wechatStickerTier());
+            return { messages: wxProtocol.applyStickerPolicy(reply.messages, wechatStickerTier()), silent: false };
         };
 
-        const playWechatReply = async (messages, signal) => {
+        const playWechatReply = async (messages, signal, scopeId) => {
             for (let index = 0; index < messages.length; index++) {
+                if (signal?.aborted || wechatScopeId() !== scopeId) return;
                 const message = messages[index];
                 if (index > 0) {
                     await sleep(rand(160, 420));
@@ -1405,7 +1413,7 @@
                     scrollWechatToBottom();
                 }
                 await sleep(typingDuration(message));
-                if (signal?.aborted) return;
+                if (signal?.aborted || wechatScopeId() !== scopeId) return;
                 wechatTyping.value = false;
                 wechatStatusText.value = '';
                 pushWechatItem({ channel: 'wechat', role: 'assistant', type: message.type, content: message.content });
@@ -1431,41 +1439,44 @@
             }
 
             isWechatGenerating.value = true;
-            __s.wechatAbortController = new AbortController();
-            const signal = __s.wechatAbortController.signal;
+            const controller = new AbortController();
+            __s.wechatAbortController = controller;
+            const signal = controller.signal;
+            const scopeId = wechatScopeId();
+            const timeline = wechatTimeline.value;
+            // 本轮实际处理到的用户消息。空回只标记它，失败/中止不能吞掉待处理消息。
+            const lastUserItem = [...timeline].reverse().find(item => item.channel === 'wechat' && item.role === 'user');
             const cfg = wechatSpeedConfig();
 
             wechatTyping.value = true;
             wechatStatusText.value = '对方正在输入…';
-            await sleep(rand(cfg.read[0], cfg.read[1]));
-            startWechatStatusTicker();
-            scrollWechatToBottom();
-
-            let messages;
             try {
-                messages = await requestWechatReply(signal);
-            } catch (error) {
+                await sleep(rand(cfg.read[0], cfg.read[1]));
+                if (signal.aborted || wechatScopeId() !== scopeId) return;
+                startWechatStatusTicker();
+                scrollWechatToBottom();
+                const reply = await requestWechatReply(signal);
+                if (signal.aborted || wechatScopeId() !== scopeId) return;
                 stopWechatStatusTicker();
-                wechatTyping.value = false;
-                wechatStatusText.value = '';
-                isWechatGenerating.value = false;
-                __s.wechatAbortController = null;
-                if (error?.name !== 'AbortError') {
+                if (reply.silent) {
+                    if (lastUserItem) lastUserItem.replyDecision = 'silent';
+                    return;
+                }
+                await playWechatReply(reply.messages, signal, scopeId);
+            } catch (error) {
+                if (!signal.aborted && wechatScopeId() === scopeId && error?.name !== 'AbortError') {
                     __s.showToast(`发送失败：${error?.message || error}`, 'error', 4000);
                 }
-                return;
-            }
-            stopWechatStatusTicker();
-
-            try {
-                await playWechatReply(messages, signal);
             } finally {
-                wechatTyping.value = false;
-                wechatStatusText.value = '';
-                stopWechatStatusTicker();
-                isWechatGenerating.value = false;
-                __s.wechatAbortController = null;
-                await saveWechatTimelineNow().catch(() => {});
+                // 停止后可能已开始新请求，旧请求的收尾不能清掉新请求的状态。
+                if (__s.wechatAbortController === controller) {
+                    wechatTyping.value = false;
+                    wechatStatusText.value = '';
+                    stopWechatStatusTicker();
+                    isWechatGenerating.value = false;
+                    __s.wechatAbortController = null;
+                    await saveWechatTimelineNow(scopeId, timeline).catch(() => {});
+                }
             }
         };
         __s.runWechatGeneration = runWechatGeneration;

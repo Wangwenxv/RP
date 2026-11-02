@@ -3,6 +3,7 @@
  *
  * 模型每轮只输出一个 JSON：
  *   { "messages": [ {"type":"text","content":"..."}, {"type":"sticker","content":"😼"} ] }
+ *   { "messages": [] } 表示角色主动选择不回复，与 API 空内容/协议错误不同。
  *
  * 用 JSON 而非分隔符：每条消息可带类型（文字/表情/图片/语音），后续扩展"撤回""发图"
  * 时不用改协议。解析层容忍代码块包裹、think 块、缺外层包裹、纯文本降级。
@@ -26,17 +27,18 @@
 {"messages":[{"type":"text","content":"消息内容"},{"type":"sticker","content":"😼"}]}
 
 字段说明：
-- messages：数组，代表你要连着发出的多条消息，按顺序发送。
+- messages：数组，代表你要连着发出的多条消息，按顺序发送。决定不回复时输出 {"messages":[]}。
 - type 只能是 "text"（文字）或 "sticker"（单独发一个表情）。
 - text 的 content：一条短消息。
 - sticker 的 content：默认是一个最贴切的 emoji（如 😼 🙄 😂 👍 🤔）；若下方出现了【表情包库】目录，则只能从目录里挑一个名字，原样照抄，其余情况一律用 emoji。
 
-【怎么分段 — 这是最重要的一点】
+【怎么分段 — 先决定是否回复，再决定发几条】
 你要模仿真人在微信上打字：想到什么就发什么，不会攒成一大段。
-- 默认是短消息：一轮 2~3 条，每条尽量在 12 个字以内；一句话超过 15 个字就该拆成两条。
-- 硬性要求：如果不是只发表情，就至少发 2 条消息。把想说的合成 1 条长消息是错的。
+- 话题已经自然结束、没有需要回应的内容时，可以一条也不发。空回不是发送空字符串、空白气泡或「不回复」三个字，而是 {"messages":[]}。
+- 需要回复时，通常发 1~3 条短消息，每条尽量在 12 个字以内；较长的话可以按语意拆开，不要拆碎一个简单答案。
+- 一条完整的回答、确认、道别或情绪反应，可以只发 1 条文字或 1 个表情，不要为凑条数加话。
 - 情绪上来、话赶话的时候发 4~5 条。
-- 例外——偶尔会写小作文：对方问的事需要认真回应，或者你在解释、交代、翻旧账、情绪上来的时候，可以发一条很长的消息（几十到几百字）。这种时候长消息一般是连发几条里夹着的一条，不是孤零零甩出去一段。十几轮里大概才一次，不要滥用。
+- 例外——偶尔会写小作文：对方问的事需要认真回应，或者你在解释、交代、翻旧账、情绪上来的时候，可以发一条很长的消息（几十到几百字）。按真实需要决定是否还有其他消息，不要滥用。
 - 偶尔（大约每 6~7 轮有 1 次）只发一个 sticker，一句话都不说。
 - 情绪强烈时，可以「文字 + 表情」组合，例如先吐槽一句再发个 😂。
 
@@ -59,10 +61,25 @@
 
 【反面例子 — 千万不要这样】
 ✗ 把想说的全部合成一条长消息。
-✗ 只发 1 条文字（除非是单字回应「嗯」「哦」「？」这类）。
+✗ 话已经说完，还为了凑消息补一句、反问或强行引申话题。
 ✗ 一次输出超过 6 条消息。
 ✗ 使用"首先""其次""总之""希望能帮到你"这类助手腔。
 ✗ 在 JSON 外面写任何文字。`;
+
+    // 放在人设/自选规则之后：避免「必须接话」「至少两条」一类旧规则覆盖收尾能力。
+    const REPLY_DECISION_RULE = `【是否回复 — 先按人物和完整局势判断，优先于分段、表情频率和要求继续聊天的规则】
+你有选择不回复的能力。每轮先结合完整聊天上下文、你的人物性格、与对方的关系、当前场景和情绪，判断这时的你是否真有话想说，再输出 JSON。判断过程不要输出。
+- 问题已答完、事情已交代清楚，对方只是表示收到、感谢或结束话题，而且没有新的问题、请求、需要接住的情绪或未完成的约定时，可以让对话自然停下，输出 {"messages":[]}。
+- 不要为了每条消息都得到回复而加「还有什么问题」「可以继续问我」「那你呢」之类的客服式续话；不要在结束后凭空找新话题。
+- 不要只凭「好的」「嗯」「谢谢」「晚安」这些词决定沉默。内敛的人可能不回，亲近、热情或在意对方的人可能用一句简短的话或一个合适的表情收尾。若你确有想继续说的事，也可以自然接话；不必每轮沉默，也不必每轮道别。
+- 对方仍在提问、提出明确请求、等待关键确认，或表达需要回应的情绪（如受委屈、担心、生气、求助），不要把它误判成话题结束。按人物性格接住它，不要用空回逃避尚未解决的事。
+- 真正不回复时只输出 {"messages":[]}，不要输出省略号、空字符串、「已读不回」、动作描写、原因或解释，也不要用一个表情占位。
+
+【局势示例 — 不是关键词触发器】
+对方：1+1=几？ → 你：{"messages":[{"type":"text","content":"2"}]}
+接着对方：好的 → 问题已解决，你没有别的话想说：{"messages":[]}
+接着对方：好的，明天几点见？ → 还有新问题，按已知约定回答，未知则确认时间，不能空回。
+对方：好吧，其实我有点难过 → 需要接住情绪，按你的人设回应，不能因为「好吧」就空回。`;
 
     /**
      * 组装 system prompt。
@@ -92,6 +109,7 @@
         if (extra.relation) parts.push(`【你们的关系】\n${extra.relation}`);
         if (extra.scene) parts.push(`【当前场景】\n${extra.scene}`);
         if (extra.extraRules) parts.push(extra.extraRules);
+        parts.push(REPLY_DECISION_RULE);
         // 长期记忆：RP 侧压缩出来的历轮总结，补上「摘要只覆盖最近几轮」之外的旧账。
         if (extra.memory) parts.push(`【长期记忆】\n${String(extra.memory).trim()}`);
         if (extra.rpSummary) parts.push(`【之前发生的事】\n${extra.rpSummary}`);
@@ -209,19 +227,38 @@
         return out;
     }
 
-    /** 主入口：模型原始文本 → 消息数组。JSON 解析失败时按换行降级。 */
-    function parseReply(text) {
+    /**
+     * 模型原始文本 → { messages, silent }。
+     * 只有明确的 messages: [] 才算主动空回；API 空内容、无效/截断 JSON 不能冒充沉默。
+     * 纯文本保留历史降级能力，但已解析出的 JSON 绝不作为聊天正文展示。
+     */
+    function parseReplyResult(text) {
         const cleaned = stripThinking(text);
         const parsed = extractJSON(cleaned);
-        const msgs = normalizeMessages(parsed);
-        if (msgs.length) return msgs;
+        if (parsed !== null) {
+            const silent = !Array.isArray(parsed) && typeof parsed === 'object'
+                && Array.isArray(parsed.messages) && parsed.messages.length === 0;
+            return { messages: silent ? [] : normalizeMessages(parsed), silent };
+        }
 
-        return cleaned
+        const unfenced = cleaned.replace(/^```(?:json)?\s*/i, '').trim();
+        if (/^[{\[]/.test(unfenced)
+            || /[\{\[]\s*"(?:messages|msgs|data|type|content|text)"\s*:/.test(unfenced)) {
+            return { messages: [], silent: false };
+        }
+
+        const messages = cleaned
             .split(/\n{1,}/)
             .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
             .filter(Boolean)
             .slice(0, MAX_MESSAGES)
             .map((content) => ({ type: isPureEmoji(content) ? 'sticker' : 'text', content: content.slice(0, MAX_CONTENT_LEN) }));
+        return { messages, silent: false };
+    }
+
+    /** 兼容既有调用方（包括 RP 主动微信工具）：仍然只返回消息数组。 */
+    function parseReply(text) {
+        return parseReplyResult(text).messages;
     }
 
     /**
@@ -242,10 +279,10 @@
 
     /** 档位对应的提示词片段，措辞上明确压过 PROTOCOL 里的默认频率描述。 */
     const STICKER_RULES = Object.freeze({
-        off: '【表情包策略 — 优先级高于上文】这轮聊天不要发表情包，不要输出 type 为 "sticker" 的消息，只用文字。',
-        low: '【表情包策略 — 优先级高于上文】表情包要克制：绝大多数轮次只发文字，大约每 4~5 轮才在文字后面跟一个 sticker，不要整条只发一个表情。',
-        normal: '【表情包策略 — 优先级高于上文】表情包按需使用：大约每 2~3 轮在文字后面跟一个 sticker，偶尔可以整条只发一个表情。',
-        high: '【表情包策略 — 优先级高于上文】表情包可以多用：情绪到位就带一个 sticker，也可以整条只发一个表情。'
+        off: '【表情包策略 — 决定回复时适用】这轮聊天不要发表情包，不要输出 type 为 "sticker" 的消息，只用文字；决定不回复时仍输出 {"messages":[]}。',
+        low: '【表情包策略 — 决定回复时适用】表情包要克制：绝大多数回复只发文字，大约每 4~5 轮才带一个 sticker；确实适合用表情收尾时也可以只发一个。不要为了频率凑消息。',
+        normal: '【表情包策略 — 决定回复时适用】表情包按需使用：大约每 2~3 轮在文字后面跟一个 sticker，偶尔可以整条只发一个表情；决定不回复时不要用表情占位。',
+        high: '【表情包策略 — 决定回复时适用】表情包可以多用：情绪到位就带一个 sticker，也可以整条只发一个表情；决定不回复时不要用表情占位。'
     });
 
     function stickerRuleFor(tier) {
@@ -286,6 +323,7 @@
         MAX_MESSAGES,
         MAX_CONTENT_LEN,
         PROTOCOL,
+        REPLY_DECISION_RULE,
         DEFAULT_STICKER_TIER,
         STICKER_TIERS,
         buildSystemPrompt,
@@ -293,6 +331,7 @@
         extractJSON,
         normalizeMessages,
         parseReply,
+        parseReplyResult,
         normalizeStickerTier,
         stickerRuleFor,
         applyStickerPolicy

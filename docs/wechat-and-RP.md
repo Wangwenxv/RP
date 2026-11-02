@@ -108,3 +108,140 @@ wechat5 压缩2
 | 执行与工具 UI | `assets/js/app/18-tools-ui.js` |
 | 攒队列 / 播放 / 弹出 | `assets/js/app/25-wechat.js` |
 | 清空与收尾触发 | `assets/js/app/15-generate.js`（depth 0 起止） |
+
+## 4. 微信角色自主收尾与空回（2026-11-02 交接）
+
+### 4.1 现有原理与问题
+
+本项目是零构建的纯前端应用。微信不是独立的后端 agent，也不是实际微信客户端：
+`assets/js/app/25-wechat.js` 复用当前 RP 的 API 地址、Key 和模型，通过
+`requestTrackedChatCompletion` → `assets/js/api-utils.js` 请求模型。
+微信 system prompt 组装完整角色卡（或微信人设覆盖）、对方信息、关系、场景、
+用户勾选的微信版预设/世界书、RP 长期记忆、表情包策略与表情包名字目录。
+历史由角色/剧情分支作用域的 `wechat_timeline` 按时间顺序还原，连续 RP 转成剧情背景块，
+相邻同 role 的微信气泡合并；有前情提要时按覆盖边界剔除旧内容并注入摘要/保留原文。
+模型返回文字 JSON 后，`wechat-protocol.js` 解析成消息数组，按表情档位裁剪，再逐条模拟打字、
+追加气泡并保存到 IndexedDB。回到 RP 时，微信原文按时间位置转成背景消息注入 RP。
+
+此前无法自然结束话题有三个原因：
+
+1. `PROTOCOL` 强制「不是只发表情，就至少发 2 条」，简单回答也容易被迫补话。
+2. `parseReply` 只在解析出非空消息数组时接受 JSON；`{"messages":[]}` 会被当成解析失败，
+   降级成一条包含 JSON 的文字气泡。
+3. 请求层将零条消息一律视为错误；未回应计数只靠 assistant 消息清零，无法表达「模型已处理、选择沉默」。
+
+### 4.2 协议：一轮模型请求中先判断，再输出
+
+沿用现有 JSON 信封，无须新增 function tool、额外判断请求或角色设置开关。
+角色现在可以输出 0–6 条消息：
+
+```jsonc
+// 主动不回复：用户发言保留，角色没有气泡
+{"messages":[]}
+
+// 简单问题可以只回答一条，不再为了凑条数加话
+{"messages":[{"type":"text","content":"2"}]}
+
+// 角色确实想表达情绪时，也可以只用一句话或一个表情收尾
+{"messages":[{"type":"sticker","content":"挥手猫"}]}
+```
+
+`REPLY_DECISION_RULE` 由 `buildSystemPrompt` 放在人设、关系、场景、自选规则之后，
+长期记忆之前。每轮先结合完整局势、性格、关系和情绪判断是否真有话想说，判断过程不输出。
+它优先于分段、表情频率、要求一直继续聊天的旧规则。
+
+- 已解答/已交代的事情，对方仅确认收到，且没有新问题、请求、待确认约定或需要接住的情绪时，允许自然停下。
+- 不硬编码「好的」「嗯」「谢谢」「晚安」等关键词，也不按概率强行抽掉回复。
+  同一句「好的」，内敛角色可能不回，亲近或热情角色可能有一句话/一个表情的收尾。
+- 仍有问题、明确请求、关键确认或情绪需要回应时，应按人设接话；禁止拿空回逃避未解决的事。
+- 禁止为了接话加「如果还有问题可以继续问我」、强行反问或凭空找新话题。
+- 真正空回只能用空数组，不能发空字符串、省略号、动作描写、「已读不回」或解释原因。
+
+分段规则改为需要回复时通常 1–3 条，允许单条完整回答/确认/道别，长消息按真实需要处理。
+四档表情提示也明确只在「决定回复」之后适用；空回跳过表情策略与播放，
+不会触发既有「整轮表情被裁空时保留第一张」的兜底。
+
+### 4.3 解析与失败的区别
+
+新增 `RPHubWeChatProtocol.parseReplyResult(raw)`：
+
+```js
+// 模型明确输出 {"messages":[]}
+{ messages: [], silent: true }
+
+// 正常文字或表情回复
+{ messages: [{ type: 'text', content: '2' }], silent: false }
+
+// 空内容、无效结构、全是空字符串、截断 JSON
+{ messages: [], silent: false } // 请求层报告失败，保留重试入口
+```
+
+只有对象中明确存在空的 `messages` 数组才表示主动空回。
+代码块、think/thinking/reasoning 块、前后说明的容错保留。
+已经识别出的 JSON 不再降级成聊天文字；以 JSON 结构开头或包含消息协议字段的截断内容也不会展示为气泡。
+普通纯文本按换行降级、旧的 `msgs`/`data` 和裸数组非空回复、emoji 升级、消息数量/长度上限仍保留。
+旧 `parseReply(raw)` 继续返回数组，兼容 RP 主动微信工具等调用方。
+
+`requestWechatReply` 仍拒绝 API 完全空内容；`finishReason` 为 `length` 或 `content_filter`
+也报告截断/拦截失败，即便收到的正文看起来像空回。网络错误、格式错误、中止都不能伪装成主动沉默。
+
+### 4.4 不增加空白记录，但要记录处理边界
+
+空回成功后，仅在**本轮实际处理到的最后一条 user 微信消息**上追加元数据：
+
+```jsonc
+{
+  "id": "原消息 id",
+  "ts": 1790000000000,
+  "channel": "wechat",
+  "role": "user",
+  "type": "text",
+  "content": "好的",
+  "replyDecision": "silent"
+}
+```
+
+- 不追加 assistant、system、占位气泡或独立沉默事件，原用户内容/时间/id 不变。
+- `wechatUnansweredCount` 遇到 assistant 或带 `replyDecision: 'silent'` 的 user 消息清零。
+  连发的多条消息由最后一条标记划定处理边界，新用户消息重新计数。
+- 元数据与原时间线一并存入原 `wechat_timeline` scope；重开/刷新后仍是已处理状态，无须数据库迁移。
+  旧消息没有该字段时继续按原方式计数，不追溯推断老消息是否空回。
+- `wechatDisplayItems`、微信模型上下文和回 RP 的背景只取真实内容；元数据不展示、不作为角色说过的话注入。
+  前情提要覆盖计数仍按真实微信消息条数计算，空回不会增加条数。
+- 正常结束统一清理 typing、状态文本、ticker、generating 和 AbortController；空回不弹错误、不自动重试。
+  已处理后「让对方回复（攒了 N 条）」隐藏，后续用户消息仍正常触发生成。
+- 中止/角色或分支 scope 变化后，晚到的结果不标记用户消息、不播放。
+  保存使用请求开始时捕获的 scope；旧请求的收尾只在其 controller 仍归当前请求所有时执行，
+  避免停止后新请求的状态被旧请求清掉或旧快照覆盖新请求的记录。
+
+### 4.5 修改落点与验证
+
+| 文件 | 本次职责 |
+| --- | --- |
+| `assets/js/wechat-protocol.js` | 自主收尾提示、移除至少两条限制、`parseReplyResult`、兼容 `parseReply`、表情提示与空回分离 |
+| `assets/js/app/25-wechat.js` | 区分主动空回与失败、用户消息元数据、待处理计数、统一收尾与中止/scope 防护 |
+| `tools/refactor/test-wechat-silence.cjs` | Node 原生测试，直接执行真实协议和微信模块，替换 Vue 容器/模型/存储/打字延时 |
+| `tools/refactor/smoke-wechat.cjs` | 无头 Edge 原有完整微信回归，新增真实 DOM/IndexedDB 空回与接续探针 |
+
+验证命令（仓库根目录）：
+
+```powershell
+node --check assets/js/wechat-protocol.js
+node --check assets/js/app/25-wechat.js
+node --test tools/refactor/test-wechat-silence.cjs
+node tools/refactor/smoke-wechat.cjs
+node tools/refactor/smoke-wechat-stickers.cjs
+git diff --check
+```
+
+本次实测结果：语法检查及 `git diff --check` 通过；Node **18/18 通过**；
+微信完整浏览器回归（含新增空回/接续探针）**WECHAT E2E: PASS，0 JS 错误**；
+既有表情包专项 **21/21 通过，0 JS 错误**。
+
+18 项 Node 测试覆盖：明确空回及包裹容错、错误结构/截断区别、旧回复兼容、提示与人物上下文、
+`1+1 → 2 → 好的 → 空回 → 新问题`、无空白记录、持久化重开、连发/图片/表情处理边界、
+接口失败可重试、中止晚到、切分支隔离、停止后新请求、真实表情收尾。
+浏览器回归使用 mock 模型接口，验证真实 Vue 渲染、气泡、按钮、状态、IndexedDB 和跨 RP 衔接。
+测试没有调用用户的真实模型 API；实际角色是否选择沉默由所用模型结合提示和人设决定，
+不会保证每次「好的」都空回。人工体验时建议分别测试已完成问答、亲近角色道别、
+「好的，明天几点见？」及「好吧，其实我有点难过」，观察收尾是否符合角色。
