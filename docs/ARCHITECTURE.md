@@ -2,6 +2,7 @@
 
 > 新人第一读。本文说明整体架构、文件职责、数据流与扩展挂点。
 > 模块级地图见 [MODULES.md](./MODULES.md)；本次 app.js 拆分的过程与工具见 [tools/refactor/README.md](../tools/refactor/README.md)。
+> 微信当前协议、图片资源和验证以 [微信与 RP 实现交接](./wechat-and-RP.md) 为准；下文保留架构演进说明。
 
 ## 1. 项目形态
 
@@ -19,12 +20,13 @@
 | 1 | `assets/js/built-in-content.js` | `RPHubBuiltinContent` / `RPHubBuiltinPresets` / `RPHubLatestUpdate` | 默认预设、各模式提示词、画师串、更新公告 |
 | 2 | `assets/js/core-utils.js` | `RPHubUtils` / `RPHubCardUtils` / `RPHubConfig` | 通用工具、角色卡处理、基础配置（API 提供商、主动工具常量、UI 选项） |
 | 3 | `assets/js/api-utils.js` | `RPHubApiUtils` / `RPHubApiClient` | API 端点拼接、OpenAI 兼容请求（流式） |
-| 3.5 | `assets/js/wechat-protocol.js` | `RPHubWeChatProtocol` | 微信分段回复协议：JSON 分段 prompt + 容错解析（见 §7） |
+| 3.4 | `assets/js/wechat-media.js` | `RPHubWeChatMedia` | 图片意图、独立 Blob 资源、缩略图、本地素材与程序绘图 |
+| 3.5 | `assets/js/wechat-protocol.js` | `RPHubWeChatProtocol` | 微信分段/空回/图片意图协议与容错解析（见 §7） |
 | 4 | `assets/js/data-services.js` | `RPHubStorage` / `RPHubMemoryUtils` / `RPHubContextUtils` / `RPHubStoryBranches` / `RPHubUiTemplateUtils` | IndexedDB 存储层、记忆/向量工具、上下文组装、剧情分支、UI 模板工具 |
 | 5 | `assets/js/runtime-services.js` | `RPHubMessageRenderer` / `RPHubComposables` | 消息渲染器、存储统计与 token 用量两个 composable |
 | 7 | `assets/js/ui-components.js` | `RPHubCustomSelect` / `RPHubLayoutComponents` / `RPHubComponents` | 全部弹窗/导航/卡片等 Vue 组件 |
-| 8 | `assets/js/app/*.js`（25 个） | `RPHubAppSections.<模块名>` | **应用模块**（原 app.js setup() 的拆分，见 §3） |
-| 9 | `assets/js/app.js` | — | 引导：全局常量解构、`RollingText` 组件、createApp、按序调用 25 个模块、mount |
+| 8 | `assets/js/app/*.js`（27 个） | `RPHubAppSections.<模块名>` | **应用模块**（原 app.js setup() 的拆分，见 §3） |
+| 9 | `assets/js/app.js` | — | 引导：全局常量解构、`RollingText` 组件、createApp、调用模块、mount；微信末段初始化顺序为 25 → 27 → 26 |
 
 另有 `assets/js/presence.js`（`RPHubPresence`，在线状态，配合 `presence-server/` 使用，主页未加载）。
 
@@ -35,7 +37,7 @@
 ## 3. App 模块模式（`__s` 约定）
 
 原来的 `app.js` 是一个 8560 行文件，`setup()` 里有 662 个顶层声明。
-现在拆成 `assets/js/app/01..25-*.js` 共 25 个**模块函数**（`25-wechat.js` 为后加的微信子系统，见 §7），约定如下：
+现在拆成 `assets/js/app/01..27-*.js` 共 27 个**模块函数**（25 为微信、26 为前情提要、27 为微信图片），约定如下：
 
 ```js
 // assets/js/app/XX-*.js
@@ -164,8 +166,9 @@ index.html 与 app.js 的调用清单各加一行），return 里暴露模板需
 JSON 分段协议与打字节奏：逐条 `typingDuration`（基线 + 字数×每字耗时 + 抖动，12% 走神）、
 每条之间重起「对方正在输入…」、等待期状态栏跑计时器。
 
-**不触发** RP 的世界书/正则/记忆抽取/UI 模板管线，避免互相污染。微信图片经 `compressImage`
-压到长边 ≤1024 后作为 `image_url` 多模态 part 发送。
+微信不执行完整 RP 生成管线。用户手选世界书按微信设置注入；图片能力复用 RP 世界书的关键词匹配器，按本轮文字加载发送说明，普通轮保留轻量工具入口。回复决策先检查能力、意愿和自然收尾，图片能力不强制接话。
+
+新图经独立图片模块限制长边 ≤1600，字节以 Blob 保存，本轮作为 `image_url` 输入；历史只回放短描述，细节按需调用工具查看。具体触发范围、预算和兼容边界见 [实现交接 §5–6](./wechat-and-RP.md#5-本轮新图历史和按需查看)。
 
 ### 7.5 RP 主动发起微信（`tool_wechat` 主动工具）
 

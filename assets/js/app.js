@@ -262,6 +262,7 @@ const app = createApp({
         __sections.lifecycle(__s);
         __sections.lateHelpers(__s);
         __sections.wechat(__s);
+        __sections.wechatMedia(__s);
         __sections.recap(__s);
 
         return {
@@ -651,6 +652,21 @@ const app = createApp({
             wechatPresetOptions: __s.wechatPresetOptions,
             wechatDisplayItems: __s.wechatDisplayItems,
             wechatTimeline: __s.wechatTimeline,
+            wechatDisplayLimit: __s.wechatDisplayLimit,
+            showOlderWechatImages: __s.showOlderWechatImages,
+            showWechatMediaGallery: __s.showWechatMediaGallery,
+            wechatMediaGallery: __s.wechatMediaGallery,
+            wechatMediaDraft: __s.wechatMediaDraft,
+            wechatMediaUrls: __s.wechatMediaUrls,
+            wechatMediaTasks: __s.wechatMediaTasks,
+            wechatImagePreview: __s.wechatImagePreview,
+            isWechatMediaPreparing: __s.isWechatMediaPreparing,
+            openWechatMediaGallery: __s.openWechatMediaGallery,
+            importWechatAlbumImage: __s.importWechatAlbumImage,
+            sendWechatAlbumImage: __s.sendWechatAlbumImage,
+            viewWechatImage: __s.viewWechatImage,
+            retryWechatMediaTask: __s.retryWechatMediaTask,
+            dismissWechatMediaTask: __s.dismissWechatMediaTask,
             openWechat: __s.openWechat, closeWechat: __s.closeWechat,
             openWechatSettings: __s.openWechatSettings, saveWechatSettings: __s.saveWechatSettings,
             clearWechatTimeline: __s.clearWechatTimeline,

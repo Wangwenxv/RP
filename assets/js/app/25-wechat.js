@@ -55,6 +55,8 @@
         __s.showWechatSettings = showWechatSettings;
         const wechatTimeline = ref([]);
         __s.wechatTimeline = wechatTimeline;
+        const wechatDisplayLimit = ref(80);
+        __s.wechatDisplayLimit = wechatDisplayLimit;
         const wechatInput = ref('');
         __s.wechatInput = wechatInput;
         const wechatPendingImage = ref(null);
@@ -207,9 +209,11 @@
         let wechatSaveTimer = null;
         const scheduleWechatSave = () => {
             clearTimeout(wechatSaveTimer);
+            const scopeId = wechatScopeId();
+            const timeline = wechatTimeline.value;
             wechatSaveTimer = setTimeout(() => {
                 wechatSaveTimer = null;
-                saveWechatTimelineNow().catch((error) => console.error('保存微信时间线失败:', error));
+                saveWechatTimelineNow(scopeId, timeline).catch((error) => console.error('保存微信时间线失败:', error));
             }, 300);
         };
         __s.scheduleWechatSave = scheduleWechatSave;
@@ -628,7 +632,7 @@
         };
         __s.buildWechatStickerCatalog = buildWechatStickerCatalog;
 
-        const buildWechatSystemPrompt = () => {
+        const buildWechatSystemPrompt = (mediaPrompt = '') => {
             const char = __s.currentCharacter.value || {};
             return wxProtocol.buildSystemPrompt(buildWechatCharacterCard(), {
                 characterName: String(char.wechatPeerName || '').trim() || char.name || '',
@@ -639,6 +643,7 @@
                 scene: String(char.wechatScene || '').trim(),
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
                 stickerCatalog: buildWechatStickerCatalog(),
+                mediaPrompt,
                 extraRules: `【跨场景连续性】微信是同一段 roleplay 剧情中人物的通信渠道。`
                     + `继承已建立的称呼、关系、默契，也继承最新已发生剧情中的处境、行动、身体状态、手机/通信条件和情绪。`
                     + `打开微信面板或收到消息不会让人物离开原场景、解除限制或自动读到消息；不要重来一遍自我介绍。`,
@@ -739,7 +744,9 @@
                 if (item.role !== 'user' && item.role !== 'assistant') continue;
                 wxSeen += 1;
                 if (item.role === 'assistant') silentCount = 0;
-                if (item.type === 'image' && item.role === 'user') {
+                if (item.type === 'image' && __s.wechatImageRecordText) {
+                    entries.push({ message: { role: item.role, content: __s.wechatImageRecordText(item) }, mergeable: true, wxSeen });
+                } else if (item.type === 'image' && item.role === 'user') {
                     const parts = [];
                     if (item.content) parts.push({ type: 'image_url', image_url: { url: item.content } });
                     // content 是数组，拼不了，也就不参与合并
@@ -826,7 +833,7 @@
             const playerName = String(__s.user?.name || '').trim() || '对方';
             const lines = items.map((item) => {
                 const name = item.role === 'user' ? playerName : who;
-                const text = item.type === 'image' ? '[图片]' : item.type === 'sticker' ? `[表情 ${item.content}]` : item.content;
+                const text = item.type === 'image' ? (__s.wechatImageRecordText?.(item) || '[图片]') : item.type === 'sticker' ? `[表情 ${item.content}]` : item.content;
                 const silent = item.role === 'user' && item.replyDecision === 'silent';
                 return `${name}：${text}` + (silent
                     ? `\n【未发送消息的行为记录】${who}此轮未发微信；${wxProtocol.describeSilence(item.replySilence)}。这是内部状态，不是微信正文。` : '');
@@ -937,11 +944,20 @@
                 __s.showToast('该角色未开启微信，可在角色编辑里打开', 'info');
                 return;
             }
-            wechatTimeline.value = await loadWechatTimeline();
+            stopWechatGeneration();
+            __s.invalidateWechatMedia?.();
+            const openingScope = wechatScopeId();
+            const openingEpoch = __s.wechatMediaEpoch;
+            if (loadedWechatScopeId === openingScope) await saveWechatTimelineNow(openingScope, wechatTimeline.value);
+            const loaded = await loadWechatTimeline(openingScope);
+            if (wechatScopeId() !== openingScope || openingEpoch !== __s.wechatMediaEpoch) return;
+            wechatTimeline.value = loaded;
+            wechatDisplayLimit.value = 80;
             loadedWechatScopeId = wechatScopeId();
             resetRpRecordCursor();
             // 把已有的 RP 历史补进时间线，保证进微信就有前情。
             await recordRpMessages();
+            if (wechatScopeId() !== openingScope || openingEpoch !== __s.wechatMediaEpoch) return;
             // 已镜像的 RP 消息可能被编辑/删除过，重新对齐，免得发出去还是旧文案。
             if (reconcileRpTimeline()) {
                 resetRpRecordCursor();
@@ -951,6 +967,9 @@
             wechatPendingImage.value = null;
             wechatStatusText.value = '';
             showWechatPanel.value = true;
+            try { await __s.loadWechatMediaTasks?.(); }
+            catch (error) { if (error.name === 'AbortError') return; throw error; }
+            __s.loadVisibleWechatImages?.();
             await nextTick();
             scrollWechatToBottom();
         };
@@ -965,6 +984,7 @@
             showWechatStickers.value = false;
             showStickerManager.value = false;
             showStickerStore.value = false;
+            __s.invalidateWechatMedia?.();
             wechatTyping.value = false;
             wechatStatusText.value = '';
             stopWechatStatusTicker();
@@ -1013,6 +1033,8 @@
             wechatSettingsDraft.worldInfoComments = [...selectedWechatWorldInfoComments()];
             wechatSettingsDraft.presetNames = [...selectedWechatPresetNames()];
             wechatSettingsDraft.stickerRate = wxProtocol.normalizeStickerTier(char.wechatStickerRate);
+            wechatSettingsDraft.imageSearchEnabled = char.wechatImageSearchEnabled === true;
+            wechatSettingsDraft.imageGenerationEnabled = char.wechatImageGenerationEnabled === true;
             showWechatSettings.value = true;
         };
         __s.openWechatSettings = openWechatSettings;
@@ -1028,6 +1050,8 @@
             char.wechatWorldInfoComments = normalizeTrimmedList(wechatSettingsDraft.worldInfoComments);
             char.wechatPresetNames = normalizeTrimmedList(wechatSettingsDraft.presetNames);
             char.wechatStickerRate = wxProtocol.normalizeStickerTier(wechatSettingsDraft.stickerRate);
+            char.wechatImageSearchEnabled = wechatSettingsDraft.imageSearchEnabled === true;
+            char.wechatImageGenerationEnabled = wechatSettingsDraft.imageGenerationEnabled === true;
             showWechatSettings.value = false;
             try {
                 await __s.saveCharactersNow();
@@ -1041,10 +1065,13 @@
 
         const clearWechatTimeline = () => {
             __s.confirmAction('确定要清空与该角色的全部微信聊天记录吗？此操作无法撤销。', async () => {
+                stopWechatGeneration();
+                __s.invalidateWechatMedia?.();
                 wechatTimeline.value = wechatTimeline.value.filter((item) => item.channel !== 'wechat');
                 resetRpRecordCursor();
                 try {
                     await saveWechatTimelineNow();
+                    await setScopedStoredValue('wechat_media_tasks', wechatScopeId(), []);
                 } catch (error) {
                     console.error('清空微信记录失败:', error);
                 }
@@ -1063,8 +1090,10 @@
                 return;
             }
             try {
-                const dataUrl = await fileToDataURL(file);
-                wechatPendingImage.value = await compressImage(dataUrl, 1024, 0.82);
+                const epoch = __s.wechatMediaEpoch;
+                const image = window.RPHubWeChatMedia ? await window.RPHubWeChatMedia.rasterize(file) : null;
+                const dataUrl = image ? await window.RPHubWeChatMedia.blobToDataURL(image.blob) : await compressImage(await fileToDataURL(file), 1024, 0.82);
+                if (epoch === __s.wechatMediaEpoch) wechatPendingImage.value = dataUrl;
             } catch (error) {
                 __s.showToast(`图片处理失败：${error.message}`, 'error');
             }
@@ -1094,8 +1123,10 @@
             if (!file) return; // 纯文字粘贴交给 textarea 原生行为
             event.preventDefault();
             try {
-                const dataUrl = await fileToDataURL(file);
-                wechatPendingImage.value = await compressImage(dataUrl, 1024, 0.82);
+                const epoch = __s.wechatMediaEpoch;
+                const image = window.RPHubWeChatMedia ? await window.RPHubWeChatMedia.rasterize(file) : null;
+                const dataUrl = image ? await window.RPHubWeChatMedia.blobToDataURL(image.blob) : await compressImage(await fileToDataURL(file), 1024, 0.82);
+                if (epoch === __s.wechatMediaEpoch) wechatPendingImage.value = dataUrl;
             } catch (error) {
                 __s.showToast(`图片处理失败：${error.message}`, 'error');
             }
@@ -1429,23 +1460,55 @@
         // ---- 生成 ----
         const requestWechatReply = async (signal) => {
             const model = __s.settings.model;
-            const result = await __s.requestTrackedChatCompletion({
-                model,
-                messages: [
-                    { role: 'system', content: buildWechatSystemPrompt() },
-                    // 预注入轮次（破限预注入）夹在 system 与真实聊天记录之间
-                    ...buildWechatPresetMessages(),
-                    ...buildWechatModelMessages()
-                ],
-                temperature: 0.95,
-                stream: true,
-                signal
-            }, 'chat');
+            const epoch = __s.wechatMediaEpoch;
+            const assertRequest = () => { if (signal.aborted || epoch !== __s.wechatMediaEpoch) throw new DOMException('请求已取消', 'AbortError'); };
+            const descriptionIds = new Set((__s.getWechatFreshImages?.() || []).filter(item => !item.media?.caption).map(item => item.id));
+            const mediaContext = __s.resolveWechatMediaContext?.();
+            const mediaPrompt = __s.buildWechatMediaPrompt ? await __s.buildWechatMediaPrompt(mediaContext) : '';
+            assertRequest();
+            let messages = [
+                { role: 'system', content: buildWechatSystemPrompt(mediaPrompt) },
+                ...buildWechatPresetMessages(), ...buildWechatModelMessages()
+            ];
+            if (__s.buildWechatVisualMessages) messages = await __s.buildWechatVisualMessages(messages, signal);
+            assertRequest();
+            let tools = __s.wechatImageTools?.(mediaContext) || [];
+            let result;
+            let viewCalls = 0;
+            let loadCalls = 0;
+            // At most one lazy capability load plus two actual image views and a final reply.
+            for (let round = 0; round < 4; round++) {
+                result = await __s.requestTrackedChatCompletion({ model, messages, ...(tools.length ? { tools } : {}), temperature: 0.95, stream: true, signal }, 'chat');
+                assertRequest();
+                if (['length', 'content_filter'].includes(result?.finishReason)) break;
+                if (!result?.toolCalls?.length) break;
+                const names = result.toolCalls.map(call => call.function?.name);
+                if (names.some(name => !tools.some(tool => tool.function.name === name))) throw new Error('模型调用了本轮未提供的微信工具');
+                viewCalls += names.filter(name => name === 'tool_view_image').length;
+                loadCalls += names.filter(name => name === 'tool_load_image_sending').length;
+                if (round === 3 || viewCalls > 2 || loadCalls > 1) throw new Error('图片工具调用次数达到本轮上限，请重试');
+                messages.push(result.assistantMessage || { role: 'assistant', content: result.content || '', tool_calls: result.toolCalls });
+                const attachments = [];
+                for (const call of result.toolCalls) {
+                    let viewed;
+                    const loading = call.function.name === 'tool_load_image_sending';
+                    try { viewed = loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal); }
+                    catch (error) { assertRequest(); viewed = { content: loading
+                        ? `发图能力加载失败：${error.message}。没有取得可用素材目录，不得编造资源 ID。可以只发文字或按原决策空回。`
+                        : `查看失败：${error.message}。没有成功查看像素，不得假装看过或猜测细节。` }; }
+                    assertRequest();
+                    messages.push({ role: 'tool', tool_call_id: call.id, content: viewed.content });
+                    if (viewed.attachment) attachments.push(viewed.attachment);
+                }
+                messages.push(...attachments);
+                if (loadCalls) tools = tools.filter(tool => tool.function.name !== 'tool_load_image_sending');
+            }
             const raw = String(result?.content || '').trim();
             if (!raw) throw new Error('模型返回了空内容');
             if (result?.finishReason === 'length') throw new Error('模型回复被截断，请重试');
             if (result?.finishReason === 'content_filter') throw new Error('模型回复被 API 拦截');
             const reply = wxProtocol.parseReplyResult(raw);
+            __s.rememberWechatImageDescriptions?.(raw, descriptionIds);
             if (reply.silent) return reply;
             if (!reply.messages.length) throw new Error('未能从回复中解析出任何消息');
             // 提示词之外再硬裁一道：模型无视档位刷表情时，这里兜底。
@@ -1453,8 +1516,9 @@
         };
 
         const playWechatReply = async (messages, signal, scopeId) => {
+            const epoch = __s.wechatMediaEpoch;
             for (let index = 0; index < messages.length; index++) {
-                if (signal?.aborted || wechatScopeId() !== scopeId) return;
+                if (signal?.aborted || wechatScopeId() !== scopeId || epoch !== __s.wechatMediaEpoch) return;
                 const message = messages[index];
                 if (index > 0) {
                     await sleep(rand(160, 420));
@@ -1463,15 +1527,24 @@
                     scrollWechatToBottom();
                 }
                 await sleep(typingDuration(message));
-                if (signal?.aborted || wechatScopeId() !== scopeId) return;
+                if (signal?.aborted || wechatScopeId() !== scopeId || epoch !== __s.wechatMediaEpoch) return;
                 wechatTyping.value = false;
                 wechatStatusText.value = '';
-                pushWechatItem({ channel: 'wechat', role: 'assistant', type: message.type, content: message.content });
+                const itemId = message._mediaTaskId ? `wx-${message._mediaTaskId}-${message._mediaTaskIndex}` : null;
+                if (!itemId || !wechatTimeline.value.some(item => item.id === itemId)) {
+                    pushWechatItem({ ...(itemId ? { id: itemId } : {}), channel: 'wechat', role: 'assistant', type: message.type, content: message.content || '', ...(message.media ? { media: message.media } : {}) });
+                }
+                if (message._mediaTaskId) {
+                    await saveWechatTimelineNow(scopeId);
+                    await __s.markWechatMediaMessageSent?.(message);
+                }
+                __s.loadVisibleWechatImages?.();
                 scheduleWechatSave();
                 scrollWechatToBottom();
                 if (index < messages.length - 1) await sleep(rand(220, 560));
             }
         };
+        __s.playWechatReply = playWechatReply;
 
         /**
          * 生成一轮微信回复（纯生成 + 播放，不负责把触发消息写进时间线）。
@@ -1515,10 +1588,12 @@
                     }
                     return;
                 }
+                const prepared = __s.prepareWechatReplyMedia ? await __s.prepareWechatReplyMedia(reply.messages, signal) : reply.messages;
+                if (signal.aborted || wechatScopeId() !== scopeId) return;
                 wechatTyping.value = true;
                 startWechatStatusTicker();
                 scrollWechatToBottom();
-                await playWechatReply(reply.messages, signal, scopeId);
+                await playWechatReply(prepared, signal, scopeId);
             } catch (error) {
                 if (!signal.aborted && wechatScopeId() === scopeId && error?.name !== 'AbortError') {
                     __s.showToast(`发送失败：${error?.message || error}`, 'error', 4000);
@@ -1540,13 +1615,20 @@
         const sendWechatMessage = async () => {
             const text = String(wechatInput.value || '').trim();
             const image = wechatPendingImage.value;
-            if ((!text && !image) || isWechatGenerating.value) return;
+            if ((!text && !image) || isWechatGenerating.value || __s.isWechatMediaPreparing?.value) return;
+
+            let imageItem;
+            if (image && __s.prepareWechatUploadedImage) {
+                try { imageItem = await __s.prepareWechatUploadedImage(image); }
+                catch (error) { if (error.name !== 'AbortError') __s.showToast(`图片保存失败：${error.message}`, 'warning'); return; }
+            }
 
             wechatInput.value = '';
             wechatPendingImage.value = null;
 
             if (text) pushWechatItem({ channel: 'wechat', role: 'user', type: 'text', content: text });
-            if (image) pushWechatItem({ channel: 'wechat', role: 'user', type: 'image', content: image });
+            if (image) pushWechatItem({ channel: 'wechat', role: 'user', ...(imageItem || { type: 'image', content: image }) });
+            __s.loadVisibleWechatImages?.();
             scheduleWechatSave();
             scrollWechatToBottom();
 
@@ -1584,6 +1666,7 @@
         const deliverActiveWechatMessage = (content) => {
             const text = String(content || '').trim();
             if (!text) throw new Error('微信消息内容为空');
+            if (wxProtocol.parseReply(text).some(message => message.type === 'image_request')) throw new Error('RP 主动微信工具目前只发送文字或表情，图片请在微信回合发送');
             __s.pendingActiveWechatMessages.push(text);
             return { delivered: true, content: text };
         };
@@ -1601,31 +1684,26 @@
                 if (text) parsed.push(...wxProtocol.parseReply(text));
             }
             const messages = wxProtocol.applyStickerPolicy(parsed, tier);
+            if (messages.some(message => message.type === 'image_request')) throw new Error('RP 主动微信不支持图片意图');
             if (!messages.length) return;
             const controller = new AbortController();
             __s.wechatAbortController = controller;
             const signal = controller.signal;
+            const scopeId = wechatScopeId();
+            const timeline = wechatTimeline.value;
             isWechatGenerating.value = true;
             try {
-                for (const message of messages) {
-                    await sleep(rand(160, 420));
-                    wechatTyping.value = true;
-                    wechatStatusText.value = '对方正在输入…';
-                    scrollWechatToBottom();
-                    await sleep(typingDuration(message));
-                    if (signal.aborted) return;
+                wechatTyping.value = true;
+                wechatStatusText.value = '对方正在输入…';
+                await playWechatReply(messages, signal, scopeId);
+            } finally {
+                if (__s.wechatAbortController === controller) {
+                    __s.wechatAbortController = null;
                     wechatTyping.value = false;
                     wechatStatusText.value = '';
-                    pushWechatItem({ channel: 'wechat', role: 'assistant', type: message.type, content: message.content });
-                    scheduleWechatSave();
-                    scrollWechatToBottom();
+                    isWechatGenerating.value = false;
                 }
-            } finally {
-                if (__s.wechatAbortController === controller) __s.wechatAbortController = null;
-                wechatTyping.value = false;
-                wechatStatusText.value = '';
-                isWechatGenerating.value = false;
-                await saveWechatTimelineNow().catch(() => {});
+                await saveWechatTimelineNow(scopeId, timeline).catch(() => {});
             }
         };
 
@@ -1659,7 +1737,8 @@
         const wechatDisplayItems = computed(() => {
             const items = [];
             let lastTs = null;
-            for (const item of wechatTimeline.value) {
+            const visible = wechatTimeline.value.filter(item => item.channel === 'wechat').slice(-wechatDisplayLimit.value);
+            for (const item of visible) {
                 if (item.channel !== 'wechat') continue;
                 if (item.role === 'system') {
                     items.push({ kind: 'system', id: item.id, content: item.content });
@@ -1675,6 +1754,8 @@
                     role: item.role,
                     type: item.type,
                     content: item.content,
+                    media: item.media,
+                    imageUrl: item.type === 'image' ? (item.media?.assetId ? __s.wechatMediaUrls?.[item.media.assetId] || '' : item.content) : '',
                     // 命中表情包库则带上图，前端据此渲染成图；未命中为 null，回退文本。
                     stickerImage: item.type === 'sticker' ? stickerImageOf(item.content) : null
                 });
@@ -1688,6 +1769,8 @@
         // 内存里的时间线属于切走前的 scope，必须一并作废：面板关着时 appendWechatDigestToMessages
         // 仍会读它，不作废就会把上一个角色（或上一条分支）的微信记录带进当前 RP 上下文。
         const invalidateWechatTimelineScope = () => {
+            stopWechatGeneration();
+            __s.invalidateWechatMedia?.();
             loadedWechatScopeId = null;
             if (!showWechatPanel.value) wechatTimeline.value = [];
         };

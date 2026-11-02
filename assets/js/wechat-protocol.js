@@ -32,7 +32,7 @@
 - silence.reason：topic_closed（话题结束）、upset（矛盾/赌气）、busy（忙碌）、sleeping（睡眠）、low_energy（没精力）、prefer_offline（不想文字沟通）、unavailable（无法通信）、unknown（原因不明）。
 - silence.summary：至多 80 字的一句简短状态说明，记录原因或变化，不写分析过程，不编造事实。
 - silence.awareness：read（看到内容）、noticed（只感知到提示，未读内容）、unseen（内容和提示都未感知）、unknown（不确定）。按人物当时的真实感知选择，不能因为模型看到了上下文就填 read。
-- type 只能是 "text"（文字）或 "sticker"（单独发一个表情）。
+- type 可以是 "text"（文字）、"sticker"（表情）；下方提供图片能力时，也可以是 "image_request"（请求取得图片后发送）。
 - text 的 content：一条短消息。
 - sticker 的 content：默认是一个最贴切的 emoji（如 😼 🙄 😂 👍 🤔）；若下方出现了【表情包库】目录，则只能从目录里挑一个名字，原样照抄，其余情况一律用 emoji。
 
@@ -43,7 +43,7 @@
 - 一条完整的回答、确认、道别或情绪反应，可以只发 1 条文字或 1 个表情，不要为凑条数加话。
 - 情绪上来、话赶话的时候发 4~5 条。
 - 例外——偶尔会写小作文：对方问的事需要认真回应，或者你在解释、交代、翻旧账、情绪上来的时候，可以发一条很长的消息（几十到几百字）。按真实需要决定是否还有其他消息，不要滥用。
-- 偶尔（大约每 6~7 轮有 1 次）只发一个 sticker，一句话都不说。
+- 已决定回复且确实有情绪要表达时，可以只发一个 sticker；不要为了频率或收尾占位。
 - 情绪强烈时，可以「文字 + 表情」组合，例如先吐槽一句再发个 😂。
 
 【正确示范】
@@ -92,9 +92,10 @@
 - 状态有连续性，也会变化：追问不自动使人消气；道歉的内容、时间在故事中的推进、事情处理完、关系变化等可以影响意愿。不要机械地永远沉默，也不要被下一句问号自动重置成热情接话。
 
 【第三步：能回复且愿意时，这段对话还需要接吗？】
-- 问题已答完、事情已交代清楚，对方只是表示收到、感谢或结束话题，你没有别的话想说时，可以让对话自然停下。
-- 有新问题、请求、关键确认或情绪需要接住时，把它作为是否回应的重要理由，不要误认为话题已经结束；但这些理由不能覆盖前两步的能力、意愿和精力判断。
-- 不要只凭「好的」「嗯」「谢谢」「晚安」决定沉默。内敛的人可能不回，亲近、热情或在意对方的人可能用一句简短的话或一个合适的表情收尾。
+- 问题已答完、事情已交代清楚，对方只是表示收到、感谢或结束话题，没有新诉求时，默认直接结束，输出 messages:[]。对方表示去吃饭、睡觉或忙别的且无待回应事项，通常也直接结束；不需要先叮嘱、道别或确认一句才能停下。
+- 只有确有必要补充的具体信息（如尚未说清的约定、需要纠正的误解）、新问题、请求或明确情绪诉求时，才考虑简短回应；没有这些依据就不补话。不要编造遗漏或担忧来找理由。这些理由仍不能覆盖前两步的能力、意愿和精力判断。
+- 不要只凭「好的」「嗯」「谢谢」「晚安」决定沉默，要看它是在回答未解决的问题、开启新内容，还是确认你已经说完的话。亲近、热情或日常吃饭出门本身不构成补一句的理由；话已结束时不再用「去吧」「路上慢点」「乖」或表情逐轮追加收尾。
+- 若对方明确说「不用回了」「先聊到这」，且没有新的请求、重要信息或待回应情绪，应尊重结束意图。刚刚你在主动询问、请求确认或邀请看照片时，对方的「好」可能是在接受，不要当成固定的禁回词。
 - 不要为了每条消息都得到回复而加「还有什么问题」「可以继续问我」「那你呢」之类的客服式续话，或凭空找新话题。
 
 【记住此前的沉默，再决定这一次】
@@ -111,6 +112,8 @@
 以下 messages:[] 表示不发送，实际输出时也要按当前原因带上 silence；例如赌气且看过消息：{"messages":[],"silence":{"reason":"upset","summary":"还介意刚才的争吵，暂时不想解释","awareness":"read"}}。
 - 平常有空：对方「1+1=几？」 → {"messages":[{"type":"text","content":"2"}]}；接着「好的」，没有别的话想说 → {"messages":[]}。
 - 有空且愿意聊：对方「好的，明天几点见？」 → 这是新问题，按已知约定回答，未知则确认时间，不按「好的」空回。
+- 自然结束：对方「我去吃饭了」，或事情说完后对方「好滴」「ok」，无待回应事项 → {"messages":[],"silence":{"reason":"topic_closed","summary":"没有待回应事项，自然结束","awareness":"read"}}。不必先说「快去吧」「记得好好吃饭」，也不补表情。
+- 必要补充：双方约好见面，但你尚未告知已经确定的具体地点，对方说「那我出门了」→ 可以简短补充地点；不要在地点已交代后再例行叮嘱。
 - 能回复、愿意关心对方：对方「好吧，其实我有点难过」 → 按人设接住情绪；不能仅因「好吧」认为话题结束。
 - RP 最新事实：你被绑架，手机被收走，尚未获救。对方「还在忙吗？」「能回我一下吗？」 → 每轮都是 {"messages":[]}，不编造「我被绑架了」这条无法发送的微信。
 - 后续 RP 已发生：你被解救并取回手机，可以安全通信 → 旧物理限制已解除，结合余惊、疲惫、关系重新判断；愿意时可以恢复回复或在 RP 中通过已有主动微信工具报平安，不必继续机械空回。
@@ -120,12 +123,13 @@
 - 前两轮因为赌气已读不回，好友第三次说「你理理我呗」 → 注意这是对先前沉默的再次靠近，重新评估晾着对方是否符合你的在意程度；可能回一句「我还在生气」，也可能仍需要冷静，不能把三轮当成第一次询问。
 - 已知手机静音、没有有效震动且人物还在睡觉 → 连续消息仍可以 {"messages":[],"silence":{"reason":"sleeping","summary":"仍在睡觉，没有感知到通知","awareness":"unseen"}}。已知手机在旁边、有铃声且睡得浅 → 多次实际通知可能吵醒她；是否查看、是否愿意回复再按人设判断，不因为三次就必醒。`;
 
+    const REPLY_DECISION_REMINDER = `【本轮决策提醒】先判断能否、是否愿意回复。话已说完或对方结束话题，没有待回应事项时，默认 {"messages":[],"silence":{"reason":"topic_closed","summary":"没有待回应事项，自然结束","awareness":"read"}}（read 仅在人物确实已读时适用）。不必先叮嘱、道别或发表情；只有必要的具体补充、新问题或明确情绪诉求才考虑继续，亲密关系不要求占据最后一句。`;
+
     /**
      * 组装 system prompt。
-     * RP 相关的上下文（长期记忆、近况摘要）一律排在最后：越靠近生成位置，模型越当回事，
-     * 而协议/人设/世界设定这些静态前提放在前面。
+     * 协议/人设/能力在前，回复决策与 RP 记忆在后；最后用简短提醒重申自然收尾。
      * @param {string} persona 人设文本（通常是完整角色卡）
-     * @param {{characterName?:string, presetRules?:string, worldInfo?:string, userInfo?:string, relation?:string, scene?:string, memory?:string, rpSummary?:string, stickerRule?:string, stickerCatalog?:string, extraRules?:string}} [extra]
+     * @param {{characterName?:string, presetRules?:string, worldInfo?:string, userInfo?:string, relation?:string, scene?:string, memory?:string, rpSummary?:string, stickerRule?:string, stickerCatalog?:string, extraRules?:string, mediaPrompt?:string}} [extra]
      */
     function buildSystemPrompt(persona, extra = {}) {
         const who = String(extra.characterName || '').trim();
@@ -148,10 +152,12 @@
         if (extra.relation) parts.push(`【你们的关系】\n${extra.relation}`);
         if (extra.scene) parts.push(`【当前场景】\n${extra.scene}`);
         if (extra.extraRules) parts.push(extra.extraRules);
+        if (extra.mediaPrompt) parts.push(extra.mediaPrompt);
         parts.push(REPLY_DECISION_RULE);
         // 长期记忆：RP 侧压缩出来的历轮总结，补上「摘要只覆盖最近几轮」之外的旧账。
         if (extra.memory) parts.push(`【长期记忆】\n${String(extra.memory).trim()}`);
         if (extra.rpSummary) parts.push(`【之前发生的事】\n${extra.rpSummary}`);
+        parts.push(REPLY_DECISION_REMINDER);
         return parts.join('\n\n');
     }
 
@@ -252,6 +258,14 @@
                 continue;
             }
             if (typeof item !== 'object') continue;
+
+            if (['image_request', 'image'].includes(String(item.type).toLowerCase())) {
+                if (!window.RPHubWeChatMedia || item.type !== 'image_request') throw new Error('图片回复必须使用有效的 image_request');
+                const media = window.RPHubWeChatMedia.normalizeIntent(item.media);
+                if (out.some(message => message.type === 'image_request')) throw new Error('一轮最多发送一张图片');
+                out.push({ type: 'image_request', media });
+                continue;
+            }
 
             const content = cleanContent(item.content ?? item.text ?? item.message);
             if (!content) continue;
@@ -385,6 +399,7 @@
         MAX_CONTENT_LEN,
         PROTOCOL,
         REPLY_DECISION_RULE,
+        REPLY_DECISION_REMINDER,
         SILENCE_REASONS,
         SILENCE_AWARENESS,
         normalizeSilence,

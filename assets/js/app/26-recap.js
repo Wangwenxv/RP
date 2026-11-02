@@ -154,7 +154,7 @@
         /** 单条微信消息 → 转述素材行。 */
         const formatRecapWechatLine = (item, characterName) => {
             const name = item.role === 'user' ? __s.user.name : characterName;
-            const text = item.type === 'image' ? '[图片]' : item.type === 'sticker' ? `[表情 ${item.content}]` : item.content;
+            const text = item.type === 'image' ? (__s.wechatImageRecordText?.(item) || '[图片]') : item.type === 'sticker' ? `[表情 ${item.content}]` : item.content;
             const silent = item.role === 'user' && item.replyDecision === 'silent';
             return `${name}：${text}` + (silent
                 ? `\n【未发送消息的行为记录】${characterName}此轮未发微信；${window.RPHubWeChatProtocol.describeSilence(item.replySilence)}。这是内部状态，不是微信正文。` : '');

@@ -101,10 +101,12 @@
 
     const dbSetTo = (targetDb, key, value, options = {}) => new Promise((resolve, reject) => {
         if (!targetDb) return reject('DB not initialized');
-        const request = targetDb.transaction(['store'], 'readwrite')
-            .objectStore('store')
+        const transaction = targetDb.transaction(['store'], 'readwrite');
+        const request = transaction.objectStore('store')
             .put(options.clone === false ? value : cloneForStorage(value), key);
-        request.onsuccess = () => resolve();
+        transaction.oncomplete = () => resolve();
+        transaction.onabort = () => reject(transaction.error || new Error('Storage transaction aborted'));
+        transaction.onerror = () => reject(transaction.error);
         request.onerror = (event) => reject(event.target.error);
     });
 

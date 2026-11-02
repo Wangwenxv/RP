@@ -2890,12 +2890,15 @@
                     </div>
                 </div>
                 <div class="wx-bar-right">
+                    <button class="wx-icon-btn" @click="openWechatMediaGallery" title="相册">▧</button>
                     <button class="wx-icon-btn" @click="openWechatSettings" title="设置">⚙</button>
                     <button class="wx-icon-btn" @click="clearWechatTimeline" title="清空记录">🗑</button>
                 </div>
             </header>
 
             <main id="wechat-chat-scroll" class="wx-chat" @click="showWechatSettings = false">
+                <button v-if="wechatTimeline.filter(m => m.channel === 'wechat').length > wechatDisplayLimit"
+                    class="wx-more-images" @click="showOlderWechatImages">查看更早的消息</button>
                 <template v-for="item in wechatDisplayItems" :key="item.id">
                     <div v-if="item.kind === 'day'" class="wx-day">{{ item.label }}</div>
                     <div v-else-if="item.kind === 'system'" class="wx-sys">{{ item.content }}</div>
@@ -2911,7 +2914,10 @@
                         </label>
                         <div class="wx-bubble"
                             :class="{ sticker: item.type === 'sticker', image: item.type === 'image' }">
-                            <img v-if="item.type === 'image'" :src="item.content" alt="图片" loading="lazy">
+                            <button v-if="item.type === 'image'" class="wx-photo-button" @click="viewWechatImage(item)" title="查看完整图片">
+                                <img v-if="item.imageUrl" :src="item.imageUrl" :alt="item.media?.caption || '图片'" loading="lazy">
+                                <span v-else>图片加载中…</span>
+                            </button>
                             <img v-else-if="item.type === 'sticker' && item.stickerImage" class="wx-sticker-img"
                                 :src="item.stickerImage" :alt="item.content">
                             <span v-else-if="item.type === 'sticker'" class="wx-sticker-inner">{{ item.content }}</span>
@@ -2919,6 +2925,11 @@
                         </div>
                     </div>
                 </template>
+                <div v-for="task in wechatMediaTasks.filter(t => t.status !== 'done')" :key="task.id" class="wx-media-task">
+                    <span>{{ task.error || '图片准备中…' }}</span>
+                    <button v-if="!isWechatGenerating" @click="retryWechatMediaTask(task)">重试图片</button>
+                    <button v-if="!isWechatGenerating" @click="dismissWechatMediaTask(task)">取消</button>
+                </div>
                 <div v-if="wechatTyping" class="wx-row wx-typing">
                     <img v-if="wechatAvatar" class="wx-avatar" :src="wechatAvatar">
                     <div v-else class="wx-avatar wx-avatar--fallback">{{ (wechatPeerName || '?').charAt(0) }}</div>
@@ -2953,7 +2964,7 @@
                         :title="wechatBurstMode ? '连发中：发送只落气泡，攒够点右侧让对方回复' : '开启连发：你可以一条条发完再让对方回复'"
                         @click="wechatBurstMode = !wechatBurstMode">连发</button>
                     <button v-if="!isWechatGenerating" class="wx-send"
-                        :disabled="!wechatInput.trim() && !wechatPendingImage"
+                        :disabled="isWechatMediaPreparing || (!wechatInput.trim() && !wechatPendingImage)"
                         @click="sendWechatMessage">发送</button>
                     <button v-else class="wx-send wx-send--stop" @click="stopWechatGeneration">停止</button>
                 </div>
@@ -3151,6 +3162,12 @@
                             <small class="wx-hint">越少越像真人。提示词和生成后裁剪都会按这档收紧，模型想多发也发不出来。</small>
                         </div>
                         <div class="wx-field">
+                            <span>图片来源 <small>相册与手绘默认可用</small></span>
+                            <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageSearchEnabled">联网找参考图（需网络）</label>
+                            <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageGenerationEnabled">允许按需生图（需已配置生图密钥）</label>
+                            <p class="wx-hint">点击顶栏相册可查看素材、加入自己的照片；新图本轮完整识别，历史用短描述，细节按需查看。</p>
+                        </div>
+                        <div class="wx-field">
                             <span>表情包库 <small>全局共用，{{ wechatStickers.length }} 个</small></span>
                             <button class="wx-primary" @click="openStickerStore">从开源表情包导入</button>
                             <button class="wx-ghost wx-ghost--full" @click="openStickerManager">
@@ -3161,6 +3178,28 @@
                     </div>
                 </aside>
             </div>
+            <div v-if="showWechatMediaGallery" class="wx-drawer-mask wx-drawer-mask--center" @click.self="showWechatMediaGallery = false">
+                <section class="wx-modal wx-media-gallery">
+                    <header class="wx-media-header"><strong>相册</strong><button class="wx-icon-btn" @click="showWechatMediaGallery = false" aria-label="关闭相册">×</button></header>
+                    <p class="wx-hint">点图片发送。角色也能根据画面描述选择图片；新加入的照片仅供当前角色使用。</p>
+                    <div class="wx-media-grid">
+                        <button v-for="photo in wechatMediaGallery" :key="photo.id" class="wx-media-card" @click="sendWechatAlbumImage(photo)" :disabled="isWechatGenerating">
+                            <img v-if="wechatMediaUrls[photo.id]" :src="wechatMediaUrls[photo.id]" :alt="photo.caption" loading="lazy">
+                            <span>{{ photo.title }}</span><small>{{ photo.caption }}</small>
+                        </button>
+                    </div>
+                    <label class="wx-field"><span>加入照片</span><input v-model="wechatMediaDraft.title" maxlength="40" placeholder="名称，例如：我的晚饭"></label>
+                    <label class="wx-field"><span>画面描述</span><textarea v-model="wechatMediaDraft.caption" maxlength="120" rows="2" placeholder="只描述实际可见的内容"></textarea></label>
+                    <label class="wx-primary wx-media-upload">{{ isWechatMediaPreparing ? '正在保存…' : '选择图片加入相册' }}
+                        <input type="file" class="wx-file-hidden" accept="image/png,image/jpeg,image/webp,image/gif" @change="importWechatAlbumImage" :disabled="isWechatMediaPreparing">
+                    </label>
+                </section>
+            </div>
+            <div v-if="wechatImagePreview" class="wx-drawer-mask wx-drawer-mask--center wx-media-preview" @click.self="wechatImagePreview = null">
+                <section class="wx-modal"><header class="wx-media-header"><strong>图片</strong><button class="wx-icon-btn" @click="wechatImagePreview = null" aria-label="关闭图片">×</button></header>
+                    <img :src="wechatImagePreview.url" :alt="wechatImagePreview.caption"><p>{{ wechatImagePreview.caption }}</p>
+                </section>
+            </div>
         </div>
 
     </div>
@@ -3169,6 +3208,7 @@
         document.write('<script src="assets/js/built-in-content.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/core-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/api-utils.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-protocol.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/emoji-catalog.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/data-services.js?v=' + new Date().getTime() + '"><\/script>');
@@ -3200,6 +3240,7 @@
         document.write('<script src="assets/js/app/23-lifecycle.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/24-late-helpers.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/25-wechat.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/27-wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/26-recap.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app.js?v=' + new Date().getTime() + '"><\/script>');
     </script>

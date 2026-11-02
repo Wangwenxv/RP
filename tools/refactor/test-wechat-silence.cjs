@@ -117,10 +117,12 @@ test('人格、关系、场景、记忆与收尾规则一起注入，旧至少�
     assert.ok(prompt.includes(text));
   }
   assert.ok(!p.PROTOCOL.includes('就至少发 2 条消息'));
-  const withMemory = p.buildSystemPrompt('人设', { extraRules: '旧规则', memory: '记忆', rpSummary: '剧情' });
+  const withMemory = p.buildSystemPrompt('人设', { extraRules: '旧规则', memory: '记忆', rpSummary: '剧情', mediaPrompt: '本轮图片说明' });
   assert.ok(withMemory.indexOf(p.REPLY_DECISION_RULE) > withMemory.indexOf('旧规则'));
+  assert.ok(withMemory.indexOf(p.REPLY_DECISION_RULE) > withMemory.indexOf('本轮图片说明'));
   assert.ok(withMemory.indexOf('【长期记忆】') > withMemory.indexOf(p.REPLY_DECISION_RULE));
-  assert.ok(withMemory.endsWith('剧情'));
+  assert.ok(withMemory.indexOf('【之前发生的事】\n剧情') > withMemory.indexOf('【长期记忆】'));
+  assert.ok(withMemory.endsWith(p.REPLY_DECISION_REMINDER));
 });
 
 test('1+1 → 2 → 好的 → 空回 → 新问题：无空白气泡，状态与上下文正常接续', async () => {

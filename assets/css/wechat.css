@@ -905,3 +905,18 @@
     .wx-row .wx-bubble.sticker,
     .wx-row.me .wx-bubble.sticker { font-size: 58px; }
 }
+
+/* Media uses the existing WeChat palette and controls. */
+.wx-photo-button { display: block; border: 0; padding: 0; background: transparent; color: var(--wx-muted); cursor: pointer; min-width: 120px; min-height: 80px; }
+.wx-more-images { display: block; margin: 0 auto 20px; padding: 6px 12px; background: transparent; border: 0; color: var(--wx-muted); cursor: pointer; }
+.wx-media-task { margin: 10px auto; padding: 10px; max-width: 90%; background: var(--wx-bar); border: 1px solid var(--wx-line); border-radius: 8px; color: var(--wx-muted); font-size: 13px; }
+.wx-media-task button { margin-left: 8px; border: 0; background: transparent; color: var(--wx-accent); cursor: pointer; }
+.wx-media-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.wx-media-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.wx-media-card { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--wx-line); border-radius: 8px; background: var(--wx-bubble-peer); color: var(--wx-text); cursor: pointer; text-align: left; }
+.wx-media-card img { width: 100%; height: 130px; object-fit: cover; border-radius: 4px; }
+.wx-media-card small { color: var(--wx-muted); font-size: 11px; line-height: 1.5; }
+.wx-media-upload { display: block; text-align: center; cursor: pointer; }
+.wx-media-preview img { display: block; max-width: 100%; max-height: 65vh; object-fit: contain; margin: auto; }
+.wx-media-preview p { color: var(--wx-muted); font-size: 13px; }
+.wx-media-gallery, .wx-media-preview .wx-modal { padding: 16px; overflow-y: auto; }
