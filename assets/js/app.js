@@ -663,6 +663,7 @@ const app = createApp({
             wechatVoiceDraft: __s.wechatVoiceDraft,
             wechatVoiceCatalog: __s.wechatVoiceCatalog,
             wechatVoiceCatalogLoading: __s.wechatVoiceCatalogLoading,
+            wechatVoiceCatalogStatus: __s.wechatVoiceCatalogStatus,
             wechatVoicePlayingId: __s.wechatVoicePlayingId,
             wechatVoiceLoadingId: __s.wechatVoiceLoadingId,
             wechatVoiceExpanded: __s.wechatVoiceExpanded,

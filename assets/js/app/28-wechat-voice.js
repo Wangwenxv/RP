@@ -11,13 +11,17 @@
         __s.wechatVoiceDraft = draft;
         __s.wechatVoiceCatalog = ref([]);
         __s.wechatVoiceCatalogLoading = ref(false);
+        __s.wechatVoiceCatalogStatus = ref('');
         __s.wechatVoicePlayingId = ref('');
         __s.wechatVoiceLoadingId = ref('');
         __s.wechatVoiceExpanded = reactive({});
         let audio = null, objectUrl = '', playEpoch = 0, catalogController = null;
         const scope = () => __s.getCurrentStoryBranchScopeId();
         const config = () => __s.currentCharacter.value?.wechatVoice || {};
-        __s.isWechatVoiceReady = () => config().enabled === true && /^voc_[a-zA-Z0-9_-]{1,100}$/.test(config().voiceId || '') && !!key.value.trim();
+        __s.isWechatVoiceReady = () => {
+            try { V.serviceBase(service.value); } catch (_) { return false; }
+            return config().enabled === true && /^voc_[a-zA-Z0-9_-]{1,100}$/.test(config().voiceId || '') && !!key.value.trim();
+        };
         __s.buildWechatVoicePrompt = () => V.buildPrompt(__s.isWechatVoiceReady());
         __s.wechatVoiceRecordText = V.recordText;
         __s.getWechatVoiceConfig = () => ({ voiceId: config().voiceId, style: String(config().style || '').slice(0, 300) });
@@ -25,9 +29,13 @@
             draft.enabled = config().enabled === true; draft.voiceId = config().voiceId || ''; draft.style = config().style || '';
             draft.key = key.value; draft.service = service.value;
             __s.wechatVoiceCatalog.value = [];
+            __s.wechatVoiceCatalogStatus.value = '';
         };
         __s.saveWechatVoiceSettings = () => {
-            try { V.serviceBase(draft.service); } catch (error) { __s.showToast(error.message, 'warning'); return false; }
+            // Keep unrelated WeChat settings saveable while voice is disabled or not yet configured.
+            if (draft.service.trim() || (draft.enabled && draft.key.trim() && draft.voiceId.trim())) {
+                try { V.serviceBase(draft.service); } catch (error) { __s.showToast(error.message, 'warning'); return false; }
+            }
             if (draft.voiceId.trim() && !/^voc_[a-zA-Z0-9_-]{1,100}$/.test(draft.voiceId.trim())) { __s.showToast('请填写有效的 voc_ 音色 ID', 'warning'); return false; }
             // Blank voice/key is allowed while preparing settings; it never exposes voice capability to the model.
             __s.currentCharacter.value.wechatVoice = { enabled: draft.enabled === true, voiceId: draft.voiceId.trim(), style: draft.style.trim().slice(0, 300) };
@@ -43,10 +51,20 @@
             if (__s.wechatVoiceCatalogLoading.value) return;
             const controller = new AbortController(); catalogController = controller;
             __s.wechatVoiceCatalogLoading.value = true;
+            __s.wechatVoiceCatalogStatus.value = '';
+            __s.wechatVoiceCatalog.value = [];
             try {
                 const result = await V.request(draft.service, draft.key, 'voices', null, controller.signal);
-                if (catalogController === controller) __s.wechatVoiceCatalog.value = Array.isArray(result.voices) ? result.voices : [];
-            } catch (error) { if (error.name !== 'AbortError') __s.showToast(error.message, 'warning'); }
+                if (catalogController === controller) {
+                    __s.wechatVoiceCatalog.value = result.voices;
+                    __s.wechatVoiceCatalogStatus.value = result.voices.length ? `已读取 ${result.voices.length} 个中文公共音色，选择后保存即可` : '服务已连接，但当前没有可用的中文公共音色';
+                }
+            } catch (error) {
+                if (error.name !== 'AbortError' && catalogController === controller) {
+                    __s.wechatVoiceCatalogStatus.value = error.message;
+                    __s.showToast(error.message, 'warning');
+                }
+            }
             finally { if (catalogController === controller) { __s.wechatVoiceCatalogLoading.value = false; catalogController = null; } }
         };
         __s.resolveWechatVoice = async (message, signal, snapshot) => {
@@ -95,6 +113,7 @@
         __s.invalidateWechatVoice = () => {
             __s.stopWechatVoice(); catalogController?.abort(); catalogController = null;
             __s.wechatVoiceCatalogLoading.value = false; __s.wechatVoiceCatalog.value = []; draft.key = '';
+            __s.wechatVoiceCatalogStatus.value = '';
             for (const id of Object.keys(__s.wechatVoiceExpanded)) delete __s.wechatVoiceExpanded[id];
         };
         watch(() => __s.showWechatSettings.value, visible => { if (!visible) { draft.key = ''; catalogController?.abort(); } });

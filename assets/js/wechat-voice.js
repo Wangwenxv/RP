@@ -31,35 +31,51 @@ instructions 使用与正文相同的语言，挑两三项有依据的表达：�
     }
     function serviceBase(value) {
         const input = String(value || '').trim();
-        if (!input) return window.location.protocol === 'file:' ? 'http://127.0.0.1:3000' : window.location.origin;
-        const url = new URL(input);
+        if (!input && window.location.protocol === 'file:') return 'http://127.0.0.1:3000';
+        const url = new URL(input || window.location.origin);
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)) throw new Error('语音服务地址请填写完整来源，如 http://127.0.0.1:3000');
+        if (url.hostname.endsWith('.github.io')) throw new Error('GitHub Pages 只能托管页面，请填写已启动的语音转发服务 HTTPS 地址');
+        if (['api.breeze.blue', 'breezeblue.ai', 'docs.breezeblue.ai', 'api.breezeblue.ai'].includes(url.hostname)) throw new Error('这里需要填写 RP-Hub 语音转发服务地址，不能直接填写 BreezeBlue 官网或 API 地址');
+        if (window.location.protocol === 'https:' && url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('当前页面使用 HTTPS，请填写 HTTPS 语音转发地址');
         return url.origin;
     }
     async function request(base, key, route, body, signal) {
         if (!String(key || '').trim()) throw new Error('请在微信设置填写 BreezeBlue Key');
+        const endpoint = serviceBase(base);
         assertActive(signal);
         const controller = new AbortController();
         const abort = () => controller.abort();
         signal?.addEventListener('abort', abort, { once: true });
         const timer = setTimeout(abort, 95000);
+        let checkingService = true;
+        const healthTimer = setTimeout(abort, 8000);
         try {
-            const response = await fetch(`${serviceBase(base)}/api/wechat-voice/${route}`, { method: body ? 'POST' : 'GET', headers: { 'xi-api-key': key.trim(), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: controller.signal, credentials: 'omit', redirect: 'error' });
+            // Check the fixed public marker before sending a Key to a mistyped/static endpoint.
+            const health = await fetch(`${endpoint}/api/wechat-voice/health`, { signal: controller.signal, credentials: 'omit', redirect: 'error' });
+            let info; try { info = await health.json(); } catch (_) {}
+            if (!health.ok || info?.ok !== true || info?.service !== 'rphub-wechat-voice') throw new Error('该地址没有运行 RP-Hub 语音转发服务，请检查地址和服务是否已启动');
+            clearTimeout(healthTimer); checkingService = false;
+            const response = await fetch(`${endpoint}/api/wechat-voice/${route}`, { method: body ? 'POST' : 'GET', headers: { 'xi-api-key': key.trim(), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: controller.signal, credentials: 'omit', redirect: 'error' });
             if (!response.ok) {
                 let error; try { error = await response.json(); } catch (_) {}
+                if (response.status === 404) throw new Error(route === 'voices' ? '此服务没有音色目录接口，请更新语音转发服务后再试' : (error?.error || '此服务没有语音合成接口，请更新语音转发服务'));
                 throw new Error(error?.error || `语音服务返回 HTTP ${response.status}`);
             }
-            if (!body) return await response.json();
+            if (!body) {
+                let catalog; try { catalog = await response.json(); } catch (_) {}
+                if (!Array.isArray(catalog?.voices)) throw new Error('服务返回的音色目录格式不正确，请检查转发服务版本');
+                return catalog;
+            }
             if (!/^audio\//i.test(response.headers.get('content-type') || '')) throw new Error('语音服务没有返回音频，请检查服务地址');
             const blob = await response.blob();
             if (!blob.size || blob.size > 8 * 1024 * 1024) throw new Error('语音文件为空或过大');
             assertActive(signal); return blob;
         } catch (error) {
             assertActive(signal);
-            if (controller.signal.aborted) throw new Error('语音生成超时，可手动重试');
+            if (controller.signal.aborted) throw new Error(checkingService ? '语音转发服务连接超时，请检查服务是否运行、HTTPS 地址和来源许可' : '语音生成超时，可手动重试');
             if (error instanceof TypeError) throw new Error('无法连接语音服务，请启动本机服务并检查微信设置中的服务地址');
             throw error;
-        } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
+        } finally { clearTimeout(timer); clearTimeout(healthTimer); signal?.removeEventListener('abort', abort); }
     }
     async function durationOf(blob) {
         const context = new (window.AudioContext || window.webkitAudioContext)();

@@ -2,6 +2,8 @@
 
 > 更新：2026-11-03。上游背景：[微信与 RP](./wechat-and-RP.md)、[单条消息编辑](./wechat-message-editing.md)。
 > 本轮目标：同一个人物根据当下关系、场景和情绪，在微信回复中自然穿插语音。保持既有微信样式，不引入组件库。
+> 后续修复：GitHub Pages 公共音色 404 的实际复现、成功读取与前端防误配置，见 [Pages 音色目录修复](./wechat-voice-pages-fix.md)。
+> 日常运行：用户已选择本机按需启动/停止，双击脚本与验证见 [本机语音运行交接](./wechat-voice-local.md)。
 
 ## 1. 当前实现
 
@@ -42,6 +44,8 @@ Cloudflare Tunnel 为这个**已经包含转发路由**的本机服务提供 HTT
 
 ## 3. 启动与配置
 
+继续使用现有 GitHub Pages 时，推荐双击根目录 `start-wechat-voice.cmd`，将其给出的 HTTPS 地址填入原页面微信设置；用完双击 `stop-wechat-voice.cmd`。脚本自动选择空闲端口并允许 Pages 来源，每次重启可能换地址。完整说明见 [本机语音运行交接](./wechat-voice-local.md)。下面保留直接运行服务的开发/诊断用法。
+
 需要 Node.js 20+，无需 npm install：
 
 ```powershell
@@ -57,7 +61,7 @@ node tools/wechat-voice-server.cjs
 4. 可选填写“说话习惯”，例如“像给熟悉的人留语音，不要播音腔”。
 5. 保存，然后正常聊天。Key、音色还没填齐时允许先保存，但不会向聊天模型开放语音能力。
 
-服务地址留空时，HTTP(S) 页面使用当前网站来源；`file://` 页面使用 `http://127.0.0.1:3000`。端口被占用时可改：
+服务地址留空时，`file://` 页面使用 `http://127.0.0.1:3000`，本机服务页面使用当前来源；GitHub Pages 会明确要求独立的 HTTPS 转发地址，其他来源先检查语音服务 health 标记，确认服务存在后才发送 Key。端口被占用时可改：
 
 ```powershell
 $env:VOICE_PORT = '3001'
@@ -83,9 +87,9 @@ node tools/wechat-voice-server.cjs
 
 多个来源用逗号分隔，必须是完整来源（协议、域名、端口），不是页面路径。
 
-项目实际 GitHub Pages 页面是 `https://wangwenxv.github.io/RP/`，其 Origin 为 `https://wangwenxv.github.io`，白名单不要带 `/RP/`。先把本次前端修改发布到 Pages，再在原页面的微信设置中填写正在运行的 HTTPS 转发服务来源。Pages 只能托管静态资源，不能执行 `tools/wechat-voice-server.cjs`；服务地址留空会请求 GitHub 上不存在的 `/api/wechat-voice/*` 路由。已有文字、表情、图片功能仍沿用原链路。2026-11-03 本轮核对时，线上 HTML 尚未加载新增语音脚本。
+项目实际 GitHub Pages 页面是 `https://wangwenxv.github.io/RP/`，其 Origin 为 `https://wangwenxv.github.io`，白名单不要带 `/RP/`。前端修改发布到 Pages 后，在原页面的微信设置中填写正在运行的 HTTPS 转发服务来源。Pages 只能托管静态资源，不能执行 `tools/wechat-voice-server.cjs`；旧版本空地址会请求 GitHub 上不存在的 `/api/wechat-voice/*` 路由，后续修复已提前拦截并解释所需配置。已有文字、表情、图片功能仍沿用原链路。2026-11-03 再次核对时线上已加载语音脚本，目录 404 原因和验证见上述修复文档。
 
-长期继续从 Pages 直接使用、又不想本机常驻 Node/Tunnel 时，需要另行部署固定 HTTPS 转发服务（例如云服务或 Cloudflare Worker）。本轮已完成本机转发与临时 Tunnel 验证，没有部署长期云端服务。
+用户已选择本机按需运行，无需常驻服务：只在需要新语音时启动 Node/Tunnel，用完停止，继续保留 Pages 页面。若未来要求本机关机后也可生成新语音，再部署固定 HTTPS 转发服务；本轮没有部署云端服务。
 
 **已有聊天记录属于原网页来源的 IndexedDB。** 从 file、localhost、线上网站换到临时 Tunnel 页面，记录不会自动搬过去，也不是原记录被删除。需要继续原有记录时，保留原页面，在那里配置语音转发地址。新建临时域名不宜当持久使用入口。
 
@@ -218,4 +222,4 @@ node tools/refactor/smoke-wechat-voice.cjs --live
 
 ## 9. 下一步
 
-先由用户选定角色音色，再用真实聊天模型观察安慰、打趣、解释、争执、安静场所、自然收尾等情境。优先调整“何时说、怎样说”，再考虑音色设计/克隆、多语言、audio tags 或用户录音。长期部署应使用固定 HTTPS 服务地址，避免临时 Tunnel 域名变化造成来源和浏览器数据分散。
+先由用户选定角色音色，再用真实聊天模型观察安慰、打趣、解释、争执、安静场所、自然收尾等情境。优先调整“何时说、怎样说”，再考虑音色设计/克隆、多语言、audio tags 或用户录音。日常按用户选择使用本机启停脚本，并始终保留原 Pages 聊天入口；Tunnel 地址仅作为语音转发配置。

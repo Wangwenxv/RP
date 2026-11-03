@@ -72,3 +72,38 @@ test('并发限制与客户端中止会传递到上游', async t => {
   assert.equal((await fetch(base + '/api/wechat-voice/synthesize', request())).status, 429);
   controller.abort(); await cancelled; await first;
 });
+
+function clientHarness(fetchImpl, origin = 'https://wangwenxv.github.io') {
+  const context = vm.createContext({ window: { location: { protocol: new URL(origin).protocol, origin } }, URL, AbortController, DOMException, Blob, TypeError, setTimeout, clearTimeout, fetch: fetchImpl });
+  vm.runInContext(fs.readFileSync(path.join(root, 'assets/js/wechat-voice.js'), 'utf8'), context);
+  return context.window.RPHubWeChatVoice;
+}
+test('GitHub Pages 空地址与官网地址会提前拦截，不向错误地址发送 Key', async () => {
+  let calls = 0;
+  const client = clientHarness(async () => { calls++; });
+  for (const value of ['', 'https://wangwenxv.github.io', 'https://api.breeze.blue', 'https://docs.breezeblue.ai']) {
+    await assert.rejects(client.request(value, 'fixture-key', 'voices'), /转发/);
+  }
+  assert.equal(calls, 0);
+  assert.equal(clientHarness(null, 'http://127.0.0.1:3000').serviceBase(''), 'http://127.0.0.1:3000');
+  assert.equal(client.serviceBase('https://voice.example/'), 'https://voice.example');
+});
+test('转发服务健康验证失败时只发无密钥探测，404/HTML/错误标记均有明确提示', async () => {
+  for (const response of [() => new Response('Not found', { status: 404 }), () => new Response('<html>website</html>'), () => Response.json({ ok: true, service: 'other' })]) {
+    const calls = [];
+    const client = clientHarness(async (url, options) => { calls.push({ url, options }); return response(); });
+    await assert.rejects(client.request('https://voice.example', 'fixture-key', 'voices'), /没有运行 RP-Hub 语音转发服务/);
+    assert.equal(calls.length, 1); assert.equal(calls[0].url, 'https://voice.example/api/wechat-voice/health');
+    assert.equal(calls[0].options.headers, undefined);
+  }
+});
+test('确认服务后才附带 Key 读取目录；拒绝错误目录结构', async () => {
+  for (const catalog of [{ voices: [{ voice_id: 'voc_test', name: '测试' }] }, { message: 'wrong' }]) {
+    const calls = [];
+    const client = clientHarness(async (url, options) => { calls.push({ url, options }); return Response.json(url.endsWith('/health') ? { ok: true, service: 'rphub-wechat-voice' } : catalog); });
+    if (catalog.voices) assert.equal((await client.request('https://voice.example', 'fixture-key', 'voices')).voices.length, 1);
+    else await assert.rejects(client.request('https://voice.example', 'fixture-key', 'voices'), /目录格式不正确/);
+    assert.equal(calls.length, 2); assert.equal(calls[0].options.headers, undefined);
+    assert.equal(calls[1].options.headers['xi-api-key'], 'fixture-key');
+  }
+});

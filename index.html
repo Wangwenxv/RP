@@ -3225,10 +3225,12 @@
                             <span>语音消息 <small>BreezeBlue · 中文</small></span>
                             <label class="wx-pick-item"><input type="checkbox" v-model="wechatVoiceDraft.enabled">允许对方自然穿插语音</label>
                             <small class="wx-hint">按场景和情绪决定，最多两条短语音；点击才播放。音色可以稍后再选，配置齐全后才启用。</small>
-                            <label class="wx-field"><span>语音服务地址</span><input v-model="wechatVoiceDraft.service" placeholder="留空使用当前网站；本地文件使用 localhost:3000" type="url"></label>
+                            <label class="wx-field"><span>语音转发服务地址</span><input v-model="wechatVoiceDraft.service" placeholder="https://你的语音转发服务域名" type="url"></label>
+                            <small class="wx-hint">在 GitHub Pages 使用时需填写独立的 HTTPS 转发地址；不是当前网页或 BreezeBlue 官网。通过本机语音服务打开页面时可留空。</small>
                             <label class="wx-field"><span>BreezeBlue Key</span><input v-model="wechatVoiceDraft.key" type="password" autocomplete="off" placeholder="brz_…（仅当前浏览器会话保存）"></label>
                             <label class="wx-field"><span>音色 ID</span><input v-model="wechatVoiceDraft.voiceId" placeholder="voc_…" maxlength="104"></label>
                             <button class="wx-ghost wx-ghost--full" @click="loadWechatVoiceCatalog" :disabled="wechatVoiceCatalogLoading">{{ wechatVoiceCatalogLoading ? '读取中…' : '读取中文公共音色（不生成音频）' }}</button>
+                            <p v-if="wechatVoiceCatalogStatus" class="wx-hint" role="status" aria-live="polite">{{ wechatVoiceCatalogStatus }}</p>
                             <label v-if="wechatVoiceCatalog.length" class="wx-field"><span>选择音色</span>
                                 <select v-model="wechatVoiceDraft.voiceId"><option value="">选择一个音色</option><option v-for="voice in wechatVoiceCatalog" :key="voice.voice_id" :value="voice.voice_id">{{ voice.name }} · {{ voice.gender === 'male' ? '男声' : voice.gender === 'female' ? '女声' : '中性' }}</option></select>
                             </label>
