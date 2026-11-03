@@ -3,6 +3,7 @@
 > 更新：2026-11-02。本文只描述当前实现与维护入口。
 > 方案与取舍见 [微信图片回复方案](./wechat-image-plan.md)；原有迭代细节见 [历史记录](./wechat-iteration-history.md)；全项目结构见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 > 2026-11-03 新增：微信气泡可以像 RP 消息一样单条编辑 / 复制 / 删除，见 [单条消息编辑交接](./wechat-message-editing.md)。
+> 2026-11-03 新增：BreezeBlue 语音留言、混排、播放与本机/Cloudflare 跨域转发，见 [语音接入交接](./wechat-voice.md)。本文原有“图片批次”机制已扩展为图片/语音共用；`tool_wechat` 仍只发文字和表情。
 
 ## 1. 当前能力
 

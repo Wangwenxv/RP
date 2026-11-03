@@ -37,6 +37,7 @@
             __s.wechatImagePreview.value = null;
         };
         __s.invalidateWechatMedia = () => {
+            __s.invalidateWechatVoice?.();
             __s.wechatMediaEpoch++; releaseUrls();
             __s.wechatMediaTasks.value = [];
             __s.showWechatMediaGallery.value = false;
@@ -45,7 +46,7 @@
         __s.loadWechatMediaTasks = async () => {
             const check = snapshotGuard(); const scopeId = scope();
             const saved = await getScopedStoredValue(tasksKey, scopeId); check();
-            __s.wechatMediaTasks.value = (Array.isArray(saved) ? saved : []).filter(task => task.scopeId === scopeId && task.status !== 'done').map(task => ({ ...task, status: 'failed', error: task.error || '上次图片发送未完成，可以重试' }));
+            __s.wechatMediaTasks.value = (Array.isArray(saved) ? saved : []).filter(task => task.scopeId === scopeId && task.status !== 'done').map(task => ({ ...task, status: 'failed', error: task.error || '上次消息发送未完成，可以重试' }));
         };
 
         const describe = item => M.imageRecordText(item);
@@ -293,32 +294,50 @@
             return { assetId: item.id, caption: item.caption, captionSource: item.captionSource, source: item.source, usage: intent.usage };
         };
         __s.prepareWechatReplyMedia = async (messages, signal, existingTask) => {
-            if (!messages.some(message => message.type === 'image_request')) return messages;
+            if (!messages.some(message => ['image_request', 'voice_request'].includes(message.type))) return messages;
             if (messages.filter(message => message.type === 'image_request').length > 1) throw new Error('一轮最多发送一张图片');
+            const hasVoice = messages.some(message => message.type === 'voice_request');
+            if (hasVoice) {
+                window.RPHubWeChatVoice.validateBatch(messages);
+                if (!__s.isWechatVoiceReady?.()) throw new Error('语音尚未配置，请在微信设置开启并填写 Key 和音色 ID');
+            }
             const check = snapshotGuard(signal); const scopeId = scope();
             const epoch = __s.wechatMediaEpoch;
             const taskList = __s.wechatMediaTasks.value;
             const task = existingTask || { id: `task-${crypto.randomUUID()}`, scopeId, messages: cloneForStorage(messages), delivered: 0, status: 'running', createdAt: Date.now() };
             if (!existingTask) __s.wechatMediaTasks.value.push(task);
+            if (hasVoice && !task.voiceConfig) task.voiceConfig = __s.getWechatVoiceConfig();
+            if (hasVoice && !task.voices) task.voices = {};
             task.status = 'running'; task.error = ''; await saveTasks(); check();
-            __s.wechatStatusText.value = '正在准备图片…';
+            __s.wechatStatusText.value = hasVoice ? '正在准备语音…' : '正在准备图片…';
             try {
                 const prepared = [];
                 for (let i = task.delivered; i < messages.length; i++) {
                     const message = messages[i];
+                    // A saved timeline item wins over a task checkpoint that was interrupted during persistence.
+                    if (__s.wechatTimeline.value.some(item => item.id === `wx-${task.id}-${i}`)) continue;
                     if (message.type === 'image_request' && task.media) {
                         // Restored tasks can outlive their files. Never send a cached ID as a successful image.
                         await library.read(task.media.assetId, false, signal); check();
                     }
+                    if (message.type === 'voice_request' && task.voices[i]) {
+                        await __s.readWechatVoice(task.voices[i], scopeId); check();
+                    }
                     const resolved = message.type === 'image_request'
                         ? { type: 'image', content: '', media: task.media || await resolveIntent(message.media, signal) }
-                        : message;
+                        : message.type === 'voice_request'
+                            ? { type: 'voice', content: message.content, voice: task.voices[i] || await __s.resolveWechatVoice(message, signal, task.voiceConfig) }
+                            : message;
                     check(); if (resolved.type === 'image') task.media = resolved.media;
+                    if (resolved.type === 'voice') task.voices[i] = resolved.voice;
+                    // Checkpoint each successful asset, so a later failure does not pay for it again.
+                    await saveTasks(); check();
                     prepared.push({ ...resolved, _mediaTaskId: task.id, _mediaTaskIndex: i });
                 }
+                if (!prepared.length) { task.status = 'done'; __s.wechatMediaTasks.value = taskList.filter(item => item.id !== task.id); }
                 await saveTasks(); check(); return prepared;
             } catch (error) {
-                task.status = 'failed'; task.error = error.name === 'AbortError' ? '图片发送已中止' : error.message;
+                task.status = 'failed'; task.error = error.name === 'AbortError' ? '消息发送已中止' : error.message;
                 if (epoch === __s.wechatMediaEpoch && scopeId === scope()) await saveTasks(scopeId, taskList).catch(() => {});
                 throw error;
             } finally { try { check(); __s.wechatStatusText.value = ''; } catch (_) {} }
@@ -340,7 +359,7 @@
                 const messages = await __s.prepareWechatReplyMedia(task.messages, controller.signal, task); check();
                 await __s.playWechatReply(messages, controller.signal, task.scopeId);
                 await __s.saveWechatTimelineNow();
-            } catch (error) { if (error.name !== 'AbortError') __s.showToast(`图片发送失败：${error.message}`, 'warning'); }
+            } catch (error) { if (error.name !== 'AbortError') __s.showToast(`消息发送失败：${error.message}`, 'warning'); }
             finally { if (__s.wechatAbortController === controller) { __s.wechatAbortController = null; __s.isWechatGenerating.value = false; __s.wechatTyping.value = false; __s.wechatStatusText.value = ''; } }
         };
         __s.dismissWechatMediaTask = async task => { if (__s.isWechatGenerating.value) return; __s.wechatMediaTasks.value = __s.wechatMediaTasks.value.filter(item => item.id !== task.id); await saveTasks(); };

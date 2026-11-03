@@ -2915,7 +2915,7 @@
                                 @change="handleWechatAvatarSelection(item.role === 'user' ? 'user' : 'peer', $event)">
                         </label>
                         <div class="wx-bubble"
-                            :class="{ sticker: item.type === 'sticker' && wechatEditingId !== item.id, image: item.type === 'image' && wechatEditingId !== item.id }">
+                            :class="{ sticker: item.type === 'sticker' && wechatEditingId !== item.id, image: item.type === 'image' && wechatEditingId !== item.id, voice: item.type === 'voice' }">
                             <div v-if="wechatEditingId === item.id" class="wx-edit">
                                 <textarea class="wx-edit-input" v-model="wechatEditDraft" rows="2"
                                     placeholder="修改这条消息…"
@@ -2930,7 +2930,23 @@
                                 </div>
                             </div>
                             <template v-else>
-                                <button v-if="item.type === 'image'" class="wx-photo-button" @click="viewWechatImage(item)" title="查看完整图片">
+                                <div v-if="item.type === 'voice'" class="wx-voice">
+                                    <button class="wx-voice-play" :class="{ playing: wechatVoicePlayingId === item.id }"
+                                        :style="{ width: Math.min(240, 110 + (item.voice?.duration || 0) * 4) + 'px' }"
+                                        :aria-label="wechatVoicePlayingId === item.id ? '停止语音' : '播放语音'" :aria-pressed="wechatVoicePlayingId === item.id"
+                                        @click="toggleWechatVoice(item)">
+                                        <svg class="wx-voice-icon" width="24" height="26" viewBox="0 0 24 26" fill="none" aria-hidden="true">
+                                            <circle cx="4" cy="13" r="2" fill="currentColor"/>
+                                            <path d="M9 8a7 7 0 0 1 0 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                                            <path d="M14 3a14 14 0 0 1 0 20" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                                        </svg>
+                                        <span>{{ wechatVoiceLoadingId === item.id ? '加载中…' : Math.ceil(item.voice?.duration || 0) + '″' }}</span>
+                                    </button>
+                                    <button class="wx-voice-transcribe" :aria-expanded="!!wechatVoiceExpanded[item.id]"
+                                        @click="wechatVoiceExpanded[item.id] = !wechatVoiceExpanded[item.id]">{{ wechatVoiceExpanded[item.id] ? '收起文字' : '转文字' }}</button>
+                                    <div v-if="wechatVoiceExpanded[item.id]" class="wx-voice-transcript">{{ item.content }}</div>
+                                </div>
+                                <button v-else-if="item.type === 'image'" class="wx-photo-button" @click="viewWechatImage(item)" title="查看完整图片">
                                     <img v-if="item.imageUrl" :src="item.imageUrl" :alt="item.media?.caption || '图片'" loading="lazy">
                                     <span v-else>图片加载中…</span>
                                 </button>
@@ -2948,9 +2964,13 @@
                     </div>
                 </template>
                 <div v-for="task in wechatMediaTasks.filter(t => t.status !== 'done')" :key="task.id" class="wx-media-task">
-                    <span>{{ task.error || '图片准备中…' }}</span>
-                    <button v-if="!isWechatGenerating" @click="retryWechatMediaTask(task)">重试图片</button>
+                    <span>{{ task.error || (task.voiceConfig ? '语音准备中…' : '图片准备中…') }}</span>
+                    <button v-if="!isWechatGenerating" @click="retryWechatMediaTask(task)">{{ task.voiceConfig ? '重试发送' : '重试图片' }}</button>
                     <button v-if="!isWechatGenerating" @click="dismissWechatMediaTask(task)">取消</button>
+                    <details v-if="task.voiceConfig && task.error" class="wx-voice-pending">
+                        <summary>查看待发送内容</summary>
+                        <p v-for="(message, i) in task.messages.slice(task.delivered)" :key="i">{{ message.type === 'voice_request' ? '[语音] ' : message.type === 'image_request' ? '[图片] ' : '' }}{{ message.content || '' }}</p>
+                    </details>
                 </div>
                 <div v-if="wechatTyping" class="wx-row wx-typing">
                     <img v-if="wechatAvatar" class="wx-avatar" :src="wechatAvatar">
@@ -3201,6 +3221,20 @@
                             <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageGenerationEnabled">允许按需生图（需已配置生图密钥）</label>
                             <p class="wx-hint">点击顶栏相册可查看素材、加入自己的照片；新图本轮完整识别，历史用短描述，细节按需查看。</p>
                         </div>
+                        <div class="wx-field wx-voice-settings">
+                            <span>语音消息 <small>BreezeBlue · 中文</small></span>
+                            <label class="wx-pick-item"><input type="checkbox" v-model="wechatVoiceDraft.enabled">允许对方自然穿插语音</label>
+                            <small class="wx-hint">按场景和情绪决定，最多两条短语音；点击才播放。音色可以稍后再选，配置齐全后才启用。</small>
+                            <label class="wx-field"><span>语音服务地址</span><input v-model="wechatVoiceDraft.service" placeholder="留空使用当前网站；本地文件使用 localhost:3000" type="url"></label>
+                            <label class="wx-field"><span>BreezeBlue Key</span><input v-model="wechatVoiceDraft.key" type="password" autocomplete="off" placeholder="brz_…（仅当前浏览器会话保存）"></label>
+                            <label class="wx-field"><span>音色 ID</span><input v-model="wechatVoiceDraft.voiceId" placeholder="voc_…" maxlength="104"></label>
+                            <button class="wx-ghost wx-ghost--full" @click="loadWechatVoiceCatalog" :disabled="wechatVoiceCatalogLoading">{{ wechatVoiceCatalogLoading ? '读取中…' : '读取中文公共音色（不生成音频）' }}</button>
+                            <label v-if="wechatVoiceCatalog.length" class="wx-field"><span>选择音色</span>
+                                <select v-model="wechatVoiceDraft.voiceId"><option value="">选择一个音色</option><option v-for="voice in wechatVoiceCatalog" :key="voice.voice_id" :value="voice.voice_id">{{ voice.name }} · {{ voice.gender === 'male' ? '男声' : voice.gender === 'female' ? '女声' : '中性' }}</option></select>
+                            </label>
+                            <label class="wx-field"><span>说话习惯 <small>可留空，按角色和场景调整</small></span><textarea v-model="wechatVoiceDraft.style" rows="2" maxlength="300" placeholder="例如：语气随意，像给熟悉的人留语音，不要播音腔"></textarea></label>
+                            <small class="wx-hint">合成会消耗服务额度。Key 仅保留在当前标签页会话，不会写入角色卡。</small>
+                        </div>
                         <div class="wx-field">
                             <span>表情包库 <small>全局共用，{{ wechatStickers.length }} 个</small></span>
                             <button class="wx-primary" @click="openStickerStore">从开源表情包导入</button>
@@ -3243,6 +3277,7 @@
         document.write('<script src="assets/js/core-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/api-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/wechat-voice.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-protocol.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/emoji-catalog.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/data-services.js?v=' + new Date().getTime() + '"><\/script>');
@@ -3275,6 +3310,7 @@
         document.write('<script src="assets/js/app/24-late-helpers.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/25-wechat.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/27-wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/28-wechat-voice.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/26-recap.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app.js?v=' + new Date().getTime() + '"><\/script>');
     </script>

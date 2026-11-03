@@ -259,6 +259,7 @@
 
             if (!char?.uuid) return;
             await __s.deleteWechatMediaOwner?.(char.uuid);
+            await __s.deleteWechatVoiceOwner?.(char.uuid);
             __s.ensureGlobalUiTemplates().forEach(template => {
                 if (!template.runtimeByCharacter) return;
                 [char.uuid, ...allBranchScopeIds].forEach(scopeId => delete template.runtimeByCharacter[scopeId]);

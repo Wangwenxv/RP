@@ -32,7 +32,7 @@
 - silence.reason：topic_closed（话题结束）、upset（矛盾/赌气）、busy（忙碌）、sleeping（睡眠）、low_energy（没精力）、prefer_offline（不想文字沟通）、unavailable（无法通信）、unknown（原因不明）。
 - silence.summary：至多 80 字的一句简短状态说明，记录原因或变化，不写分析过程，不编造事实。
 - silence.awareness：read（看到内容）、noticed（只感知到提示，未读内容）、unseen（内容和提示都未感知）、unknown（不确定）。按人物当时的真实感知选择，不能因为模型看到了上下文就填 read。
-- type 可以是 "text"（文字）、"sticker"（表情）；下方提供图片能力时，也可以是 "image_request"（请求取得图片后发送）。
+- type 可以是 "text"（文字）、"sticker"（表情）；下方提供图片或语音能力时，也可以是 "image_request" 或 "voice_request"（资源取得后发送）。
 - text 的 content：一条短消息。
 - sticker 的 content：默认是一个最贴切的 emoji（如 😼 🙄 😂 👍 🤔）；若下方出现了【表情包库】目录，则只能从目录里挑一个名字，原样照抄，其余情况一律用 emoji。
 
@@ -153,6 +153,7 @@
         if (extra.scene) parts.push(`【当前场景】\n${extra.scene}`);
         if (extra.extraRules) parts.push(extra.extraRules);
         if (extra.mediaPrompt) parts.push(extra.mediaPrompt);
+        if (extra.voicePrompt) parts.push(extra.voicePrompt);
         parts.push(REPLY_DECISION_RULE);
         // 长期记忆：RP 侧压缩出来的历轮总结，补上「摘要只覆盖最近几轮」之外的旧账。
         if (extra.memory) parts.push(`【长期记忆】\n${String(extra.memory).trim()}`);
@@ -258,6 +259,13 @@
                 continue;
             }
             if (typeof item !== 'object') continue;
+
+            if (['voice_request', 'voice'].includes(String(item.type).toLowerCase())) {
+                if (!window.RPHubWeChatVoice) throw new Error('语音模块尚未加载');
+                out.push(window.RPHubWeChatVoice.normalizeIntent(item));
+                window.RPHubWeChatVoice.validateBatch(out);
+                continue;
+            }
 
             if (['image_request', 'image'].includes(String(item.type).toLowerCase())) {
                 if (!window.RPHubWeChatMedia || item.type !== 'image_request') throw new Error('图片回复必须使用有效的 image_request');

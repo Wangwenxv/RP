@@ -652,6 +652,7 @@
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
                 stickerCatalog: buildWechatStickerCatalog(),
                 mediaPrompt,
+                voicePrompt: __s.buildWechatVoicePrompt?.(),
                 extraRules: `【跨场景连续性】微信是同一段 roleplay 剧情中人物的通信渠道。`
                     + `继承已建立的称呼、关系、默契，也继承最新已发生剧情中的处境、行动、身体状态、手机/通信条件和情绪。`
                     + `打开微信面板或收到消息不会让人物离开原场景、解除限制或自动读到消息；不要重来一遍自我介绍。`,
@@ -759,6 +760,8 @@
                     if (item.content) parts.push({ type: 'image_url', image_url: { url: item.content } });
                     // content 是数组，拼不了，也就不参与合并
                     entries.push({ message: { role: 'user', content: parts.length ? parts : '(图片)' }, mergeable: false, wxSeen });
+                } else if (item.type === 'voice') {
+                    entries.push({ message: { role: item.role, content: __s.wechatVoiceRecordText?.(item) || `[语音] ${item.content}` }, mergeable: true, wxSeen });
                 } else if (item.type === 'sticker') {
                     // 标成 [表情 名字]：名字本身可能是句话（如「安排-被安排的明明白白」），
                     // 不标的话模型会把它当普通文字读、进而幻觉。与 RP 方向 buildWechatRpSegment 一致。
@@ -841,7 +844,7 @@
             const playerName = String(__s.user?.name || '').trim() || '对方';
             const lines = items.map((item) => {
                 const name = item.role === 'user' ? playerName : who;
-                const text = item.type === 'image' ? (__s.wechatImageRecordText?.(item) || '[图片]') : item.type === 'sticker' ? `[表情 ${item.content}]` : item.content;
+                const text = item.type === 'image' ? (__s.wechatImageRecordText?.(item) || '[图片]') : item.type === 'voice' ? (__s.wechatVoiceRecordText?.(item) || `[语音] ${item.content}`) : item.type === 'sticker' ? `[表情 ${item.content}]` : item.content;
                 const silent = item.role === 'user' && item.replyDecision === 'silent';
                 return `${name}：${text}` + (silent
                     ? `\n【未发送消息的行为记录】${who}此轮未发微信；${wxProtocol.describeSilence(item.replySilence)}。这是内部状态，不是微信正文。` : '');
@@ -1047,6 +1050,7 @@
             wechatSettingsDraft.stickerRate = wxProtocol.normalizeStickerTier(char.wechatStickerRate);
             wechatSettingsDraft.imageSearchEnabled = char.wechatImageSearchEnabled === true;
             wechatSettingsDraft.imageGenerationEnabled = char.wechatImageGenerationEnabled === true;
+            __s.openWechatVoiceSettings?.();
             showWechatSettings.value = true;
         };
         __s.openWechatSettings = openWechatSettings;
@@ -1054,6 +1058,7 @@
         const saveWechatSettings = async () => {
             const char = __s.currentCharacter.value;
             if (!char) return;
+            if (__s.saveWechatVoiceSettings && !__s.saveWechatVoiceSettings()) return;
             char.wechatPeerName = String(wechatSettingsDraft.peerName || '').trim();
             char.wechatRelation = String(wechatSettingsDraft.relation || '').trim();
             char.wechatScene = String(wechatSettingsDraft.scene || '').trim();
@@ -1700,6 +1705,7 @@
 
         const playWechatReply = async (messages, signal, scopeId) => {
             const epoch = __s.wechatMediaEpoch;
+            stopWechatStatusTicker();
             for (let index = 0; index < messages.length; index++) {
                 if (signal?.aborted || wechatScopeId() !== scopeId || epoch !== __s.wechatMediaEpoch) return;
                 const message = messages[index];
@@ -1709,13 +1715,14 @@
                     wechatStatusText.value = '对方正在输入…';
                     scrollWechatToBottom();
                 }
+                wechatStatusText.value = message.type === 'voice' ? '对方正在录音…' : '对方正在输入…';
                 await sleep(typingDuration(message));
                 if (signal?.aborted || wechatScopeId() !== scopeId || epoch !== __s.wechatMediaEpoch) return;
                 wechatTyping.value = false;
                 wechatStatusText.value = '';
                 const itemId = message._mediaTaskId ? `wx-${message._mediaTaskId}-${message._mediaTaskIndex}` : null;
                 if (!itemId || !wechatTimeline.value.some(item => item.id === itemId)) {
-                    pushWechatItem({ ...(itemId ? { id: itemId } : {}), channel: 'wechat', role: 'assistant', type: message.type, content: message.content || '', ...(message.media ? { media: message.media } : {}) });
+                    pushWechatItem({ ...(itemId ? { id: itemId } : {}), channel: 'wechat', role: 'assistant', type: message.type, content: message.content || '', ...(message.media ? { media: message.media } : {}), ...(message.voice ? { voice: message.voice } : {}) });
                 }
                 if (message._mediaTaskId) {
                     await saveWechatTimelineNow(scopeId);
@@ -1849,7 +1856,7 @@
         const deliverActiveWechatMessage = (content) => {
             const text = String(content || '').trim();
             if (!text) throw new Error('微信消息内容为空');
-            if (wxProtocol.parseReply(text).some(message => message.type === 'image_request')) throw new Error('RP 主动微信工具目前只发送文字或表情，图片请在微信回合发送');
+            if (wxProtocol.parseReply(text).some(message => ['image_request', 'voice_request'].includes(message.type))) throw new Error('RP 主动微信工具目前只发送文字或表情，图片与语音请在微信回合发送');
             __s.pendingActiveWechatMessages.push(text);
             return { delivered: true, content: text };
         };
@@ -1867,7 +1874,7 @@
                 if (text) parsed.push(...wxProtocol.parseReply(text));
             }
             const messages = wxProtocol.applyStickerPolicy(parsed, tier);
-            if (messages.some(message => message.type === 'image_request')) throw new Error('RP 主动微信不支持图片意图');
+            if (messages.some(message => ['image_request', 'voice_request'].includes(message.type))) throw new Error('RP 主动微信不支持图片或语音意图');
             if (!messages.length) return;
             const controller = new AbortController();
             __s.wechatAbortController = controller;
@@ -1938,6 +1945,7 @@
                     type: item.type,
                     content: item.content,
                     media: item.media,
+                    voice: item.voice,
                     imageUrl: item.type === 'image' ? (item.media?.assetId ? __s.wechatMediaUrls?.[item.media.assetId] || '' : item.content) : '',
                     // 命中表情包库则带上图，前端据此渲染成图；未命中为 null，回退文本。
                     stickerImage: item.type === 'sticker' ? stickerImageOf(item.content) : null

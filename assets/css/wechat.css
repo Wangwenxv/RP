@@ -35,6 +35,22 @@
     box-sizing: border-box;
 }
 
+/* Voice notes reuse the existing bubble and palette. */
+.wx-voice { max-width: 260px; }
+.wx-voice-play { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 36px; max-width: 100%; padding: 0; background: transparent; border: 0; color: var(--wx-text); cursor: pointer; text-align: left; }
+.wx-voice-transcribe { display: block; padding: 4px 0 0; border: 0; background: transparent; color: var(--wx-muted); font-size: 11px; cursor: pointer; }
+.wx-voice-transcript { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--wx-line); font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wx-voice-play:focus-visible, .wx-voice-transcribe:focus-visible { outline: 2px solid var(--wx-accent); outline-offset: 3px; }
+.wx-voice-play.playing .wx-voice-icon path { animation: wx-voice-wave 1s ease-in-out infinite; }
+.wx-voice-play.playing .wx-voice-icon path:last-child { animation-delay: .2s; }
+@keyframes wx-voice-wave { 50% { opacity: .2; } }
+@media (prefers-reduced-motion: reduce) { .wx-voice-play.playing .wx-voice-icon path { animation: none; } }
+.wx-voice-settings .wx-field { margin-top: 10px; }
+.wx-voice-settings select { width: 100%; padding: 9px; border: 1px solid var(--wx-line); border-radius: 6px; background: var(--wx-bubble-peer); color: var(--wx-text); }
+.wx-voice-pending { margin-top: 8px; color: var(--wx-text); overflow-wrap: anywhere; }
+.wx-voice-pending summary { color: var(--wx-muted); cursor: pointer; }
+.wx-voice-pending p { margin: 6px 0; }
+
 /* 内部纵向布局容器：限制宽度居中，像手机屏 */
 .wx-root>.wx-bar,
 .wx-root>.wx-chat,

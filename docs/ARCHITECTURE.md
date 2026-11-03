@@ -3,6 +3,7 @@
 > 新人第一读。本文说明整体架构、文件职责、数据流与扩展挂点。
 > 模块级地图见 [MODULES.md](./MODULES.md)；本次 app.js 拆分的过程与工具见 [tools/refactor/README.md](../tools/refactor/README.md)。
 > 微信当前协议、图片资源和验证以 [微信与 RP 实现交接](./wechat-and-RP.md) 为准；下文保留架构演进说明。
+> 2026-11-03 语音扩展：新增独立 `wechat-voice.js`、app 模块 `28-wechat-voice.js` 和可选 Node 转发服务。setup 尾部顺序为 25 → 27 → 28 → 26，详细方案与启动见 [微信语音交接](./wechat-voice.md)。
 
 ## 1. 项目形态
 

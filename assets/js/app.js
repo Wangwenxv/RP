@@ -263,6 +263,7 @@ const app = createApp({
         __sections.lateHelpers(__s);
         __sections.wechat(__s);
         __sections.wechatMedia(__s);
+        __sections.wechatVoice(__s);
         __sections.recap(__s);
 
         return {
@@ -659,6 +660,14 @@ const app = createApp({
             wechatMediaDraft: __s.wechatMediaDraft,
             wechatMediaUrls: __s.wechatMediaUrls,
             wechatMediaTasks: __s.wechatMediaTasks,
+            wechatVoiceDraft: __s.wechatVoiceDraft,
+            wechatVoiceCatalog: __s.wechatVoiceCatalog,
+            wechatVoiceCatalogLoading: __s.wechatVoiceCatalogLoading,
+            wechatVoicePlayingId: __s.wechatVoicePlayingId,
+            wechatVoiceLoadingId: __s.wechatVoiceLoadingId,
+            wechatVoiceExpanded: __s.wechatVoiceExpanded,
+            loadWechatVoiceCatalog: __s.loadWechatVoiceCatalog,
+            toggleWechatVoice: __s.toggleWechatVoice,
             wechatImagePreview: __s.wechatImagePreview,
             isWechatMediaPreparing: __s.isWechatMediaPreparing,
             openWechatMediaGallery: __s.openWechatMediaGallery,
