@@ -86,6 +86,14 @@
         __s.wechatTyping = wechatTyping;
         const wechatStatusText = ref('');
         __s.wechatStatusText = wechatStatusText;
+        // 单条消息的编辑/删除（对齐 RP 消息的编辑体验）：editingId 是正在编辑的消息 id，
+        // menu 是气泡「···」弹出的操作菜单（固定定位，避免被滚动容器裁掉）。
+        const wechatEditingId = ref('');
+        __s.wechatEditingId = wechatEditingId;
+        const wechatEditDraft = ref('');
+        __s.wechatEditDraft = wechatEditDraft;
+        const wechatMenu = reactive({ open: false, id: '', left: 0, top: 0 });
+        __s.wechatMenu = wechatMenu;
         const wechatSettingsDraft = reactive({
             peerName: '',
             relation: '',
@@ -966,6 +974,8 @@
             wechatInput.value = '';
             wechatPendingImage.value = null;
             wechatStatusText.value = '';
+            cancelWechatEdit();
+            closeWechatMessageMenu();
             showWechatPanel.value = true;
             try { await __s.loadWechatMediaTasks?.(); }
             catch (error) { if (error.name === 'AbortError') return; throw error; }
@@ -984,6 +994,8 @@
             showWechatStickers.value = false;
             showStickerManager.value = false;
             showStickerStore.value = false;
+            cancelWechatEdit();
+            closeWechatMessageMenu();
             __s.invalidateWechatMedia?.();
             wechatTyping.value = false;
             wechatStatusText.value = '';
@@ -1063,10 +1075,181 @@
         };
         __s.saveWechatSettings = saveWechatSettings;
 
+        // ---- 单条消息：编辑 / 复制 / 删除 ----
+        //
+        // 微信消息是「已经发出去的那句话」，改动会同时影响三处消费者：气泡、下一轮请求、
+        // 以及 RP 回灌摘要。它们都从 wechat_timeline 现算，所以这里只改时间线里的那一条：
+        // - 编辑：只开放文字消息（图片/表情没有可改的文本）。改完清掉该条的「空回」标记，
+        //   让这条重新算进未回复条数，用户可以主动要求对方回应。
+        // - 删除：整条移出时间线；前情提要的覆盖范围是前缀条数，删到覆盖段内要同步减一。
+        // - 生成中不允许改动：这一轮的请求体、播放队列和落库都以当时的时间线为准。
+        const findWechatMessage = (messageId) => wechatTimeline.value.find(
+            (item) => item.channel === 'wechat' && item.id === String(messageId || '')
+        ) || null;
+        __s.findWechatMessage = findWechatMessage;
+
+        const canEditWechatMessage = (item) => !!item && item.type === 'text' && item.role !== 'system';
+        __s.canEditWechatMessage = canEditWechatMessage;
+
+        const wechatMenuTarget = computed(() => (wechatMenu.open ? findWechatMessage(wechatMenu.id) : null));
+        __s.wechatMenuTarget = wechatMenuTarget;
+
+        const wechatMenuStyle = computed(() => ({
+            left: `${wechatMenu.left}px`,
+            top: `${wechatMenu.top}px`
+        }));
+        __s.wechatMenuStyle = wechatMenuStyle;
+
+        const closeWechatMessageMenu = () => {
+            wechatMenu.open = false;
+            wechatMenu.id = '';
+        };
+        __s.closeWechatMessageMenu = closeWechatMessageMenu;
+
+        /** 菜单贴着「···」按钮弹，并按视口夹住，避免贴边溢出或落到屏幕外。 */
+        const openWechatMessageMenu = (item, event) => {
+            if (!item?.id) return;
+            if (wechatMenu.open && wechatMenu.id === item.id) { closeWechatMessageMenu(); return; }
+            const rect = event?.currentTarget?.getBoundingClientRect?.();
+            const menuWidth = 132;
+            const menuHeight = (canEditWechatMessage(item) ? 3 : 1) * 38 + 12;
+            const vw = window.innerWidth || 360;
+            const vh = window.innerHeight || 640;
+            let left = rect ? (item.role === 'user' ? rect.left - menuWidth - 6 : rect.right + 6) : 8;
+            left = Math.max(8, Math.min(left, vw - menuWidth - 8));
+            let top = rect ? rect.top - 6 : 8;
+            top = Math.max(8, Math.min(top, vh - menuHeight - 8));
+            wechatMenu.left = Math.round(left);
+            wechatMenu.top = Math.round(top);
+            wechatMenu.id = item.id;
+            wechatMenu.open = true;
+        };
+        __s.openWechatMessageMenu = openWechatMessageMenu;
+
+        /** 编辑框随内容长高，最长到视口 42%，再长就内部滚动。 */
+        const autoResizeWechatEdit = (event) => {
+            const el = event?.target || document.querySelector('.wx-root .wx-edit-input');
+            if (!el) return;
+            el.style.height = 'auto';
+            el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.42))}px`;
+        };
+        __s.autoResizeWechatEdit = autoResizeWechatEdit;
+
+        const cancelWechatEdit = () => {
+            wechatEditingId.value = '';
+            wechatEditDraft.value = '';
+        };
+        __s.cancelWechatEdit = cancelWechatEdit;
+
+        const startWechatEdit = async (messageId) => {
+            if (isWechatGenerating.value) {
+                __s.showToast('对方正在回复，等这条发完再改', 'info');
+                return;
+            }
+            const item = findWechatMessage(messageId);
+            if (!canEditWechatMessage(item)) return;
+            closeWechatMessageMenu();
+            wechatEditingId.value = item.id;
+            wechatEditDraft.value = String(item.content || '');
+            await nextTick();
+            const el = document.querySelector('.wx-root .wx-edit-input');
+            if (!el) return;
+            autoResizeWechatEdit({ target: el });
+            el.focus();
+            try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) { /* 部分浏览器不支持 */ }
+        };
+        __s.startWechatEdit = startWechatEdit;
+
+        const saveWechatEdit = async (messageId) => {
+            const id = String(messageId || wechatEditingId.value || '');
+            if (!id) return;
+            const item = findWechatMessage(id);
+            if (!item) { cancelWechatEdit(); return; }
+            const nextContent = String(wechatEditDraft.value || '').trim();
+            if (!nextContent) {
+                __s.showToast('消息不能为空，不想留可以删除这一条', 'warning');
+                return;
+            }
+            if (nextContent === String(item.content || '').trim()) {
+                cancelWechatEdit();
+                __s.showToast('消息未改动', 'success');
+                return;
+            }
+            item.content = nextContent;
+            item.editedAt = Date.now();
+            // 改过的用户消息不再是「原来那句话」：作废当时的空回结论，让它重新算作待回复。
+            if (item.role === 'user') {
+                delete item.replyDecision;
+                delete item.replySilence;
+            }
+            cancelWechatEdit();
+            try {
+                await saveWechatTimelineNow();
+            } catch (error) {
+                console.error('保存微信消息修改失败:', error);
+                __s.showToast('修改保存失败，请稍后重试', 'error');
+                return;
+            }
+            __s.showToast('消息已修改', 'success');
+        };
+        __s.saveWechatEdit = saveWechatEdit;
+
+        const copyWechatMessageText = async (item) => {
+            const text = String(item?.content || '');
+            if (!text) return;
+            closeWechatMessageMenu();
+            try {
+                await navigator.clipboard.writeText(text);
+                __s.showToast('已复制', 'success');
+            } catch (error) {
+                console.error('复制微信消息失败:', error);
+                __s.showToast('复制失败', 'error');
+            }
+        };
+        __s.copyWechatMessageText = copyWechatMessageText;
+
+        const deleteWechatMessage = (target) => {
+            const id = String((typeof target === 'string' ? target : target?.id) || '');
+            const item = findWechatMessage(id);
+            if (!item) return;
+            if (isWechatGenerating.value) {
+                __s.showToast('对方正在回复，等这条发完再删', 'info');
+                return;
+            }
+            closeWechatMessageMenu();
+            const prompt = item.type === 'image'
+                ? '确定删除这张图片消息吗？聊天记录和后续上下文里都不会再有它（相册里的原图保留）。'
+                : '确定删除这条消息吗？聊天记录和后续上下文里都不会再有它。';
+            __s.confirmAction(prompt, async () => {
+                const wechatItems = wechatTimeline.value.filter(
+                    (entry) => entry.channel === 'wechat' && entry.role !== 'system'
+                );
+                const indexInWechat = wechatItems.findIndex((entry) => entry.id === id);
+                wechatTimeline.value = wechatTimeline.value.filter(
+                    (entry) => !(entry.channel === 'wechat' && entry.id === id)
+                );
+                if (wechatEditingId.value === id) cancelWechatEdit();
+                try {
+                    if (indexInWechat >= 0) await __s.adjustRecapWechatCoverageAfterDelete?.(indexInWechat);
+                    await saveWechatTimelineNow();
+                } catch (error) {
+                    console.error('删除微信消息失败:', error);
+                    __s.showToast('删除保存失败，请稍后重试', 'error');
+                    return;
+                }
+                // 被删的若是图片，顺手释放它的 object URL（原图仍在资源库里）。
+                __s.loadVisibleWechatImages?.();
+                __s.showToast('消息已删除', 'success');
+            });
+        };
+        __s.deleteWechatMessage = deleteWechatMessage;
+
         const clearWechatTimeline = () => {
             __s.confirmAction('确定要清空与该角色的全部微信聊天记录吗？此操作无法撤销。', async () => {
                 stopWechatGeneration();
                 __s.invalidateWechatMedia?.();
+                cancelWechatEdit();
+                closeWechatMessageMenu();
                 wechatTimeline.value = wechatTimeline.value.filter((item) => item.channel !== 'wechat');
                 resetRpRecordCursor();
                 try {

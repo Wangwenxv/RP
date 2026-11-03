@@ -240,6 +240,162 @@
     background: #fff;
 }
 
+/* ---------- 单条消息操作（编辑 / 复制 / 删除）---------- */
+/* 「···」是 .wx-row 的第三个 flex 项：row 时在气泡右侧、row-reverse（me）时在气泡左侧，
+   正好落在气泡外侧，不用额外包一层容器，原有气泡宽度与箭头都保持不变。 */
+.wx-tools {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    padding-top: 2px;
+}
+
+.wx-tool-btn {
+    width: 26px;
+    height: 26px;
+    padding: 0 0 4px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #8d9199;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 1px;
+    cursor: pointer;
+    opacity: .42;
+    transition: opacity .15s, background .15s;
+}
+
+.wx-tool-btn:hover,
+.wx-tool-btn.on {
+    opacity: 1;
+    background: rgba(0, 0, 0, .06);
+}
+
+/* 触屏没有 hover：常显到可点，但不抢气泡的视觉重心 */
+@media (hover: none) {
+    .wx-tool-btn { opacity: .8; }
+}
+
+.wx-msg-menu-mask {
+    position: fixed;
+    inset: 0;
+    /* 覆盖层 55 / 抽屉 58：菜单浮在聊天上、抽屉下 */
+    z-index: 56;
+    background: transparent;
+}
+
+.wx-msg-menu {
+    position: fixed;
+    z-index: 57;
+    width: 132px;
+    padding: 6px;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .18);
+    display: flex;
+    flex-direction: column;
+    animation: wx-menu-in .12s ease-out;
+}
+
+.wx-msg-menu button {
+    border: 0;
+    background: transparent;
+    padding: 9px 12px;
+    border-radius: 6px;
+    text-align: left;
+    font-size: 14px;
+    color: var(--wx-text);
+    cursor: pointer;
+}
+
+.wx-msg-menu button:hover { background: rgba(0, 0, 0, .05); }
+
+.wx-msg-menu button.wx-msg-menu-danger { color: #e5484d; }
+
+.wx-msg-menu button.wx-msg-menu-danger:hover { background: rgba(229, 72, 77, .08); }
+
+@keyframes wx-menu-in {
+    from { opacity: 0; transform: scale(.94); }
+    to   { opacity: 1; transform: none; }
+}
+
+/* 编辑态：气泡撑满可用宽度，去掉箭头和小尾巴形状 */
+.wx-row.is-editing {
+    align-items: stretch;
+}
+
+.wx-row.is-editing .wx-bubble,
+.wx-row.me.is-editing .wx-bubble {
+    flex: 1 1 auto;
+    max-width: 100%;
+    min-width: 0;
+    width: 100%;
+    background: #fff;
+}
+
+.wx-row.is-editing .wx-bubble::after { display: none; }
+
+.wx-edit {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+}
+
+.wx-edit-input {
+    width: 100%;
+    min-height: 38px;
+    max-height: 42vh;
+    padding: 2px;
+    border: 0;
+    outline: none;
+    resize: none;
+    overflow-y: auto;
+    background: transparent;
+    color: var(--wx-text);
+    font: inherit;
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+.wx-edit-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.wx-edit-hint {
+    margin-right: auto;
+    font-size: 11px;
+    color: var(--wx-muted);
+}
+
+.wx-edit-btn {
+    padding: 5px 14px;
+    border: 1px solid var(--wx-line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--wx-text);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.wx-edit-btn:hover { background: #f4f4f4; }
+
+.wx-edit-btn--primary {
+    border-color: var(--wx-accent);
+    background: var(--wx-accent);
+    color: #fff;
+}
+
+.wx-edit-btn--primary:hover { background: #06ad56; }
+
+@media (max-width: 640px) {
+    .wx-edit-hint { display: none; }
+}
+
 @keyframes wx-pop {
     from { opacity: 0; transform: translateY(6px) scale(.96); }
     to   { opacity: 1; transform: none; }

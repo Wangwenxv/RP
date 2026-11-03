@@ -31,7 +31,7 @@
 | 22 | `22-character-io.js` | ~407 | 世界书归一化/导入导出、角色卡/聊天记录/PNG 导出、预设增删改 |
 | 23 | `23-lifecycle.js` | ~289 | 启动 watcher、`onMounted` 初始化全流程、`onBeforeUnmount` 清理（无导出成员，纯副作用） |
 | 24 | `24-late-helpers.js` | ~195 | 流式正文截断 `processMainContent`、用户人设切换、记忆展示与统计滑块 |
-| 25 | `25-wechat.js` | ~1800 | **微信子系统**：统一时间线、进出微信、上下文、空回、工具续写、回复播放与作用域防护 |
+| 25 | `25-wechat.js` | ~1900 | **微信子系统**：统一时间线、进出微信、上下文、空回、工具续写、回复播放、单条消息编辑/删除与作用域防护 |
 | 26 | `26-recap.js` | — | RP/微信交错前情提要、覆盖边界、保留原文及短图片描述 |
 | 27 | `27-wechat-media.js` | ~350 | 按本轮触发图片说明、相册、图片取得与显示、新图视觉输入、加载/查看工具、图片任务和可选来源适配 |
 
@@ -52,6 +52,8 @@
 - **API 请求/密钥/提供商**：`02`（选择与归一化）+ `api-utils.js`（请求实现）
 - **微信子系统**：状态/时间线/生成 `25` + 协议 `wechat-protocol.js` + UI/样式 `index.html` 的 `.wx-root` / `wechat.css`；
   角色开关字段在 `20`-crud 归一化、编辑器开关在 `ui-components.js`；RP 侧衔接注入在 `15`（`appendWechatDigestToMessages`）。
+- **微信单条消息编辑/删除**：`25`（`startWechatEdit` / `saveWechatEdit` / `deleteWechatMessage`）+ `26`（删除后修正提要覆盖计数）
+  + `index.html` 的 `.wx-tools` / `.wx-msg-menu` + `wechat.css`。说明见 [单条消息编辑交接](./wechat-message-editing.md)。
 - **移动端键盘/视口**：`01`
 - **启动初始化顺序**：`23`（`onMounted`：`loadData` → 恢复上次角色 → `fetchModels` → 状态检查 → 视口监听 → 全局点击收起）
 

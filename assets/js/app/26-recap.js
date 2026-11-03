@@ -131,6 +131,31 @@
             .filter(item => item.channel === 'wechat' && item.role !== 'system').length;
 
         /**
+         * 删掉一条微信消息后修正提要的覆盖计数。
+         *
+         * coversWechatCount 是「压缩那一刻覆盖了前 N 条微信」的前缀计数，不是 id 列表。
+         * 删掉覆盖段内的一条，实际条数就比计数少：下一次压缩会把已经进过摘要的内容再算
+         * 一遍，保留窗口（最近 keepWechatCount 条）也会整体后移一位。这里按「被删消息
+         * 在非 system 微信序列里的下标」判断是否落在覆盖段内，落在就减一。
+         */
+        const adjustRecapWechatCoverageAfterDelete = async (indexInWechat) => {
+            const recap = storyRecap.value;
+            if (!recap) return false;
+            const covered = Math.max(0, Number(recap.coversWechatCount) || 0);
+            const index = Math.floor(Number(indexInWechat));
+            if (!covered || !Number.isFinite(index) || index < 0 || index >= covered) return false;
+            storyRecap.value = { ...recap, coversWechatCount: covered - 1 };
+            try {
+                await saveStoryRecapNow();
+            } catch (error) {
+                console.error('修正前情提要微信覆盖数失败:', error);
+                return false;
+            }
+            return true;
+        };
+        __s.adjustRecapWechatCoverageAfterDelete = adjustRecapWechatCoverageAfterDelete;
+
+        /**
          * 压缩覆盖范围：**全部** RP 轮次 + 全部微信消息。
          * 覆盖点仍是「压缩那一刻的全部内容」；摘要下面另按 keepRPTurns/keepWechatCount 贴回最新原文，
          * 但那是注入层的保留窗口，不改覆盖计数。之后只追加新内容。

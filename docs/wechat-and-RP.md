@@ -2,6 +2,7 @@
 
 > 更新：2026-11-02。本文只描述当前实现与维护入口。
 > 方案与取舍见 [微信图片回复方案](./wechat-image-plan.md)；原有迭代细节见 [历史记录](./wechat-iteration-history.md)；全项目结构见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+> 2026-11-03 新增：微信气泡可以像 RP 消息一样单条编辑 / 复制 / 删除，见 [单条消息编辑交接](./wechat-message-editing.md)。
 
 ## 1. 当前能力
 
@@ -17,6 +18,8 @@
 - 图片任务持久化与独立重试；失败、中止、切 scope 不会伪装成成功图片或主动空回。
 
 用户认可素材承担约束较少、不露脸的虚构场景配图；不能把不匹配素材、陌生人自拍或来源元数据变成既定剧情事实。
+
+单条消息可编辑/删除：文字气泡可改文案、复制、删除，图片与表情只能删除；改动写回 `wechat_timeline`，气泡、下一轮请求、RP 回灌摘要同时生效。生成中禁止改动；编辑用户消息会作废当时的空回标记，但不会自动请求回复。细节见 [单条消息编辑交接](./wechat-message-editing.md)。
 
 ## 2. 使用入口与模型要求
 
@@ -138,6 +141,8 @@ Blob 使用 `{clone:false}` 路径，避免 `unwrapForStorage` 将其当普通�
 
 默认显示最近 80 条微信消息，可查看更早记录；气泡用缩略图，最多同时读取 4 张，点击读取大图。关闭、切 scope 或图片离开显示窗口时撤销 object URL。二进制保存在资源库，缩短模型上下文不会删除原图。删除角色会回收该角色的图片索引、原图与缩略图，保留其他角色资源和内置素材。
 
+单条编辑只改 `wechat_timeline` 里的那一条并立即落盘：被编辑的消息带 `editedAt`；编辑用户消息会清掉该条的 `replyDecision`/`replySilence`。删除单条消息不回收资源库原图，只移除消息记录；若删除落在前情提要的覆盖段内，`coversWechatCount` 同步减一（见 [单条消息编辑交接](./wechat-message-editing.md)）。
+
 图片批次准备成功后才播放依赖文字。失败有独立重试；任务消息用稳定 ID 去重，重试只补未完成部分，并重新确认缓存资源存在。刷新发现未完成任务时显示失败/重试状态，scope 与请求代次共同阻止过期任务落入新会话。
 
 备份导出与分支继承沿用原行为，当前没有新增完整微信图片备份流程；不要把 RP chat 导出当作包含全部微信图片的备份。
@@ -149,6 +154,7 @@ node --test tools/refactor/test-wechat-silence.cjs tools/refactor/test-wechat-me
 node tools/refactor/smoke-wechat.cjs
 node tools/refactor/smoke-wechat-stickers.cjs
 node tools/refactor/smoke-wechat-media.cjs
+node tools/refactor/smoke-wechat-edit.cjs
 git diff --check
 ```
 
