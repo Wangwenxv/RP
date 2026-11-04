@@ -264,6 +264,7 @@ const app = createApp({
         __sections.wechat(__s);
         __sections.wechatMedia(__s);
         __sections.wechatVoice(__s);
+        __sections.wechatDocuments(__s);
         __sections.recap(__s);
 
         return {
@@ -645,6 +646,27 @@ const app = createApp({
             // 微信子系统（25-wechat.js）
             showWechatPanel: __s.showWechatPanel, showWechatSettings: __s.showWechatSettings,
             wechatInput: __s.wechatInput, wechatPendingImage: __s.wechatPendingImage,
+            wechatPendingDocument: __s.wechatPendingDocument,
+            isWechatDocumentPreparing: __s.isWechatDocumentPreparing,
+            wechatDocumentProgress: __s.wechatDocumentProgress,
+            wechatDocumentPreview: __s.wechatDocumentPreview,
+            handleWechatDocumentSelection: __s.handleWechatDocumentSelection,
+            handleWechatAttachmentSelection: __s.handleWechatAttachmentSelection,
+            wechatAttachmentDragging: __s.wechatAttachmentDragging,
+            handleWechatDragEnter: __s.handleWechatDragEnter,
+            handleWechatDragOver: __s.handleWechatDragOver,
+            handleWechatDragLeave: __s.handleWechatDragLeave,
+            handleWechatDrop: __s.handleWechatDrop,
+            resetWechatAttachmentDrag: __s.resetWechatAttachmentDrag,
+            resizeWechatComposer: __s.resizeWechatComposer,
+            handleWechatComposerKeydown: __s.handleWechatComposerKeydown,
+            wechatDocumentSize: __s.wechatDocumentSize,
+            wechatDocumentType: __s.wechatDocumentType,
+            removeWechatPendingDocument: __s.removeWechatPendingDocument,
+            viewWechatDocument: __s.viewWechatDocument,
+            closeWechatDocumentPreview: __s.closeWechatDocumentPreview,
+            downloadWechatDocument: __s.downloadWechatDocument,
+            removeWechatDocument: __s.removeWechatDocument,
             isWechatGenerating: __s.isWechatGenerating, wechatTyping: __s.wechatTyping,
             wechatStatusText: __s.wechatStatusText, wechatSettingsDraft: __s.wechatSettingsDraft,
             wechatPeerName: __s.wechatPeerName, wechatAvatar: __s.wechatAvatar,

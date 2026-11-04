@@ -2880,25 +2880,47 @@
         <retry-confirm-modal :state="globalConfirmModal"></retry-confirm-modal>
 
         <!-- ============ 微信子系统：全屏覆盖层（独立 App 观感） ============ -->
-        <div v-if="showWechatPanel && currentCharacter" class="wx-root">
+        <div v-if="showWechatPanel && currentCharacter" class="wx-root"
+            :class="{ 'is-file-dragging': wechatAttachmentDragging }"
+            @dragenter="handleWechatDragEnter" @dragover="handleWechatDragOver"
+            @dragleave="handleWechatDragLeave" @drop="handleWechatDrop" @keydown.esc="resetWechatAttachmentDrag">
+            <svg class="wx-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <symbol id="wx-i-back" viewBox="0 0 24 24"><path d="m14 5-7 7 7 7"/></symbol>
+                <symbol id="wx-i-album" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 6-6 4 4 3-3 5 5"/></symbol>
+                <symbol id="wx-i-settings" viewBox="0 0 24 24"><path d="m9 3-.5 2-2 1-2-.5-2 3 1.5 1.5v3L2.5 15l2 3 2-.5 2 1 .5 2h4l.5-2 2-1 2 .5 2-3-1.5-1.5v-3L20.5 9l-2-3-2 .5-2-1L14 3Z"/><circle cx="11.5" cy="12" r="3"/></symbol>
+                <symbol id="wx-i-trash" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></symbol>
+                <symbol id="wx-i-clip" viewBox="0 0 24 24"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2M6 15l7-7"/></symbol>
+                <symbol id="wx-i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14a4 4 0 0 0 8 0M8.5 8.5h.01m7 0h.01"/></symbol>
+                <symbol id="wx-i-file" viewBox="0 0 24 24"><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10Zm0 0v7h7M8 14h8m-8 3h5"/></symbol>
+                <symbol id="wx-i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+                <symbol id="wx-i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5"/></symbol>
+                <symbol id="wx-i-next" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+            </svg>
             <header class="wx-bar">
                 <div class="wx-bar-left">
-                    <button class="wx-back" @click="closeWechat" title="返回">‹</button>
+                    <button class="wx-back" @click="closeWechat" title="返回" aria-label="返回 RP"><svg class="wx-icon"><use href="#wx-i-back"/></svg></button>
+                    <div class="wx-peer-avatar" aria-hidden="true"><img v-if="wechatAvatar" :src="wechatAvatar" alt=""><span v-else>{{ (wechatPeerName || '?').charAt(0) }}</span></div>
                     <div class="wx-peer">
                         <span class="wx-peer-name">{{ wechatPeerName }}</span>
-                        <span class="wx-peer-status">{{ wechatStatusText }}</span>
+                        <span class="wx-peer-status">{{ wechatStatusText || '微信聊天' }}</span>
                     </div>
                 </div>
                 <div class="wx-bar-right">
-                    <button class="wx-icon-btn" @click="openWechatMediaGallery" title="相册">▧</button>
-                    <button class="wx-icon-btn" @click="openWechatSettings" title="设置">⚙</button>
-                    <button class="wx-icon-btn" @click="clearWechatTimeline" title="清空记录">🗑</button>
+                    <button class="wx-icon-btn" @click="openWechatMediaGallery" title="相册" aria-label="相册"><svg class="wx-icon"><use href="#wx-i-album"/></svg></button>
+                    <button class="wx-icon-btn" @click="openWechatSettings" title="设置" aria-label="微信设置"><svg class="wx-icon"><use href="#wx-i-settings"/></svg></button>
+                    <button class="wx-icon-btn wx-clear" @click="clearWechatTimeline" title="清空记录" aria-label="清空微信记录"><svg class="wx-icon"><use href="#wx-i-trash"/></svg></button>
                 </div>
             </header>
 
             <main id="wechat-chat-scroll" class="wx-chat"
                 @click="showWechatSettings = false; closeWechatMessageMenu()"
                 @scroll.passive="closeWechatMessageMenu">
+                <div v-if="!wechatTimeline.some(m => m.channel === 'wechat' && m.role !== 'system') && !wechatTyping" class="wx-empty">
+                    <div class="wx-empty-avatar"><img v-if="wechatAvatar" :src="wechatAvatar" alt=""><span v-else>{{ (wechatPeerName || '?').charAt(0) }}</span></div>
+                    <h2>和{{ wechatPeerName }}聊聊吧</h2>
+                    <p>一句近况，一张照片，或一本想分享的小说。</p>
+                    <span class="wx-empty-attachment"><svg class="wx-icon"><use href="#wx-i-clip"/></svg>从下方添加附件<span class="wx-desktop-only">，也可以直接拖入</span></span>
+                </div>
                 <button v-if="wechatTimeline.filter(m => m.channel === 'wechat').length > wechatDisplayLimit"
                     class="wx-more-images" @click="showOlderWechatImages">查看更早的消息</button>
                 <template v-for="item in wechatDisplayItems" :key="item.id">
@@ -2915,7 +2937,7 @@
                                 @change="handleWechatAvatarSelection(item.role === 'user' ? 'user' : 'peer', $event)">
                         </label>
                         <div class="wx-bubble"
-                            :class="{ sticker: item.type === 'sticker' && wechatEditingId !== item.id, image: item.type === 'image' && wechatEditingId !== item.id, voice: item.type === 'voice' }">
+                            :class="{ sticker: item.type === 'sticker' && wechatEditingId !== item.id, image: item.type === 'image' && wechatEditingId !== item.id, voice: item.type === 'voice', document: item.type === 'document' }">
                             <div v-if="wechatEditingId === item.id" class="wx-edit">
                                 <textarea class="wx-edit-input" v-model="wechatEditDraft" rows="2"
                                     placeholder="修改这条消息…"
@@ -2930,7 +2952,12 @@
                                 </div>
                             </div>
                             <template v-else>
-                                <div v-if="item.type === 'voice'" class="wx-voice">
+                                <button v-if="item.type === 'document'" class="wx-document-card" @click="viewWechatDocument(item)" title="打开文件">
+                                    <span class="wx-document-icon" aria-hidden="true"><svg class="wx-icon"><use href="#wx-i-file"/></svg><span>{{ wechatDocumentType(item.document) }}</span></span>
+                                    <span class="wx-document-info"><strong>{{ item.document?.name || '文件' }}</strong><small>{{ wechatDocumentSize(item.document?.bytes) }}<span>文本文件</span></small></span>
+                                    <svg class="wx-icon wx-document-open" aria-hidden="true"><use href="#wx-i-next"/></svg>
+                                </button>
+                                <div v-else-if="item.type === 'voice'" class="wx-voice">
                                     <button class="wx-voice-play" :class="{ playing: wechatVoicePlayingId === item.id }"
                                         :style="{ width: Math.min(240, 110 + (item.voice?.duration || 0) * 4) + 'px' }"
                                         :aria-label="wechatVoicePlayingId === item.id ? '停止语音' : '播放语音'" :aria-pressed="wechatVoicePlayingId === item.id"
@@ -2993,6 +3020,12 @@
             </div>
 
             <footer class="wx-composer">
+                <div v-if="isWechatDocumentPreparing" class="wx-document-pending wx-document-progress" role="status"><span class="wx-progress-dot"></span>{{ wechatDocumentProgress }}</div>
+                <div v-if="wechatPendingDocument" class="wx-document-pending">
+                    <span class="wx-pending-file-icon"><svg class="wx-icon"><use href="#wx-i-file"/></svg></span>
+                    <span class="wx-pending-file-info"><strong>{{ wechatPendingDocument.name }}</strong><small>{{ wechatDocumentSize(wechatPendingDocument.bytes) }} · 待发送</small></span>
+                    <button class="wx-icon-btn" @click="removeWechatPendingDocument" aria-label="移除待发送文件"><svg class="wx-icon"><use href="#wx-i-close"/></svg></button>
+                </div>
                 <div v-if="wechatPendingImage" class="wx-pending">
                     <div class="wx-pending-item">
                         <img :src="wechatPendingImage" alt="待发送图片">
@@ -3005,24 +3038,36 @@
                     </button>
                 </div>
                 <div class="wx-composer-row">
-                    <label class="wx-icon-btn wx-attach" title="发送图片">📎
-                        <input type="file" accept="image/*" class="wx-file-hidden"
-                            @change="handleWechatImageSelection">
+                    <label class="wx-icon-btn wx-attach" title="发送图片或文本文件" tabindex="0" role="button" aria-label="添加附件"
+                        @keydown.enter.prevent="$event.currentTarget.querySelector('input').click()"
+                        @keydown.space.prevent="$event.currentTarget.querySelector('input').click()"><svg class="wx-icon"><use href="#wx-i-clip"/></svg>
+                        <input type="file" accept="image/*,.txt,.md,.markdown,.log,.csv,.tsv" class="wx-file-hidden"
+                            @change="handleWechatAttachmentSelection" :disabled="isWechatGenerating || isWechatDocumentPreparing || isWechatMediaPreparing" aria-label="选择图片或文本文件">
                     </label>
-                    <button class="wx-icon-btn wx-sticker-btn" title="表情包"
-                        @click="openWechatStickers">😀</button>
-                    <textarea v-model="wechatInput" rows="1" class="wx-input" placeholder="发消息…（可粘贴图片）"
+                    <button class="wx-icon-btn wx-sticker-btn" title="表情包" aria-label="选择表情包"
+                        @click="openWechatStickers"><svg class="wx-icon"><use href="#wx-i-smile"/></svg></button>
+                    <textarea v-model="wechatInput" rows="1" class="wx-input" placeholder="发消息…" aria-label="微信消息"
+                        @input="resizeWechatComposer" @compositionend="resizeWechatComposer"
                         @paste="handleWechatPaste"
-                        @keydown.enter.exact.prevent="sendWechatMessage"></textarea>
+                        @keydown="handleWechatComposerKeydown"></textarea>
                     <button class="wx-burst-toggle" :class="{ on: wechatBurstMode }"
+                        :aria-pressed="wechatBurstMode"
                         :title="wechatBurstMode ? '连发中：发送只落气泡，攒够点右侧让对方回复' : '开启连发：你可以一条条发完再让对方回复'"
-                        @click="wechatBurstMode = !wechatBurstMode">连发</button>
+                        @click="wechatBurstMode = !wechatBurstMode"><span class="wx-burst-indicator"></span>连发</button>
                     <button v-if="!isWechatGenerating" class="wx-send"
-                        :disabled="isWechatMediaPreparing || (!wechatInput.trim() && !wechatPendingImage)"
+                        :disabled="isWechatMediaPreparing || isWechatDocumentPreparing || (!wechatInput.trim() && !wechatPendingImage && !wechatPendingDocument)"
                         @click="sendWechatMessage">发送</button>
                     <button v-else class="wx-send wx-send--stop" @click="stopWechatGeneration">停止</button>
                 </div>
+                <div class="wx-composer-help"><span>{{ wechatBurstMode ? '连发已开启 · 发完后再让对方回复' : '图片和文本文件，都可以拖到这里' }}</span><span><kbd>Enter</kbd> 发送 · <kbd>Shift Enter</kbd> 换行</span></div>
             </footer>
+            <div v-if="wechatAttachmentDragging" class="wx-drop-mask" aria-live="polite">
+                <div class="wx-drop-zone">
+                    <svg class="wx-icon wx-drop-icon"><use href="#wx-i-upload"/></svg>
+                    <strong>{{ isWechatGenerating || isWechatDocumentPreparing || isWechatMediaPreparing ? '正在处理消息' : '松手，添加到这段聊天' }}</strong>
+                    <span>{{ isWechatGenerating || isWechatDocumentPreparing || isWechatMediaPreparing ? '完成后再拖入附件' : '图片或文本文件 · 添加后由你确认发送' }}</span>
+                </div>
+            </div>
 
             <div v-if="showWechatStickers" class="wx-drawer-mask wx-drawer-mask--center" @click.self="showWechatStickers = false">
                 <div class="wx-modal">
@@ -3265,6 +3310,19 @@
                     </label>
                 </section>
             </div>
+            <div v-if="wechatDocumentPreview" class="wx-drawer-mask wx-drawer-mask--center" @click.self="closeWechatDocumentPreview">
+                <section class="wx-modal wx-document-preview" role="dialog" aria-modal="true" aria-label="文件预览">
+                    <header class="wx-media-header"><div><span class="wx-document-eyebrow">{{ wechatDocumentType(wechatDocumentPreview.doc) }} · {{ wechatDocumentSize(wechatDocumentPreview.doc.bytes) }}</span><strong>{{ wechatDocumentPreview.doc.name }}</strong></div><button class="wx-icon-btn" @click="closeWechatDocumentPreview" aria-label="关闭文件"><svg class="wx-icon"><use href="#wx-i-close"/></svg></button></header>
+                    <p class="wx-hint wx-document-position">第 {{ Math.floor(wechatDocumentPreview.start / 2) + 1 }} / {{ Math.ceil(wechatDocumentPreview.doc.chunkCount / 2) }} 页 <span>{{ wechatDocumentPreview.readThrough >= wechatDocumentPreview.doc.chunkCount ? '已整理全文' : wechatDocumentPreview.readThrough ? '已整理 ' + Math.round(wechatDocumentPreview.readThrough / wechatDocumentPreview.doc.chunkCount * 100) + '%' : '尚未整理' }}</span></p>
+                    <pre class="wx-document-text">{{ wechatDocumentPreview.text }}</pre>
+                    <div class="wx-document-actions">
+                        <button class="wx-ghost" :disabled="wechatDocumentPreview.start === 0" @click="viewWechatDocument(wechatDocumentPreview.item, Math.max(0, wechatDocumentPreview.start - 2))">上一页</button>
+                        <button class="wx-ghost" :disabled="wechatDocumentPreview.next === null" @click="viewWechatDocument(wechatDocumentPreview.item, wechatDocumentPreview.next)">下一页</button>
+                        <button class="wx-ghost" @click="downloadWechatDocument(wechatDocumentPreview.item)">下载原文件</button>
+                        <button class="wx-ghost wx-document-remove" :disabled="isWechatGenerating" @click="removeWechatDocument(wechatDocumentPreview.item)">移除附件</button>
+                    </div>
+                </section>
+            </div>
             <div v-if="wechatImagePreview" class="wx-drawer-mask wx-drawer-mask--center wx-media-preview" @click.self="wechatImagePreview = null">
                 <section class="wx-modal"><header class="wx-media-header"><strong>图片</strong><button class="wx-icon-btn" @click="wechatImagePreview = null" aria-label="关闭图片">×</button></header>
                     <img :src="wechatImagePreview.url" :alt="wechatImagePreview.caption"><p>{{ wechatImagePreview.caption }}</p>
@@ -3279,6 +3337,7 @@
         document.write('<script src="assets/js/core-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/api-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/wechat-documents.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-voice.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-protocol.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/emoji-catalog.js?v=' + new Date().getTime() + '"><\/script>');
@@ -3313,6 +3372,7 @@
         document.write('<script src="assets/js/app/25-wechat.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/27-wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/28-wechat-voice.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/29-wechat-documents.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/26-recap.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app.js?v=' + new Date().getTime() + '"><\/script>');
     </script>

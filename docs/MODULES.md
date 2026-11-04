@@ -1,7 +1,7 @@
 # App 模块地图（assets/js/app/）
 
 > 01~24 号模块由原 `app.js` 的 `setup()`（661 条顶层语句、662 个声明）机械拆分而来，行为与原文件完全一致；
-> 25 号为微信、26 号为前情提要、27 号为微信图片。脚本按序号加载；setup 末段按 25 → 27 → 26 初始化。
+> 25 号为微信、26 号为前情提要、27 号为图片、28 号为语音、29 号为文档。setup 末段按 25 → 27 → 28 → 29 → 26 初始化。
 > 每个文件头部注释标明了它来自原文件的哪几行。加载顺序 = 文件序号 = 原声明顺序。
 > 约定见 [ARCHITECTURE.md](./ARCHITECTURE.md) §3（`__s` 共享上下文）。
 
@@ -35,6 +35,7 @@
 | 26 | `26-recap.js` | — | RP/微信交错前情提要、覆盖边界、保留原文及短图片描述 |
 | 27 | `27-wechat-media.js` | ~350 | 按本轮触发图片说明、相册、图片取得与显示、新图视觉输入、加载/查看工具、图片任务和可选来源适配 |
 | 28 | `28-wechat-voice.js` | — | BreezeBlue 设置/目录、语音合成、单一播放器与作用域校验；批次复用 `27`，详见 [语音交接](./wechat-voice.md) |
+| 29 | `29-wechat-documents.js` | — | 文本附件、scope 校验、搜索/翻页工具、隔离读者续读、预览下载与资源回收；新增附件拖入/输入框适配，详见 [文档交接](./wechat-documents.md) 与 [界面交接](./wechat-layout-and-drop.md) |
 
 > 注：行数为约数（含镜像赋值与文件头注释）。23 号模块没有顶层声明（只有 `watch` / `onMounted` / `onBeforeUnmount` 三条副作用语句），这是正常的。
 > 微信的当前协议和维护入口见 [实现交接](./wechat-and-RP.md)。`wechat-media.js` 是独立资源服务，不属于 app 模块；图片二进制不进入历史文本。
@@ -55,6 +56,7 @@
   角色开关字段在 `20`-crud 归一化、编辑器开关在 `ui-components.js`；RP 侧衔接注入在 `15`（`appendWechatDigestToMessages`）。
 - **微信单条消息编辑/删除**：`25`（`startWechatEdit` / `saveWechatEdit` / `deleteWechatMessage`）+ `26`（删除后修正提要覆盖计数）
   + `index.html` 的 `.wx-tools` / `.wx-msg-menu` + `wechat.css`。说明见 [单条消息编辑交接](./wechat-message-editing.md)。
+- **微信文档阅读**：`29`（上传/工具/隔离读者）+ `wechat-documents.js`（分块/检索/资源库）+ `25`（消息与工具续写）；说明见 [长文档交接](./wechat-documents.md)。
 - **移动端键盘/视口**：`01`
 - **启动初始化顺序**：`23`（`onMounted`：`loadData` → 恢复上次角色 → `fetchModels` → 状态检查 → 视口监听 → 全局点击收起）
 

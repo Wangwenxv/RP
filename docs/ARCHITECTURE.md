@@ -1,5 +1,7 @@
 # RP-Hub 架构交接文档
 
+> 2026-11-04 文档附件扩展：新增独立资源服务 `wechat-documents.js` 与 app 模块 `29-wechat-documents.js`。setup 尾部顺序为 25 → 27 → 28 → 29 → 26；文本原文独立分块，微信/RP/前情提要只带引用。完整设计与维护入口见 [微信长文档阅读交接](./wechat-documents.md)。
+
 > 新人第一读。本文说明整体架构、文件职责、数据流与扩展挂点。
 > 模块级地图见 [MODULES.md](./MODULES.md)；本次 app.js 拆分的过程与工具见 [tools/refactor/README.md](../tools/refactor/README.md)。
 > 微信当前协议、图片资源和验证以 [微信与 RP 实现交接](./wechat-and-RP.md) 为准；下文保留架构演进说明。

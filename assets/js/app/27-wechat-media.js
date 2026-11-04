@@ -38,6 +38,7 @@
         };
         __s.invalidateWechatMedia = () => {
             __s.invalidateWechatVoice?.();
+            __s.invalidateWechatDocuments?.();
             __s.wechatMediaEpoch++; releaseUrls();
             __s.wechatMediaTasks.value = [];
             __s.showWechatMediaGallery.value = false;

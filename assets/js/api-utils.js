@@ -278,6 +278,7 @@
                 if (logResponse) rawResponse = text;
             }, body: {
                 model: options.model, messages: options.messages, temperature: options.temperature,
+                ...(Number.isInteger(options.maxTokens) && options.maxTokens > 0 ? { max_tokens: options.maxTokens } : {}),
                 ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
                 ...(tools.length ? {
                     tools,

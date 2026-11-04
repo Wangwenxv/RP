@@ -221,7 +221,8 @@
                         const scopeId = __s.getStoryBranchScopeId(char.uuid, target.id);
                         await Promise.all([
                             deleteScopedStoredValue('chat', scopeId),
-                            deleteScopedStoredValue('classic_memories', scopeId)
+                            deleteScopedStoredValue('classic_memories', scopeId),
+                            __s.deleteWechatDocumentScope?.(scopeId)
                         ]);
                         __s.getUiTemplatesForRuntime(char).forEach(template => {
                             if (!template.runtimeByCharacter) return;
