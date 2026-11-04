@@ -86,6 +86,38 @@
         __s.wechatTyping = wechatTyping;
         const wechatStatusText = ref('');
         __s.wechatStatusText = wechatStatusText;
+        // Transient system activity, separate from character typing and the timeline.
+        const wechatActivity = ref(null);
+        __s.wechatActivity = wechatActivity;
+        let activityTimer = null, activityReporter = null;
+        const clearWechatActivity = () => {
+            if (activityTimer !== null) clearInterval(activityTimer);
+            activityTimer = null;
+            activityReporter = null;
+            wechatActivity.value = null;
+        };
+        const startWechatActivity = signal => {
+            clearWechatActivity();
+            const targetScope = wechatScopeId(), epoch = __s.wechatMediaEpoch, startedAt = Date.now();
+            const report = (update = {}) => {
+                if (activityReporter !== report || signal.aborted || wechatScopeId() !== targetScope || epoch !== __s.wechatMediaEpoch) return;
+                const { modelRequest, toolCall, ...fields } = update;
+                const previous = wechatActivity.value || { modelRequests: 0, toolCalls: 0 };
+                const scroll = document.getElementById('wechat-chat-scroll');
+                const keepBottom = Object.keys(fields).length && scroll && scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop < 48;
+                wechatActivity.value = { ...previous, ...fields,
+                    modelRequests: previous.modelRequests + (modelRequest ? 1 : 0),
+                    toolCalls: previous.toolCalls + (toolCall ? 1 : 0),
+                    seconds: Math.floor((Date.now() - startedAt) / 1000) };
+                if (keepBottom) nextTick(() => {
+                    if (activityReporter === report && !signal.aborted) scrollWechatToBottom();
+                });
+            };
+            activityReporter = report;
+            report({ title: '正在准备回复', detail: '系统处理中，可随时停止', completed: null, total: null });
+            activityTimer = setInterval(() => report(), 1000);
+            return report;
+        };
         // 单条消息的编辑/删除（对齐 RP 消息的编辑体验）：editingId 是正在编辑的消息 id，
         // menu 是气泡「···」弹出的操作菜单（固定定位，避免被滚动容器裁掉）。
         const wechatEditingId = ref('');
@@ -991,6 +1023,7 @@
         __s.openWechat = openWechat;
 
         const closeWechat = async () => {
+            clearWechatActivity();
             if (isWechatGenerating.value) {
                 __s.wechatAbortController?.abort();
             }
@@ -1651,7 +1684,7 @@
         __s.importStickerStoreCategory = importStickerStoreCategory;
 
         // ---- 生成 ----
-        const requestWechatReply = async (signal) => {
+        const requestWechatReply = async (signal, report) => {
             const model = __s.settings.model;
             const epoch = __s.wechatMediaEpoch;
             const assertRequest = () => { if (signal.aborted || epoch !== __s.wechatMediaEpoch) throw new DOMException('请求已取消', 'AbortError'); };
@@ -1675,6 +1708,8 @@
             // Existing image-only turns retain their limit; attachments add four bounded tools.
             const maxRounds = documentTools.length ? 8 : 4;
             for (let round = 0; round < maxRounds; round++) {
+                report({ title: round ? '正在整理回复' : '正在等待模型回复',
+                    detail: round ? '工具结果已返回，模型正在处理' : '模型正在处理本轮消息', completed: null, total: null, modelRequest: true });
                 result = await __s.requestTrackedChatCompletion({ model, messages, ...(tools.length ? { tools } : {}), temperature: 0.95, stream: true, signal }, 'chat');
                 assertRequest();
                 if (['length', 'content_filter'].includes(result?.finishReason)) break;
@@ -1691,8 +1726,12 @@
                     let viewed;
                     const loading = call.function.name === 'tool_load_image_sending';
                     const reading = documentTools.some(tool => tool.function.name === call.function.name);
-                    try { viewed = reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget) : loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal); }
-                    catch (error) { assertRequest(); viewed = { content: reading
+                    const title = { tool_list_documents: '正在查找历史文件', tool_search_document: '正在搜索文档',
+                        tool_read_document: '正在读取原文', tool_document_reader: '正在准备长文阅读',
+                        tool_load_image_sending: '正在加载图片素材', tool_view_image: '正在查看历史图片' }[call.function.name];
+                    report({ title, detail: '工具处理中', completed: null, total: null, toolCall: true });
+                    try { viewed = reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget, report) : loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal, report); }
+                    catch (error) { assertRequest(); report({ notice: reading ? '本次文件处理失败；已保存的阅读进度保留' : '本次图片工具失败，正在等待模型处理' }); viewed = { content: reading
                         ? `文件阅读失败：${error.message}。没有取得此次资料，不得假装读过；已成功的阅读进度保留，可以重试。`
                         : loading
                         ? `发图能力加载失败：${error.message}。没有取得可用素材目录，不得编造资源 ID。可以只发文字或按原决策空回。`
@@ -1773,6 +1812,7 @@
             // 本轮实际处理到的用户消息。空回只标记它，失败/中止不能吞掉待处理消息。
             const lastUserItem = [...timeline].reverse().find(item => item.channel === 'wechat' && item.role === 'user');
             const cfg = wechatSpeedConfig();
+            const report = startWechatActivity(signal);
 
             // 模型决策不等于人物已读/正在打字；确认有消息要发之后才显示输入状态。
             wechatTyping.value = false;
@@ -1781,7 +1821,7 @@
                 await sleep(rand(cfg.read[0], cfg.read[1]));
                 if (signal.aborted || wechatScopeId() !== scopeId) return;
                 scrollWechatToBottom();
-                const reply = await requestWechatReply(signal);
+                const reply = await requestWechatReply(signal, report);
                 if (signal.aborted || wechatScopeId() !== scopeId) return;
                 stopWechatStatusTicker();
                 if (reply.silent) {
@@ -1791,8 +1831,10 @@
                     }
                     return;
                 }
+                report({ title: '正在准备发送内容', detail: '模型回复已返回', completed: null, total: null });
                 const prepared = __s.prepareWechatReplyMedia ? await __s.prepareWechatReplyMedia(reply.messages, signal) : reply.messages;
                 if (signal.aborted || wechatScopeId() !== scopeId) return;
+                clearWechatActivity();
                 wechatTyping.value = true;
                 startWechatStatusTicker();
                 scrollWechatToBottom();
@@ -1804,6 +1846,7 @@
             } finally {
                 // 停止后可能已开始新请求，旧请求的收尾不能清掉新请求的状态。
                 if (__s.wechatAbortController === controller) {
+                    clearWechatActivity();
                     wechatTyping.value = false;
                     wechatStatusText.value = '';
                     stopWechatStatusTicker();
@@ -1855,6 +1898,7 @@
 
         const stopWechatGeneration = () => {
             __s.wechatAbortController?.abort();
+            clearWechatActivity();
             stopWechatStatusTicker();
             wechatTyping.value = false;
             wechatStatusText.value = '';

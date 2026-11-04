@@ -58,6 +58,16 @@
 .wx-voice-pending p { margin: 6px 0; }
 
 /* Text files reuse the established WeChat palette. */
+.wx-activity { margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--wx-line); border-radius: 10px; background: var(--wx-bg); font-size: 12px; overflow-wrap: anywhere; }
+.wx-activity-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.wx-activity-heading strong { min-width: 0; font-weight: 500; }
+.wx-activity-detail { margin-top: 4px; color: var(--wx-muted); }
+.wx-activity-meta { margin-top: 6px; color: var(--wx-muted); font-family: var(--wx-utility-font); font-size: 11px; }
+.wx-activity-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; color: var(--wx-muted); }
+.wx-activity-progress progress { width: 140px; max-width: 100%; height: 6px; border: 0; border-radius: 3px; overflow: hidden; background: var(--wx-line); accent-color: var(--wx-accent); }
+.wx-activity-progress progress::-webkit-progress-bar { background: var(--wx-line); }
+.wx-activity-progress progress::-webkit-progress-value { background: var(--wx-accent); }
+.wx-activity-progress progress::-moz-progress-bar { background: var(--wx-accent); }
 .wx-document-card { display: flex; align-items: center; gap: 14px; width: 300px; max-width: 100%; padding: 2px; border: 0; background: transparent; color: var(--wx-text); text-align: left; white-space: normal; cursor: pointer; }
 .wx-document-info { flex: 1; min-width: 0; }
 .wx-document-card strong { display: block; font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }

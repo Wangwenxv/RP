@@ -1,6 +1,8 @@
 # RP-Hub 架构交接文档
 
-> 2026-11-04 文档附件扩展：新增独立资源服务 `wechat-documents.js` 与 app 模块 `29-wechat-documents.js`。setup 尾部顺序为 25 → 27 → 28 → 29 → 26；文本原文独立分块，微信/RP/前情提要只带引用。完整设计与维护入口见 [微信长文档阅读交接](./wechat-documents.md)。
+> 2026-11-04 工具等待提示：`25-wechat.js` 新增瞬态 `wechatActivity`，`29`/`27` 报告读者进度和识图请求；输入区独立显示，不进入角色时间线或记忆。RP `tool_grep` 仍查剧情文本，尚不能读微信附件原文/像素；见 [附件找回与工具等待提示](./wechat-tool-activity.md)。
+
+> 2026-11-04 文档附件扩展：新增独立资源服务 `wechat-documents.js`、检索引擎 `wechat-document-search.js` 与 app 模块 `29-wechat-documents.js`。setup 尾部顺序为 25 → 27 → 28 → 29 → 26；文本原文独立分块，微信/RP/前情提要只带引用。检索支持 grep 式语法（`+必含 / -排除 / "短语" / ~邻近 / /正则/`）并按字符位置读回原文。完整设计与维护入口见 [微信长文档阅读交接](./wechat-documents.md) 与 [grep 式检索交接](./wechat-document-search.md)。
 
 > 新人第一读。本文说明整体架构、文件职责、数据流与扩展挂点。
 > 模块级地图见 [MODULES.md](./MODULES.md)；本次 app.js 拆分的过程与工具见 [tools/refactor/README.md](../tools/refactor/README.md)。
@@ -24,6 +26,8 @@
 | 2 | `assets/js/core-utils.js` | `RPHubUtils` / `RPHubCardUtils` / `RPHubConfig` | 通用工具、角色卡处理、基础配置（API 提供商、主动工具常量、UI 选项） |
 | 3 | `assets/js/api-utils.js` | `RPHubApiUtils` / `RPHubApiClient` | API 端点拼接、OpenAI 兼容请求（流式） |
 | 3.4 | `assets/js/wechat-media.js` | `RPHubWeChatMedia` | 图片意图、独立 Blob 资源、缩略图、本地素材与程序绘图 |
+| 3.45 | `assets/js/wechat-document-search.js` | `RPHubWeChatSearch` | grep 式查询解析与跨块扫描打分、摘录生成（纯函数，无存储依赖） |
+| 3.46 | `assets/js/wechat-documents.js` | `RPHubWeChatDocuments` | 文本附件分块、编码检测、资源库读写、按字符定位；`search` 转调检索引擎 |
 | 3.5 | `assets/js/wechat-protocol.js` | `RPHubWeChatProtocol` | 微信分段/空回/图片意图协议与容错解析（见 §7） |
 | 4 | `assets/js/data-services.js` | `RPHubStorage` / `RPHubMemoryUtils` / `RPHubContextUtils` / `RPHubStoryBranches` / `RPHubUiTemplateUtils` | IndexedDB 存储层、记忆/向量工具、上下文组装、剧情分支、UI 模板工具 |
 | 5 | `assets/js/runtime-services.js` | `RPHubMessageRenderer` / `RPHubComposables` | 消息渲染器、存储统计与 token 用量两个 composable |

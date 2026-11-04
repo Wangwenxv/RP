@@ -35,7 +35,7 @@
 | 26 | `26-recap.js` | — | RP/微信交错前情提要、覆盖边界、保留原文及短图片描述 |
 | 27 | `27-wechat-media.js` | ~350 | 按本轮触发图片说明、相册、图片取得与显示、新图视觉输入、加载/查看工具、图片任务和可选来源适配 |
 | 28 | `28-wechat-voice.js` | — | BreezeBlue 设置/目录、语音合成、单一播放器与作用域校验；批次复用 `27`，详见 [语音交接](./wechat-voice.md) |
-| 29 | `29-wechat-documents.js` | — | 文本附件、scope 校验、搜索/翻页工具、隔离读者续读、预览下载与资源回收；新增附件拖入/输入框适配，详见 [文档交接](./wechat-documents.md) 与 [界面交接](./wechat-layout-and-drop.md) |
+| 29 | `29-wechat-documents.js` | — | 文本附件、scope 校验、list/search/read 工具、隔离读者续读、预览下载与资源回收；新增附件拖入/输入框适配，详见 [文档交接](./wechat-documents.md)、[grep 检索交接](./wechat-document-search.md) 与 [界面交接](./wechat-layout-and-drop.md) |
 
 > 注：行数为约数（含镜像赋值与文件头注释）。23 号模块没有顶层声明（只有 `watch` / `onMounted` / `onBeforeUnmount` 三条副作用语句），这是正常的。
 > 微信的当前协议和维护入口见 [实现交接](./wechat-and-RP.md)。`wechat-media.js` 是独立资源服务，不属于 app 模块；图片二进制不进入历史文本。
@@ -56,7 +56,9 @@
   角色开关字段在 `20`-crud 归一化、编辑器开关在 `ui-components.js`；RP 侧衔接注入在 `15`（`appendWechatDigestToMessages`）。
 - **微信单条消息编辑/删除**：`25`（`startWechatEdit` / `saveWechatEdit` / `deleteWechatMessage`）+ `26`（删除后修正提要覆盖计数）
   + `index.html` 的 `.wx-tools` / `.wx-msg-menu` + `wechat.css`。说明见 [单条消息编辑交接](./wechat-message-editing.md)。
-- **微信文档阅读**：`29`（上传/工具/隔离读者）+ `wechat-documents.js`（分块/检索/资源库）+ `25`（消息与工具续写）；说明见 [长文档交接](./wechat-documents.md)。
+- **微信文档阅读**：`29`（上传/工具/隔离读者）+ `wechat-documents.js`（分块/资源库/按字符定位）+ `25`（消息与工具续写）；说明见 [长文档交接](./wechat-documents.md)。
+- **附件检索语法/排序**：`wechat-document-search.js`（`parseQuery`/`scan`，纯函数）+ `29` 的工具层格式化；改语法、上限或打分先看 [grep 检索交接](./wechat-document-search.md)。
+- **微信工具等待状态**：`25`（`wechatActivity`/计时/请求次数/清理）+ `29`（读者批次与成功进度）+ `27`（识图次数）+ `index.html`/`wechat.css`（输入区状态卡）；附件找回与 RP 工具边界见 [状态交接](./wechat-tool-activity.md)。
 - **移动端键盘/视口**：`01`
 - **启动初始化顺序**：`23`（`onMounted`：`loadData` → 恢复上次角色 → `fetchModels` → 状态检查 → 视口监听 → 全局点击收起）
 

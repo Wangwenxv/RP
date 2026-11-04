@@ -669,6 +669,7 @@ const app = createApp({
             removeWechatDocument: __s.removeWechatDocument,
             isWechatGenerating: __s.isWechatGenerating, wechatTyping: __s.wechatTyping,
             wechatStatusText: __s.wechatStatusText, wechatSettingsDraft: __s.wechatSettingsDraft,
+            wechatActivity: __s.wechatActivity,
             wechatPeerName: __s.wechatPeerName, wechatAvatar: __s.wechatAvatar,
             wechatUserAvatar: __s.wechatUserAvatar,
             wechatWorldInfoOptions: __s.wechatWorldInfoOptions,

@@ -108,24 +108,26 @@
             for (let i = start; i < Math.min(item.chunkCount, start + Math.min(2, count)); i++) result.push(await chunk(item.id, i, signal));
             return { chunks: result, next: start + result.length < item.chunkCount ? start + result.length : null };
         };
-        const search = async (item, query, signal) => {
-            const terms = String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
-            if (!terms.length || terms.some(term => term.length > 80)) throw new Error('请提供 1–8 个短关键词，以空格分隔');
-            const hits = []; let matched = 0;
-            let tail = '';
-            for (let i = 0; i < item.chunkCount; i++) {
-                const part = await chunk(item.id, i, signal);
-                const text = tail + part.text, lower = text.toLowerCase();
-                const positions = terms.map(term => lower.indexOf(term)).filter(pos => pos >= 0);
-                if (positions.length) {
-                    matched++;
-                    const pos = Math.min(...positions), from = Math.max(0, pos - 200), to = Math.min(text.length, pos + 600);
-                    hits.push({ start: tail.length && pos < tail.length ? Math.max(0, i - 1) : i, heading: part.heading, score: positions.length, excerpt: text.slice(from, to) });
-                    hits.sort((a, b) => b.score - a.score || a.start - b.start); hits.length = Math.min(5, hits.length);
-                }
-                tail = part.text.slice(-80);
+        // Locate a chunk by absolute character offset; search results hand back exact offsets.
+        const locate = async (item, offset, signal) => {
+            const target = Math.max(0, Math.min(Math.max(0, item.chars - 1), Math.floor(Number(offset) || 0)));
+            let guess = Math.max(0, Math.min(item.chunkCount - 1, Math.floor(target / CHUNK_CHARS)));
+            for (let step = 0; step < 4; step++) {
+                const part = await chunk(item.id, guess, signal);
+                if (target < part.offset) { if (!guess) return 0; guess--; continue; }
+                if (target >= part.offset + part.text.length) { if (guess >= item.chunkCount - 1) return guess; guess++; continue; }
+                return guess;
             }
-            return { hits, matched, scanned: item.chunkCount };
+            return guess;
+        };
+        const search = async (item, query, options = {}) => {
+            const engine = window.RPHubWeChatSearch;
+            if (!engine) throw new Error('检索模块未加载，请刷新页面');
+            return engine.scan({
+                query, chars: item.chars, chunkCount: item.chunkCount,
+                start: options.start, end: options.end, limit: options.limit, signal: options.signal,
+                getText: index => chunk(item.id, index, options.signal)
+            });
         };
         const toc = async id => await storage.getStoredValue(key(id, 'toc')) || { entries: [], truncated: false };
         const reader = async id => await storage.getStoredValue(key(id, 'reader')) || { next: 0, summary: '', batches: 0 };
@@ -137,7 +139,7 @@
         };
         const purgeOwner = async ownerId => { for (const item of (await list()).filter(item => item.ownerId === ownerId)) await remove(item.id); };
         const purgeScope = async scopeId => { for (const item of (await list()).filter(item => item.scopeId === scopeId)) await remove(item.id); };
-        return { list, get, save, remove, chunk, read, search, toc, reader, saveReader, blob, purgeOwner, purgeScope };
+        return { list, get, save, remove, chunk, read, search, locate, toc, reader, saveReader, blob, purgeOwner, purgeScope };
     }
     window.RPHubWeChatDocuments = Object.freeze({ MAX_BYTES, CHUNK_CHARS, short, active, recordText, createLibrary });
 })();
