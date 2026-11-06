@@ -1,5 +1,11 @@
 # RP-Hub 架构交接文档
 
+> 2026-11-06地图管理补齐：导航与角色编辑新增地理环境入口，31模块持久化共享地图库，地图包包含原图/地点/道路/文化且兼容file协议；RP/微信只取本轮局部资料。角色保存等待数据库落盘。setup尾部更新25→27→28→29→30→31→26。见[地图管理与便携地图包交接](./geography-map-manager.md)。
+
+> 2026-11-06地理工具后续优化：API层对RP/微信开放业务多调用，地理context/batch一次取齐；明确地理问题本地预取短资料，普通下一轮不重放结果。默认brief、每轮去重/资料预算；output_reply存在时保留单工具协议保护。见[组合查询与费用交接](./geography-tools-cost.md)。本项目按用户确认保持原风格，不属于CWUI。
+
+> 2026-11-06 地理试点：新增共享世界 `worlds/jiangnan-south-campus.json`、纯计算 `geography.js` 和模块 `30-geography.js`。RP/微信共用 `tool_geo`，沿道路计算时间、按需读取局部文化，位置从当前分支证据重放。苏祈雪旧地理世界书迁出，13栋到实验楼A区按用户确认约35分钟标定；使用和估算边界见 [江大南校区地理能力交接](./geography-pilot.md)。setup尾部为25→27→28→29→30→26。
+
 > 2026-11-04 工具等待提示：`25-wechat.js` 新增瞬态 `wechatActivity`，`29`/`27` 报告读者进度和识图请求；输入区独立显示，不进入角色时间线或记忆。RP `tool_grep` 仍查剧情文本，尚不能读微信附件原文/像素；见 [附件找回与工具等待提示](./wechat-tool-activity.md)。
 
 > 2026-11-04 文档附件扩展：新增独立资源服务 `wechat-documents.js`、检索引擎 `wechat-document-search.js` 与 app 模块 `29-wechat-documents.js`。setup 尾部顺序为 25 → 27 → 28 → 29 → 26；文本原文独立分块，微信/RP/前情提要只带引用。检索支持 grep 式语法（`+必含 / -排除 / "短语" / ~邻近 / /正则/`）并按字符位置读回原文。完整设计与维护入口见 [微信长文档阅读交接](./wechat-documents.md) 与 [grep 式检索交接](./wechat-document-search.md)。

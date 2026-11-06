@@ -685,6 +685,7 @@ window.RPHubUtils = {
             personality: character.personality || '',
             first_mes: character.first_mes || '',
             creator_notes: character.creator_notes || character.creatorcomment || character.creator_comment || '',
+            geography: cloneJsonValue(character.extensions?.rp_hub_geography || source.extensions?.rp_hub_geography || character.geography, null),
             regexScripts: Array.isArray(regexScripts) ? regexScripts : [],
             uiTemplates: Array.isArray(uiTemplates) ? uiTemplates : [],
             worldInfoEntries
@@ -776,6 +777,7 @@ window.RPHubUtils = {
             ...(includeUiTemplates ? { uiTemplates } : {}),
             extensions: {
                 rp_hub_watermark: 'rp-hub',
+                ...(character.geography ? { rp_hub_geography: cloneJsonValue(character.geography, null) } : {}),
                 regex_scripts: regexScripts,
                 ...(includeUiTemplates ? { rp_hub_ui_templates: uiTemplates } : {})
             },

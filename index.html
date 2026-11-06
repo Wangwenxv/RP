@@ -87,6 +87,7 @@
         document.write('<link rel="stylesheet" href="assets/css/styles.css?v=' + new Date().getTime() + '">');
         document.write('<link rel="stylesheet" href="assets/css/theme.css?v=' + new Date().getTime() + '">');
         document.write('<link rel="stylesheet" href="assets/css/wechat.css?v=' + new Date().getTime() + '">');
+        document.write('<link rel="stylesheet" href="assets/css/maps.css?v=' + new Date().getTime() + '">');
     </script>
 </head>
 <body class="bg-gray-50 text-gray-900 font-sans selection:bg-primary-200 selection:text-primary-900">
@@ -2656,8 +2657,14 @@
             </div>
 
             <!-- World Info View -->
+            <maps-view v-if="hasOpenedMapManager" v-show="currentView === 'maps'" :records="mapRecords" :busy="mapLibraryBusy"
+                :return-to-character="mapReturnToCharacter" @return-character="returnToCharacterFromMaps"
+                :save="saveMapRecord" :get-image="getMapImage" @menu="toggleNavigation"
+                @import="importMapPackage" @export="exportMapPackage" @delete="deleteMapRecord"></maps-view>
+
             <div v-if="currentView === 'worldinfo'" class="management-view">
                 <settings-page-header title="世界书" @menu="toggleNavigation">
+                    <button @click="currentView = 'maps'" class="settings-create-button">地图与地理环境</button>
                     <template #icon>
                         <svg class="w-6 h-6 md:w-7 md:h-7 mr-2 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
@@ -2813,6 +2820,7 @@
             @import-character="importCharacter($event); showAddCharacterMenu = false"></add-character-modal>
 
         <character-editor-modal :show="showCharacterEditor" :character="editingCharacter.data"
+            :maps="geographyMapOptions" @manage-maps="openMapManagerForCharacter"
             :editing="editingCharacter.id !== undefined" :tab="editorTab" @close="closeCharacterEditor"
             @save="saveCharacter" @avatar-upload="handleAvatarUpload" @update:tab="editorTab = $event"
             @update-field="editingCharacter.data[$event.field] = $event.value"></character-editor-modal>
@@ -3346,6 +3354,9 @@
         document.write('<script src="assets/js/built-in-content.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/core-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/api-utils.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/geography.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/world-data.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/map-packages.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-document-search.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-documents.js?v=' + new Date().getTime() + '"><\/script>');
@@ -3355,6 +3366,7 @@
         document.write('<script src="assets/js/data-services.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/runtime-services.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/ui-components.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/map-components.js?v=' + new Date().getTime() + '"><\/script>');
         // App 模块（原 app.js setup() 的拆分），必须按序号加载、且都在 app.js 之前
         document.write('<script src="assets/js/app/01-state-app-shell.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/02-state-settings.js?v=' + new Date().getTime() + '"><\/script>');
@@ -3384,6 +3396,8 @@
         document.write('<script src="assets/js/app/27-wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/28-wechat-voice.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/29-wechat-documents.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/30-geography.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/31-map-library.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/26-recap.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app.js?v=' + new Date().getTime() + '"><\/script>');
     </script>

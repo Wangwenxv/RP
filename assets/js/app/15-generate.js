@@ -33,6 +33,7 @@
                 : null;
             if (!continuationTargetMessage && activeToolDepth === 0) {
                 __s.resetActiveToolResultContext();
+                __s.resetGeographyBudget?.();
                 // 主动工具攒下的微信消息只属于本轮 RP，开新一轮前清干净。
                 __s.pendingActiveWechatMessages.length = 0;
             }
@@ -497,6 +498,11 @@
                 if (requestSignal.aborted) throw __s.createAbortReason();
 
                 // 必须在正则、角色合并和记忆处理之后追加，保留 tool_call_id 及服务端签名。
+                if (__s.currentCharacter.value?.geography) {
+                    if (__s.currentCharacter.value.wechatEnabled) await __s.ensureWechatTimelineLoaded();
+                    const geographyPrompt = __s.buildGeographyPrompt?.();
+                    if (geographyPrompt) messages.unshift({ role: 'system', content: geographyPrompt });
+                }
                 messages.push(...__s.activeToolMessages);
                 const contextViewerState = buildContextViewerState({
                     messages,
@@ -525,6 +531,7 @@
                     logResponse: true,
                     replyInTool: __s.isTruncationEnabled.value,
                     tools: __s.buildActiveToolDefinitions(requestTools),
+                    parallelTools: true,
                     requireTool: activeToolDepth === 0 && __s.shouldRequireActiveToolCall(requestTools),
                     temperature: __s.settings.temperature,
                     reasoningEffort: __s.settings.reasoningEffort,

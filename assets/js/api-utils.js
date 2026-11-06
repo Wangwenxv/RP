@@ -284,7 +284,8 @@
                     tools,
                     tool_choice: options.requireTool || (options.replyInTool && options.tools?.length) ? 'required'
                         : options.replyInTool ? { type: 'function', function: { name: replyTool.function.name } } : 'auto',
-                    parallel_tool_calls: false
+                    // output_reply and business calls cannot be mixed by the reply decoder.
+                    parallel_tool_calls: options.parallelTools === true && !tools.some(tool => tool.function?.name === replyTool.function.name)
                 } : {}),
                 stream: !!options.stream,
                 ...(options.stream ? { stream_options: { include_usage: true } } : {})

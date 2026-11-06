@@ -293,6 +293,7 @@
 
         let recordedRpCount = 0;
         let loadedWechatScopeId = null;
+        __s.getLoadedWechatScopeId = () => loadedWechatScopeId;
         const resetRpRecordCursor = () => {
             recordedRpCount = 0;
             wechatTimeline.value.forEach((item) => {
@@ -683,7 +684,7 @@
                 scene: String(char.wechatScene || '').trim(),
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
                 stickerCatalog: buildWechatStickerCatalog(),
-                mediaPrompt: [mediaPrompt, __s.buildWechatDocumentPrompt?.()].filter(Boolean).join('\n'),
+                mediaPrompt: [mediaPrompt, __s.buildWechatDocumentPrompt?.(), __s.buildGeographyPrompt?.()].filter(Boolean).join('\n'),
                 voicePrompt: __s.buildWechatVoicePrompt?.(),
                 extraRules: `【跨场景连续性】微信是同一段 roleplay 剧情中人物的通信渠道。`
                     + `继承已建立的称呼、关系、默契，也继承最新已发生剧情中的处境、行动、身体状态、手机/通信条件和情绪。`
@@ -1699,18 +1700,20 @@
             if (__s.buildWechatVisualMessages) messages = await __s.buildWechatVisualMessages(messages, signal);
             assertRequest();
             const documentTools = __s.wechatDocumentTools?.() || [];
-            let tools = [...(__s.wechatImageTools?.(mediaContext) || []), ...documentTools];
+            let tools = [...(__s.wechatImageTools?.(mediaContext) || []), ...documentTools, ...(__s.geographyTools?.() || [])];
             let result;
             let viewCalls = 0;
             let loadCalls = 0;
             let documentCalls = 0;
+            let geographyCalls = 0;
             const documentBudget = { used: 0 };
+            const geographyBudget = __s.createGeographyBudget?.();
             // Existing image-only turns retain their limit; attachments add four bounded tools.
-            const maxRounds = documentTools.length ? 8 : 4;
+            const maxRounds = documentTools.length || __s.geographyTools?.().length ? 8 : 4;
             for (let round = 0; round < maxRounds; round++) {
                 report({ title: round ? '正在整理回复' : '正在等待模型回复',
                     detail: round ? '工具结果已返回，模型正在处理' : '模型正在处理本轮消息', completed: null, total: null, modelRequest: true });
-                result = await __s.requestTrackedChatCompletion({ model, messages, ...(tools.length ? { tools } : {}), temperature: 0.95, stream: true, signal }, 'chat');
+                result = await __s.requestTrackedChatCompletion({ model, messages, ...(tools.length ? { tools, parallelTools: true } : {}), temperature: 0.95, stream: true, signal }, 'chat');
                 assertRequest();
                 if (['length', 'content_filter'].includes(result?.finishReason)) break;
                 if (!result?.toolCalls?.length) break;
@@ -1719,8 +1722,15 @@
                 viewCalls += names.filter(name => name === 'tool_view_image').length;
                 loadCalls += names.filter(name => name === 'tool_load_image_sending').length;
                 documentCalls += names.filter(name => documentTools.some(tool => tool.function.name === name)).length;
-                if (round === maxRounds - 1 || viewCalls > 2 || loadCalls > 1 || documentCalls > 4) throw new Error('微信工具调用次数达到本轮上限，请下一轮继续');
+                geographyCalls += names.filter(name => name === 'tool_geo').length;
+                if (round === maxRounds - 1 || viewCalls > 2 || loadCalls > 1 || documentCalls > 4 || geographyCalls > 4) throw new Error('微信工具调用次数达到本轮上限，请下一轮继续');
                 messages.push(result.assistantMessage || { role: 'assistant', content: result.content || '', tool_calls: result.toolCalls });
+                // All independent geography reads share one snapshot and one continuation.
+                // Keep document/image pipelines sequential: they have mutable budgets and side effects.
+                const geographyResults = new Map(await Promise.all(result.toolCalls.filter(call => call.function.name === 'tool_geo').map(async call => {
+                    try { return [call.id, { content: JSON.stringify(__s.executeGeographyTool(call, geographyBudget)) }]; }
+                    catch (error) { return [call.id, { content: `地理查询失败：${error.message}。未取得资料，不得编造，应澄清。` }]; }
+                })));
                 const attachments = [];
                 for (const call of result.toolCalls) {
                     let viewed;
@@ -1728,10 +1738,10 @@
                     const reading = documentTools.some(tool => tool.function.name === call.function.name);
                     const title = { tool_list_documents: '正在查找历史文件', tool_search_document: '正在搜索文档',
                         tool_read_document: '正在读取原文', tool_document_reader: '正在准备长文阅读',
-                        tool_load_image_sending: '正在加载图片素材', tool_view_image: '正在查看历史图片' }[call.function.name];
+                        tool_load_image_sending: '正在加载图片素材', tool_view_image: '正在查看历史图片', tool_geo: '正在查询地点与路程' }[call.function.name];
                     report({ title, detail: '工具处理中', completed: null, total: null, toolCall: true });
-                    try { viewed = reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget, report) : loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal, report); }
-                    catch (error) { assertRequest(); report({ notice: reading ? '本次文件处理失败；已保存的阅读进度保留' : '本次图片工具失败，正在等待模型处理' }); viewed = { content: reading
+                    try { viewed = call.function.name === 'tool_geo' ? geographyResults.get(call.id) : reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget, report) : loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal, report); }
+                    catch (error) { assertRequest(); report({ notice: call.function.name === 'tool_geo' ? '地理查询失败，正在等待模型处理' : reading ? '本次文件处理失败；已保存的阅读进度保留' : '本次图片工具失败，正在等待模型处理' }); viewed = { content: call.function.name === 'tool_geo' ? `地理查询失败：${error.message}。未取得路程/地点资料，不得编造，应澄清。` : reading
                         ? `文件阅读失败：${error.message}。没有取得此次资料，不得假装读过；已成功的阅读进度保留，可以重试。`
                         : loading
                         ? `发图能力加载失败：${error.message}。没有取得可用素材目录，不得编造资源 ID。可以只发文字或按原决策空回。`

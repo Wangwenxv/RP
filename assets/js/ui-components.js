@@ -305,6 +305,7 @@
         { view: 'square', label: '万相广场', square: true }
     ]);
     const advancedItems = Object.freeze([
+        { view: 'maps', label: '地图与地理环境', icon: 'M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3zm0 0V3m6 3v15' },
         { view: 'presets', label: '预设', icon: 'M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4M6 18a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4' },
         { view: 'worldinfo', label: '世界书', icon: 'M12 6.25v13m0-13C10.83 5.48 9.25 5 7.5 5S4.17 5.48 3 6.25v13C4.17 18.48 5.75 18 7.5 18s3.33.48 4.5 1.25m0-13C13.17 5.48 14.75 5 16.5 5S19.83 5.48 21 6.25v13C19.83 18.48 18.25 18 16.5 18s-3.33.48-4.5 1.25' },
         { view: 'regex', label: '正则', title: '正则脚本', icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4' },
@@ -1249,15 +1250,17 @@
             show: Boolean,
             character: { type: Object, required: true },
             editing: Boolean,
+            maps: { type: Array, default: () => [] },
             tab: { type: String, default: 'basic' }
         },
-        emits: ['close', 'save', 'avatar-upload', 'update:tab', 'update-field'],
+        emits: ['close', 'save', 'avatar-upload', 'update:tab', 'update-field', 'manage-maps'],
         data: () => ({
             tabs: [
                 { value: 'basic', label: '基础' },
                 { value: 'description', label: '描述' },
                 { value: 'personality', label: '人设' },
-                { value: 'first_mes', label: '开场白' }
+                { value: 'first_mes', label: '开场白' },
+                { value: 'geography', label: '地理环境' }
             ]
         }),
         methods: {
@@ -1278,14 +1281,9 @@
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
-                        <div class="segmented-switch segmented-switch--compact segmented-switch--four w-full">
-                            <div class="segmented-switch__indicator" :class="{
-                                'is-position-2': tab === 'description',
-                                'is-position-3': tab === 'personality',
-                                'is-position-4': tab === 'first_mes'
-                            }"></div>
+                        <div class="character-editor-tabs bg-gray-100 rounded-xl p-1 w-full">
                             <button v-for="item in tabs" :key="item.value" @click="$emit('update:tab', item.value)"
-                                class="segmented-switch__option" :class="{ 'is-active': tab === item.value }">
+                                :class="tab === item.value ? 'bg-white text-primary-700 shadow-sm font-bold' : 'text-gray-500'">
                                 <span>{{ item.label }}</span>
                             </button>
                         </div>
@@ -1325,6 +1323,10 @@
                             <div class="flex justify-between items-center mb-2"><label class="block text-sm font-bold text-gray-600">简短描述</label><span class="text-[10px] text-gray-400 font-mono bg-gray-100 px-1.5 py-0.5 rounded">{{ (character.description || '').length }} 字</span></div>
                             <textarea :value="character.description" @input="updateField('description', $event.target.value)"
                                 class="w-full bg-gray-50/60 border border-gray-300 rounded-xl px-4 py-3 text-gray-800 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 focus:outline-none flex-1 resize-none shadow-inner transition-all leading-relaxed" placeholder="对角色的简短介绍..."></textarea>
+                        </div>
+                        <div v-if="tab === 'geography'" class="animate-fade-in">
+                            <geography-binding-editor :value="character.geography" :maps="maps" :character-name="character.name"
+                                @update="updateField('geography', $event)" @manage="$emit('manage-maps')"></geography-binding-editor>
                         </div>
                         <div v-if="tab === 'personality'" class="animate-fade-in h-full flex flex-col">
                             <div class="flex justify-between items-center mb-2"><label class="block text-sm font-bold text-gray-600">具体人设</label><span class="text-[10px] text-gray-400 font-mono bg-gray-100 px-1.5 py-0.5 rounded">{{ (character.personality || '').length }} 字</span></div>

@@ -2,6 +2,7 @@ const { createApp, ref, reactive, computed, onMounted, onBeforeUnmount, watch, n
 const { useStorageManagement, useTokenUsage } = window.RPHubComposables;
 const { createMessageRenderer } = window.RPHubMessageRenderer;
 const { AppNavigation } = window.RPHubLayoutComponents;
+const { MapsView } = window.RPHubMapComponents;
 const { requestChatCompletion, requestJson } = window.RPHubApiClient;
 const { buildApiEndpoint } = window.RPHubApiUtils;
 const {
@@ -204,6 +205,7 @@ const app = createApp({
         ActiveToolEditorModal,
         AddCharacterModal,
         AppNavigation,
+        MapsView,
         AutoImageGenModal,
         CharacterExportModal,
         CharacterEditorModal,
@@ -265,9 +267,16 @@ const app = createApp({
         __sections.wechatMedia(__s);
         __sections.wechatVoice(__s);
         __sections.wechatDocuments(__s);
+        __sections.geography(__s);
+        __sections.mapLibrary(__s);
         __sections.recap(__s);
 
         return {
+            mapRecords: __s.mapRecords, mapLibraryBusy: __s.mapLibraryBusy, geographyMapOptions: __s.geographyMapOptions,
+            hasOpenedMapManager: __s.hasOpenedMapManager, mapReturnToCharacter: __s.mapReturnToCharacter,
+            openMapManagerForCharacter: __s.openMapManagerForCharacter, returnToCharacterFromMaps: __s.returnToCharacterFromMaps,
+            saveMapRecord: __s.saveMapRecord, getMapImage: __s.getMapImage, importMapPackage: __s.importMapPackage,
+            exportMapPackage: __s.exportMapPackage, deleteMapRecord: __s.deleteMapRecord,
             switchProfile: __s.switchProfile, createNewProfile: __s.createNewProfile, deleteProfile: __s.deleteProfile, userProfiles: __s.userProfiles, activeProfileId: __s.activeProfileId, showProfileDropdown: __s.showProfileDropdown,
             processMainContent: __s.processMainContent, replaceUserNamePlaceholder: __s.replaceUserNamePlaceholder,
             currentView: __s.currentView, showDescriptionPanel: __s.showDescriptionPanel, showModelSelector: __s.showModelSelector, modelSelectionTarget: __s.modelSelectionTarget, openModelSelector: __s.openModelSelector, showChatModelSelector: __s.showChatModelSelector, showChatModelMenu: __s.showChatModelMenu, chatModelMenuQuery: __s.chatModelMenuQuery, chatModelMenuTag: __s.chatModelMenuTag, chatModelMenuModels: __s.chatModelMenuModels, toggleChatModelMenu: __s.toggleChatModelMenu, closeChatModelMenu: __s.closeChatModelMenu, selectChatModel: __s.selectChatModel, showCharacterEditor: __s.showCharacterEditor, showAddCharacterMenu: __s.showAddCharacterMenu, showPresetEditor: __s.showPresetEditor, showUiTemplateEditor: __s.showUiTemplateEditor,

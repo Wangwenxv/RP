@@ -1,5 +1,7 @@
 # App 模块地图（assets/js/app/）
 
+> 2026-11-06新增31号共享地图库管理：地图管理入口、角色绑定、原图与标注/路网自包含包、IndexedDB持久化，接入30地理适配；原图资源按需加载，RP/微信按需取得局部结果。setup末段为25→27→28→29→30→31→26。详见[地图管理与便携地图包交接](./geography-map-manager.md)。
+
 > 01~24 号模块由原 `app.js` 的 `setup()`（661 条顶层语句、662 个声明）机械拆分而来，行为与原文件完全一致；
 > 25 号为微信、26 号为前情提要、27 号为图片、28 号为语音、29 号为文档。setup 末段按 25 → 27 → 28 → 29 → 26 初始化。
 > 每个文件头部注释标明了它来自原文件的哪几行。加载顺序 = 文件序号 = 原声明顺序。
@@ -66,6 +68,12 @@
 
 `cardUtils`、`fontFamilyOptions` 等 12 个 UI 选项、`ACTIVE_TOOL_*` 常量族、`getDefaultActiveToolDefinitions`。
 它们是文件顶层 `const`，全体模块可直接裸引用。
+
+## 地理试点（2026-11-06）
+
+后续多调用与context/batch组合查询在`api-utils`、`30`、`15`、`25`接线，默认brief并提供本轮本地速查。当前预算与协议见[地理工具与费用](./geography-tools-cost.md)。
+
+`30-geography.js`（`geography`）接入RP/微信共享地图与工具；`geography.js`负责别名、道路寻路与位置证据重放；`worlds/*.json`是共享资料源，`world-data.js`是生成的浏览器注册表。RP挂点`15/18`，微信挂点`25`，卡扩展往返`core-utils/22`。使用、地图替换及待校准限制见[地理交接](./geography-pilot.md)。
 
 ## 新增功能的落点建议
 

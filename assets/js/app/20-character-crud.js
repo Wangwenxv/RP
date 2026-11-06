@@ -60,7 +60,8 @@
             __s.showCharacterEditor.value = true;
         };
         __s.editCharacter = editCharacter;
-        const saveCharacter = () => {
+        const saveCharacter = async () => {
+            if (__s._characterSaveInFlight) return;
             const characterRegexScripts = (__s.editingCharacter.data.regexScripts || [])
                 .map(script => __s.normalizeRegexScript({ ...script, scope: 'character' }, 'character'))
                 .filter(script => script.scope !== 'global');
@@ -83,13 +84,28 @@
                 uiTemplates: (__s.editingCharacter.data.uiTemplates || []).map(template => normalizeUiTemplate({ ...template, scope: 'character' }))
             };
             delete normalizedCharacterData.scenario;
+            const editingIndex = __s.editingCharacter.id;
+            const previousCharacter = editingIndex !== undefined ? __s.characters.value[editingIndex] : null;
+            __s._characterSaveInFlight = true;
             if (__s.editingCharacter.id !== undefined) {
                 __s.characters.value[__s.editingCharacter.id] = normalizedCharacterData;
             } else {
                 __s.characters.value.push(normalizedCharacterData);
             }
-            __s.showCharacterEditor.value = false;
-            __s.showToast('角色已保存', 'success');
+            try {
+                await __s.saveCharactersNow();
+                __s.showCharacterEditor.value = false;
+                __s.showToast('角色已保存', 'success');
+            } catch (error) {
+                if (editingIndex !== undefined) __s.characters.value[editingIndex] = previousCharacter;
+                else {
+                    const unsavedIndex = __s.characters.value.findIndex(c => c.uuid === normalizedCharacterData.uuid);
+                    if (unsavedIndex >= 0) __s.characters.value.splice(unsavedIndex, 1);
+                }
+                __s.showToast('角色保存失败：' + error.message + '。请保留编辑页并重试。', 'error');
+            } finally {
+                __s._characterSaveInFlight = false;
+            }
         };
         __s.saveCharacter = saveCharacter;
         const createUiTemplate = () => {

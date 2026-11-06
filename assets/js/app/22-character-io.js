@@ -72,6 +72,7 @@
                 avatar: avatarUrl || defaultAvatar,
                 personality: imported.personality,
                 creator_notes: imported.creator_notes,
+                geography: imported.geography,
                 worldInfo: imported.worldInfoEntries
                     .map(entry => normalizeWorldInfoEntry({ ...entry, scope: 'character' }))
                     .filter(entry => entry.scope !== 'global'),

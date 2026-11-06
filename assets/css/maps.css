@@ -1,0 +1,21 @@
+.map-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-bottom: .75rem; }
+.map-editor-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr); gap: 1rem; }
+.map-form { display: flex; flex-direction: column; gap: .8rem; }
+.map-form label { display: flex; flex-direction: column; gap: .3rem; font-size: .8rem; color: var(--text-secondary, inherit); }
+.map-input { display: block; min-width: 0; border: 1px solid var(--border-color, #d1d5db); border-radius: .65rem; padding: .5rem .65rem; background: var(--surface-color, transparent); color: inherit; font-size: .85rem; }
+.map-input:focus { outline: 2px solid var(--primary-color, #6366f1); outline-offset: 1px; }
+.map-canvas-scroll { max-height: 68vh; overflow: auto; border-radius: .75rem; background: var(--surface-color, #f9fafb); }
+.map-canvas-scroll svg { display: block; max-width: none; height: auto; }
+.map-road { stroke: var(--primary-color, #6366f1); stroke-width: 2; vector-effect: non-scaling-stroke; opacity: .65; cursor: pointer; }
+.map-road.is-selected { stroke-width: 5; opacity: 1; }
+.map-road.is-closed { stroke-dasharray: 6 5; }
+.map-point { fill: var(--primary-color, #6366f1); stroke: white; stroke-width: 1; vector-effect: non-scaling-stroke; cursor: pointer; }
+.map-point.is-selected { fill: #db2777; stroke-width: 3; }
+.map-point-label { fill: #111827; paint-order: stroke; stroke: white; stroke-width: 3; }
+.character-editor-tabs { display: flex; flex-wrap: wrap; gap: .35rem; }
+.character-editor-tabs button { flex: 1; padding: .55rem .35rem; border-radius: .7rem; font-size: .8rem; white-space: nowrap; }
+:root[data-app-theme="dark"] .map-input { border-color: var(--night-border); background: var(--night-field); color: var(--night-text); }
+:root[data-app-theme="dark"] .map-input:focus { outline-color: var(--night-accent); }
+:root[data-app-theme="dark"] .map-road { stroke: var(--night-accent); }
+:root[data-app-theme="dark"] .map-form label { color: var(--night-secondary); }
+@media (max-width: 767px) { .map-editor-grid { grid-template-columns: minmax(0, 1fr); } .map-canvas-scroll { max-height: 48vh; } .map-toolbar .map-input { flex-basis: 100%; } }

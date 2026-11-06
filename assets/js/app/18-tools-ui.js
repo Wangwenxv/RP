@@ -276,7 +276,9 @@
                         toolUi.status = 'running';
                         const isRandom = toolCall.tool.type === ACTIVE_TOOL_RANDOM_TYPE;
                         const isWechat = toolCall.tool.type === ACTIVE_TOOL_WECHAT_TYPE;
-                        const results = isWechat
+                        const results = toolCall.tool.type === 'geography'
+                            ? [__s.executeGeographyTool(call)]
+                            : isWechat
                             ? [__s.deliverActiveWechatMessage(toolCall.content)]
                             : isRandom
                                 ? [__s.generateRandomNumberForTool(toolCall.min, toolCall.max)]
