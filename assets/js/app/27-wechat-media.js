@@ -135,7 +135,7 @@
         };
         __s.sendWechatAlbumImage = async item => {
             if (__s.isWechatGenerating.value) return;
-            __s.pushWechatItem({ channel: 'wechat', role: 'user', type: 'image', content: '', media: { assetId: item.id, caption: item.caption, captionSource: item.captionSource, source: 'album', usage: 'album_photo' } });
+            if (!__s.pushWechatItem({ channel: 'wechat', role: 'user', type: 'image', content: '', media: { assetId: item.id, caption: item.caption, captionSource: item.captionSource, source: 'album', usage: 'album_photo' } })) return;
             __s.showWechatMediaGallery.value = false;
             __s.scheduleWechatSave(); __s.loadVisibleWechatImages(); __s.scrollWechatToBottom();
             if (!__s.wechatBurstMode.value) await __s.runWechatGeneration();
@@ -334,7 +334,11 @@
                     if (resolved.type === 'voice') task.voices[i] = resolved.voice;
                     // Checkpoint each successful asset, so a later failure does not pay for it again.
                     await saveTasks(); check();
-                    prepared.push({ ...resolved, _mediaTaskId: task.id, _mediaTaskIndex: i });
+                    prepared.push({ ...resolved,
+                        ...(window.RPHubWeChatTime?.valid(message.storyAt) ? { storyAt: message.storyAt } : {}),
+                        ...(message.sendAt ? { sendAt: message.sendAt } : {}),
+                        ...(typeof message.delayMinutes === 'number' ? { delayMinutes: message.delayMinutes } : {}),
+                        _mediaTaskId: task.id, _mediaTaskIndex: i });
                 }
                 if (!prepared.length) { task.status = 'done'; __s.wechatMediaTasks.value = taskList.filter(item => item.id !== task.id); }
                 await saveTasks(); check(); return prepared;

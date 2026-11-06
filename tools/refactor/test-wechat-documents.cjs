@@ -19,7 +19,7 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
     settings: { apiUrl: 'https://mock.local', apiKey: 'fixture', model: 'mock' }, user: { name: '用户' }, worldInfo: { value: [] }, presets: { value: [] }, getCurrentStoryBranchScopeId: () => scope,
     buildUserInfoPrompt: () => '用户', processRegex: text => text, showToast: (...args) => toasts.push(args), wechatMediaEpoch: 0,
     confirmAction: (_, fn) => fn(), requestTrackedChatCompletion: async options => { requests.push(structuredClone({ ...options, signal: undefined })); return respond(options, requests.length); } };
-  for (const name of ['wechat-media.js', 'wechat-document-search.js', 'wechat-documents.js', 'wechat-protocol.js', 'app/25-wechat.js', 'app/29-wechat-documents.js']) vm.runInContext(read(name), context);
+  for (const name of ['wechat-media.js', 'wechat-document-search.js', 'wechat-documents.js', 'wechat-time.js', 'wechat-protocol.js', 'app/25-wechat.js', 'app/29-wechat-documents.js']) vm.runInContext(read(name), context);
   context.window.RPHubAppSections.wechat(s); context.window.RPHubAppSections.wechatDocuments(s);
   return { s, stored, storage, requests, toasts, D: context.window.RPHubWeChatDocuments, lib: context.window.RPHubWeChatDocuments.createLibrary(storage),
     switchScope() { scope = 'branch-b'; s.wechatMediaEpoch++; s.invalidateWechatDocuments(); },

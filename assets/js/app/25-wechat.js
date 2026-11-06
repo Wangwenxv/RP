@@ -18,6 +18,7 @@
     window.RPHubAppSections = window.RPHubAppSections || {};
     window.RPHubAppSections.wechat = function (__s) {
         const wxProtocol = window.RPHubWeChatProtocol;
+        const wxTime = window.RPHubWeChatTime;
 
         // ---- 打字速度档位（停顿 = 基线 + 字数×每字耗时 + 抖动，偶尔走神多停）----
         const WECHAT_SPEEDS = {
@@ -32,6 +33,13 @@
         const WECHAT_RP_SEGMENT_MESSAGES = 16;
         const WECHAT_MEMORY_LIMIT = 10;
         const WECHAT_TIMELINE_KEY = 'wechat_timeline';
+        const WECHAT_TIME_TAGS_KEY = 'wechat_time_tags';
+        const DEFAULT_WECHAT_TIME_TAGS = [
+            { id: 'time-5', minutes: 5, label: '5 分钟后' },
+            { id: 'time-30', minutes: 30, label: '30 分钟后' },
+            { id: 'time-60', minutes: 60, label: '1 小时后' },
+            { id: 'time-1440', minutes: 1440, label: '1 天后' }
+        ];
         // 表情包库是全局的（用户自己的收藏，所有角色共用），非角色作用域。
         const WECHAT_STICKERS_KEY = 'wechat_stickers';
         // 目录注入上限：库再大也只把前 N 条塞进 system prompt，剩下的只影响手动发送。
@@ -59,6 +67,167 @@
         __s.wechatDisplayLimit = wechatDisplayLimit;
         const wechatInput = ref('');
         __s.wechatInput = wechatInput;
+        const wechatSendAt = ref('');
+        __s.wechatSendAt = wechatSendAt;
+        const showWechatTimePicker = ref(false);
+        __s.showWechatTimePicker = showWechatTimePicker;
+        const wechatTimeDraft = ref('');
+        __s.wechatTimeDraft = wechatTimeDraft;
+        const wechatTimeError = ref('');
+        __s.wechatTimeError = wechatTimeError;
+        const wechatTimeTags = ref(DEFAULT_WECHAT_TIME_TAGS.map(tag => ({ ...tag })));
+        __s.wechatTimeTags = wechatTimeTags;
+        const wechatTimeTagsLoaded = ref(false);
+        __s.wechatTimeTagsLoaded = wechatTimeTagsLoaded;
+        const wechatTimeTagsSaving = ref(false);
+        __s.wechatTimeTagsSaving = wechatTimeTagsSaving;
+        const wechatTimeTagsManaging = ref(false);
+        __s.wechatTimeTagsManaging = wechatTimeTagsManaging;
+        const wechatTimeTagEditing = ref(false);
+        __s.wechatTimeTagEditing = wechatTimeTagEditing;
+        const wechatTimeTagDraft = reactive({ id: '', minutes: '', label: '' });
+        __s.wechatTimeTagDraft = wechatTimeTagDraft;
+        const wechatTimeTagError = ref('');
+        __s.wechatTimeTagError = wechatTimeTagError;
+        const validTagMinutes = value => Number.isSafeInteger(value) && value > 0 && Number.isSafeInteger(value * 60000);
+        let timeTagsLoadPromise = null;
+        const loadWechatTimeTags = () => {
+            if (wechatTimeTagsLoaded.value) return Promise.resolve(true);
+            if (timeTagsLoadPromise) return timeTagsLoadPromise;
+            timeTagsLoadPromise = (async () => {
+                try {
+                    if (!getMainDb()) await initDB();
+                    const saved = await getStoredValue(WECHAT_TIME_TAGS_KEY);
+                    if (Array.isArray(saved)) {
+                        const ids = new Set();
+                        wechatTimeTags.value = saved.filter(tag => tag && validTagMinutes(tag.minutes)).map(tag => {
+                            let id = String(tag.id || '').trim() || generateUUID();
+                            if (ids.has(id)) id = generateUUID();
+                            ids.add(id);
+                            return { id, minutes: tag.minutes, label: String(tag.label || '').trim().slice(0, 24) || `${tag.minutes} 分钟后` };
+                        });
+                    }
+                    wechatTimeTagsLoaded.value = true;
+                    return true;
+                } catch (error) {
+                    __s.showToast('快捷时间标签读取失败，请重新打开时间选择重试', 'warning');
+                    return false;
+                } finally { timeTagsLoadPromise = null; }
+            })();
+            return timeTagsLoadPromise;
+        };
+        __s.loadWechatTimeTags = loadWechatTimeTags;
+        const cancelWechatTimeTagEdit = () => {
+            wechatTimeTagEditing.value = false;
+            Object.assign(wechatTimeTagDraft, { id: '', minutes: '', label: '' });
+            wechatTimeTagError.value = '';
+        };
+        __s.cancelWechatTimeTagEdit = cancelWechatTimeTagEdit;
+        const editWechatTimeTag = tag => {
+            if (wechatTimeTagsSaving.value || !wechatTimeTagsLoaded.value) return;
+            wechatTimeTagsManaging.value = true;
+            Object.assign(wechatTimeTagDraft, { id: tag?.id || '', minutes: tag?.minutes ?? '', label: tag?.label || '' });
+            wechatTimeTagError.value = '';
+            wechatTimeTagEditing.value = true;
+            nextTick(() => document.getElementById('wechat-time-tag-minutes')?.focus());
+        };
+        __s.editWechatTimeTag = editWechatTimeTag;
+        const toggleWechatTimeTagManager = () => {
+            if (wechatTimeTagsSaving.value) return;
+            wechatTimeTagsManaging.value = !wechatTimeTagsManaging.value;
+            cancelWechatTimeTagEdit();
+        };
+        __s.toggleWechatTimeTagManager = toggleWechatTimeTagManager;
+        const saveWechatTimeTags = async tags => {
+            if (wechatTimeTagsSaving.value || !wechatTimeTagsLoaded.value) return false;
+            wechatTimeTagsSaving.value = true;
+            wechatTimeTagError.value = '';
+            try {
+                await setStoredValue(WECHAT_TIME_TAGS_KEY, cloneForStorage(tags), { clone: false });
+                wechatTimeTags.value = tags;
+                return true;
+            } catch (error) {
+                wechatTimeTagError.value = '标签保存失败，请重试';
+                return false;
+            } finally { wechatTimeTagsSaving.value = false; }
+        };
+        const saveWechatTimeTag = async () => {
+            if (wechatTimeTagsSaving.value) return;
+            const minutes = Number(wechatTimeTagDraft.minutes);
+            if (!validTagMinutes(minutes)) { wechatTimeTagError.value = '请填写大于 0 的整数分钟数'; return; }
+            const tag = { id: wechatTimeTagDraft.id || generateUUID(), minutes,
+                label: String(wechatTimeTagDraft.label || '').trim().slice(0, 24) || `${minutes} 分钟后` };
+            const tags = wechatTimeTags.value.map(item => item.id === tag.id ? tag : { ...item });
+            if (!tags.some(item => item.id === tag.id)) tags.push(tag);
+            if (await saveWechatTimeTags(tags)) cancelWechatTimeTagEdit();
+        };
+        __s.saveWechatTimeTag = saveWechatTimeTag;
+        const deleteWechatTimeTag = async tag => {
+            if (!tag || wechatTimeTagsSaving.value) return;
+            if (await saveWechatTimeTags(wechatTimeTags.value.filter(item => item.id !== tag.id))) {
+                if (wechatTimeTagDraft.id === tag.id) cancelWechatTimeTagEdit();
+            }
+        };
+        __s.deleteWechatTimeTag = deleteWechatTimeTag;
+        // 尚未设定剧情时间时使用固定起点，后续完全依赖分支时间线。
+        const initialWechatTime = wxTime.parse('2025-03-11 18:30:00');
+        const wechatClock = computed(() => wxTime.anchor(wechatTimeline.value, initialWechatTime));
+        __s.wechatClock = wechatClock;
+        const wechatClockLabel = computed(() => wxTime.format(wechatClock.value.time));
+        __s.wechatClockLabel = wechatClockLabel;
+        const wechatSendTimeLabel = computed(() => wechatSendAt.value
+            ? `${wxTime.format(wxTime.parse(wechatSendAt.value))} 发送` : '同一时间发送');
+        __s.wechatSendTimeLabel = wechatSendTimeLabel;
+        const resetWechatSendTime = () => { wechatSendAt.value = ''; wechatTimeError.value = ''; showWechatTimePicker.value = false; };
+        __s.resetWechatSendTime = resetWechatSendTime;
+        const validateWechatSendTime = () => {
+            if (!wechatSendAt.value) return true;
+            const time = wxTime.parse(wechatSendAt.value);
+            if (time === null || (wechatClock.value.established && time < wechatClock.value.time)) {
+                __s.showToast('发送时间不能早于当前剧情时间，请重新选择', 'warning');
+                return false;
+            }
+            return true;
+        };
+        __s.validateWechatSendTime = validateWechatSendTime;
+        const openWechatTimePicker = () => {
+            if (isWechatGenerating.value) return;
+            wechatTimeDraft.value = wechatSendAt.value || wxTime.format(wechatClock.value.time, true).replace(' ', 'T');
+            wechatTimeError.value = '';
+            wechatTimeTagsManaging.value = false;
+            cancelWechatTimeTagEdit();
+            showWechatTimePicker.value = true;
+            loadWechatTimeTags();
+            nextTick(() => document.getElementById('wechat-send-time')?.focus());
+        };
+        __s.openWechatTimePicker = openWechatTimePicker;
+        const applyWechatSendTime = () => {
+            if (isWechatGenerating.value) return;
+            const time = wxTime.parse(wechatTimeDraft.value);
+            if (time === null) { wechatTimeError.value = '请选择完整、有效的日期和时间'; return; }
+            if (wechatClock.value.established && time < wechatClock.value.time) {
+                wechatTimeError.value = '不能早于当前剧情时间'; return;
+            }
+            wechatSendAt.value = wxTime.format(time, true).replace(' ', 'T');
+            showWechatTimePicker.value = false;
+            wechatTimeError.value = '';
+        };
+        __s.applyWechatSendTime = applyWechatSendTime;
+        const advanceWechatSendTime = minutes => {
+            if (isWechatGenerating.value) return;
+            if (!validTagMinutes(minutes)) { wechatTimeError.value = '请填写大于 0 的整数分钟数'; return; }
+            wechatTimeDraft.value = wxTime.format(wechatClock.value.time + minutes * 60000, true).replace(' ', 'T');
+            applyWechatSendTime();
+        };
+        __s.advanceWechatSendTime = advanceWechatSendTime;
+        const resolveWechatReplyTimes = messages => {
+            let previous = wechatClock.value.time;
+            return messages.map(message => {
+                previous = wxTime.resolve(message, previous);
+                return { ...message, storyAt: previous };
+            });
+        };
+        __s.resolveWechatReplyTimes = resolveWechatReplyTimes;
         const wechatPendingImage = ref(null);
         __s.wechatPendingImage = wechatPendingImage;
         const showWechatStickers = ref(false);
@@ -283,11 +452,22 @@
 
         // ---- 时间线写入 ----
         const pushWechatItem = (item) => {
-            wechatTimeline.value.push({
+            let storyAt = item.storyAt;
+            if (item.channel === 'wechat' && ['user', 'assistant'].includes(item.role)) {
+                if (item.role === 'user' && !wxTime.valid(storyAt)) {
+                    if (!validateWechatSendTime()) return null;
+                    storyAt = wechatSendAt.value ? wxTime.parse(wechatSendAt.value) : wechatClock.value.time;
+                    resetWechatSendTime();
+                } else if (!wxTime.valid(storyAt)) storyAt = wxTime.resolve(item, wechatClock.value.time);
+            }
+            const record = {
                 id: generateUUID(),
                 ts: Date.now(),
-                ...item
-            });
+                ...item,
+                ...(wxTime.valid(storyAt) ? { storyAt } : {})
+            };
+            wechatTimeline.value.push(record);
+            return record;
         };
         __s.pushWechatItem = pushWechatItem;
 
@@ -682,6 +862,7 @@
                 userInfo: __s.buildUserInfoPrompt(),
                 relation: String(char.wechatRelation || '').trim(),
                 scene: String(char.wechatScene || '').trim(),
+                storyClock: `【当前剧情钟】${wechatClockLabel.value}。本轮回复以此为基准；连续消息沿用同一时刻，只有明确选择发送时间才推进。`,
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
                 stickerCatalog: buildWechatStickerCatalog(),
                 mediaPrompt: [mediaPrompt, __s.buildWechatDocumentPrompt?.(), __s.buildGeographyPrompt?.()].filter(Boolean).join('\n'),
@@ -743,7 +924,9 @@
                 role: 'user', _preventContextMerge: true,
                 content: `【此前连续沉默｜内部行为状态，不是微信消息】\n你此前连续 ${count} 轮未发送消息，本轮尚未计入。`
                     + `其中已看到内容后未回 ${readCount} 轮，只感知提示 ${noticedCount} 轮，其余未感知或未知，不能全算成故意不理。`
-                    + `最近一次${wxProtocol.describeSilence(last.replySilence)}。这些是过去的记录，当前处境按最新剧情重新判断。`
+                    + `最近一次${wxProtocol.describeSilence(last.replySilence)}。`
+                    + `距离上次沉默的剧情间隔：${wxTime.elapsed(Math.max(0, wechatClock.value.time - (last.replySilence?.storyAt ?? wxTime.itemTime(last) ?? wechatClock.value.time)))}。`
+                    + '这些是过去的记录，当前处境按最新剧情重新判断。'
             } : null;
         };
         __s.buildWechatSilenceState = buildWechatSilenceState;
@@ -785,6 +968,7 @@
                 flushRp();
                 if (item.role !== 'user' && item.role !== 'assistant') continue;
                 wxSeen += 1;
+                const firstEntry = entries.length;
                 if (item.role === 'assistant') silentCount = 0;
                 if (item.type === 'image' && __s.wechatImageRecordText) {
                     entries.push({ message: { role: item.role, content: __s.wechatImageRecordText(item) }, mergeable: true, wxSeen });
@@ -806,6 +990,7 @@
                     const text = String(item.content || '').trim();
                     if (text) entries.push({ message: { role: item.role, content: text }, mergeable: true, wxSeen });
                 }
+                for (let i = firstEntry; i < entries.length; i++) entries[i].storyAt = wxTime.itemTime(item);
                 if (item.role === 'user' && item.replyDecision === 'silent') {
                     silentCount++;
                     entries.push({
@@ -837,10 +1022,11 @@
                 const previous = merged[merged.length - 1];
                 if (entry.mergeable && previous?.mergeable
                     && previous.message.role === entry.message.role) {
-                    previous.message.content = `${previous.message.content}\n${entry.message.content}`;
+                    previous.chunks.push({ content: entry.message.content, storyAt: entry.storyAt });
                     return;
                 }
-                merged.push({ message: { ...entry.message }, mergeable: entry.mergeable, rp: entry.rp === true });
+                merged.push({ message: { ...entry.message }, mergeable: entry.mergeable, rp: entry.rp === true,
+                    chunks: [{ content: entry.message.content, storyAt: entry.storyAt }] });
             });
 
             let windowEntries = merged.slice(-WECHAT_HISTORY_LIMIT);
@@ -850,7 +1036,12 @@
             if (latestRp && !windowEntries.includes(latestRp)) {
                 windowEntries = [latestRp, ...windowEntries.slice(-(WECHAT_HISTORY_LIMIT - 1))];
             }
-            const head = windowEntries.map(entry => entry.message);
+            const clock = { time: null };
+            const head = windowEntries.map(entry => {
+                if (entry.rp) clock.time = null;
+                const chunks = entry.chunks.map(chunk => wxTime.annotate(chunk.content, chunk.storyAt, clock));
+                return { ...entry.message, content: chunks.length === 1 ? chunks[0] : chunks.join('\n') };
+            });
             // 即使历史窗口或前情提要裁掉早先的逐轮标记，也保留当前连续次数与最后归因。
             const silenceState = buildWechatSilenceState();
             if (silenceState) head.unshift(silenceState);
@@ -877,11 +1068,12 @@
             // 玩家用名字（__s.user.name），不用「你」：这段插回 RP 上下文后，「你」= 主角 = 这个角色，
             // 玩家发言标成「你」会跟角色撞车，模型分不清谁说的。与 §8 摘要、{{user}} 替换口径一致。
             const playerName = String(__s.user?.name || '').trim() || '对方';
+            const clock = { time: null };
             const lines = items.map((item) => {
                 const name = item.role === 'user' ? playerName : who;
                 const text = item.type === 'document' ? (__s.wechatDocumentRecordText?.(item) || '[文件]') : item.type === 'image' ? (__s.wechatImageRecordText?.(item) || '[图片]') : item.type === 'voice' ? (__s.wechatVoiceRecordText?.(item) || `[语音] ${item.content}`) : item.type === 'sticker' ? `[表情 ${item.content}]` : item.content;
                 const silent = item.role === 'user' && item.replyDecision === 'silent';
-                return `${name}：${text}` + (silent
+                return wxTime.annotate(`${name}：${text}`, wxTime.itemTime(item), clock) + (silent
                     ? `\n【未发送消息的行为记录】${who}此轮未发微信；${wxProtocol.describeSilence(item.replySilence)}。这是内部状态，不是微信正文。` : '');
             });
             return {
@@ -1010,6 +1202,7 @@
                 scheduleWechatSave();
             }
             wechatInput.value = '';
+            resetWechatSendTime();
             wechatPendingImage.value = null;
             wechatStatusText.value = '';
             cancelWechatEdit();
@@ -1030,6 +1223,7 @@
             }
             showWechatPanel.value = false;
             showWechatSettings.value = false;
+            resetWechatSendTime();
             showWechatStickers.value = false;
             showStickerManager.value = false;
             showStickerStore.value = false;
@@ -1294,6 +1488,7 @@
                 cancelWechatEdit();
                 closeWechatMessageMenu();
                 wechatTimeline.value = wechatTimeline.value.filter((item) => item.channel !== 'wechat');
+                resetWechatSendTime();
                 resetRpRecordCursor();
                 try {
                     await saveWechatTimelineNow(scopeId);
@@ -1498,7 +1693,7 @@
                 return;
             }
             if (isWechatGenerating.value) return;
-            pushWechatItem({ channel: 'wechat', role: 'user', type: 'sticker', content: sticker.name });
+            if (!pushWechatItem({ channel: 'wechat', role: 'user', type: 'sticker', content: sticker.name })) return;
             scheduleWechatSave();
             showWechatStickers.value = false;
             scrollWechatToBottom();
@@ -1784,7 +1979,8 @@
                 wechatStatusText.value = '';
                 const itemId = message._mediaTaskId ? `wx-${message._mediaTaskId}-${message._mediaTaskIndex}` : null;
                 if (!itemId || !wechatTimeline.value.some(item => item.id === itemId)) {
-                    pushWechatItem({ ...(itemId ? { id: itemId } : {}), channel: 'wechat', role: 'assistant', type: message.type, content: message.content || '', ...(message.media ? { media: message.media } : {}), ...(message.voice ? { voice: message.voice } : {}) });
+                    pushWechatItem({ ...(itemId ? { id: itemId } : {}), channel: 'wechat', role: 'assistant',
+                        storyAt: wxTime.resolve(message, wechatClock.value.time), type: message.type, content: message.content || '', ...(message.media ? { media: message.media } : {}), ...(message.voice ? { voice: message.voice } : {}) });
                 }
                 if (message._mediaTaskId) {
                     await saveWechatTimelineNow(scopeId);
@@ -1837,12 +2033,13 @@
                 if (reply.silent) {
                     if (lastUserItem) {
                         lastUserItem.replyDecision = 'silent';
-                        lastUserItem.replySilence = { ...wxProtocol.normalizeSilence(reply.silence), decidedAt: Date.now() };
+                        lastUserItem.replySilence = { ...wxProtocol.normalizeSilence(reply.silence), decidedAt: Date.now(), storyAt: wechatClock.value.time };
                     }
                     return;
                 }
                 report({ title: '正在准备发送内容', detail: '模型回复已返回', completed: null, total: null });
-                const prepared = __s.prepareWechatReplyMedia ? await __s.prepareWechatReplyMedia(reply.messages, signal) : reply.messages;
+                const timedMessages = resolveWechatReplyTimes(reply.messages);
+                const prepared = __s.prepareWechatReplyMedia ? await __s.prepareWechatReplyMedia(timedMessages, signal) : timedMessages;
                 if (signal.aborted || wechatScopeId() !== scopeId) return;
                 clearWechatActivity();
                 wechatTyping.value = true;
@@ -1862,7 +2059,7 @@
                     stopWechatStatusTicker();
                     isWechatGenerating.value = false;
                     __s.wechatAbortController = null;
-                    await saveWechatTimelineNow(scopeId, timeline).catch(() => {});
+                    await saveWechatTimelineNow(scopeId, wechatScopeId() === scopeId ? wechatTimeline.value : timeline).catch(() => {});
                 }
             }
         };
@@ -1873,12 +2070,14 @@
             const image = wechatPendingImage.value;
             const pendingDocument = __s.wechatPendingDocument?.value;
             if ((!text && !image && !pendingDocument) || isWechatGenerating.value || __s.isWechatMediaPreparing?.value || __s.isWechatDocumentPreparing?.value) return;
+            if (!validateWechatSendTime()) return;
 
             let imageItem;
             if (image && __s.prepareWechatUploadedImage) {
                 try { imageItem = await __s.prepareWechatUploadedImage(image); }
                 catch (error) { if (error.name !== 'AbortError') __s.showToast(`图片保存失败：${error.message}`, 'warning'); return; }
             }
+            if (!validateWechatSendTime()) return;
 
             wechatInput.value = '';
             wechatPendingImage.value = null;
@@ -1981,18 +2180,7 @@
         __s.flushActiveWechatMessages = flushActiveWechatMessages;
 
         // ---- 展示用：日期分隔 + 时间 ----
-        const pad2 = (value) => String(value).padStart(2, '0');
-        const isSameDay = (a, b) => {
-            const da = new Date(a);
-            const db = new Date(b);
-            return da.getFullYear() === db.getFullYear()
-                && da.getMonth() === db.getMonth()
-                && da.getDate() === db.getDate();
-        };
-        const formatWechatDayLabel = (ts) => {
-            const date = new Date(ts);
-            return `${date.getMonth() + 1}月${date.getDate()}日 ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-        };
+        const formatWechatDayLabel = ts => wxTime.format(ts);
         const wechatDisplayItems = computed(() => {
             const items = [];
             let lastTs = null;
@@ -2003,16 +2191,21 @@
                     items.push({ kind: 'system', id: item.id, content: item.content });
                     continue;
                 }
-                if (lastTs === null || !isSameDay(lastTs, item.ts)) {
-                    items.push({ kind: 'day', id: `day-${item.id}`, label: formatWechatDayLabel(item.ts) });
+                const time = wxTime.itemTime(item);
+                const changed = time !== lastTs;
+                const legacyGap = lastTs !== null && (Math.abs(time - lastTs) >= 5 * 60000
+                    || wxTime.format(time).slice(0, 10) !== wxTime.format(lastTs).slice(0, 10));
+                if (time !== null && (lastTs === null || (changed && (wxTime.valid(item.storyAt) || legacyGap)))) {
+                    items.push({ kind: 'day', id: `day-${item.id}`, label: formatWechatDayLabel(time) });
                 }
-                lastTs = item.ts;
+                lastTs = time;
                 items.push({
                     kind: 'message',
                     id: item.id,
                     role: item.role,
                     type: item.type,
                     content: item.content,
+                    timeLabel: wxTime.format(time, true),
                     media: item.media,
                     voice: item.voice,
                     document: item.document,
@@ -2030,6 +2223,7 @@
         // 内存里的时间线属于切走前的 scope，必须一并作废：面板关着时 appendWechatDigestToMessages
         // 仍会读它，不作废就会把上一个角色（或上一条分支）的微信记录带进当前 RP 上下文。
         const invalidateWechatTimelineScope = () => {
+            resetWechatSendTime();
             stopWechatGeneration();
             __s.invalidateWechatMedia?.();
             loadedWechatScopeId = null;

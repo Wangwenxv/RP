@@ -67,7 +67,7 @@
                 parameters: tool.type === ACTIVE_TOOL_WECHAT_TYPE ? {
                     type: 'object',
                     properties: {
-                        content: { type: 'string', description: '这条微信的正文：真人微信口吻的短消息，口语、可带语气词，不要写成旁白、括号动作或小说描写。' },
+                        content: { type: 'string', description: '当前角色本人发给玩家的微信正文，不能代玩家发送：真人微信口吻的短消息，口语、可带语气词，不要写成旁白、括号动作或小说描写。' },
                         reason: { type: 'string', description: '可选，一句话说明为什么现在发这条微信。' }
                     },
                     required: ['content'],

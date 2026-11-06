@@ -2934,7 +2934,7 @@
                 <template v-for="item in wechatDisplayItems" :key="item.id">
                     <div v-if="item.kind === 'day'" class="wx-day">{{ item.label }}</div>
                     <div v-else-if="item.kind === 'system'" class="wx-sys">{{ item.content }}</div>
-                    <div v-else class="wx-row" :class="{ me: item.role === 'user', 'is-editing': wechatEditingId === item.id }">
+                    <div v-else class="wx-row" :class="{ me: item.role === 'user', 'is-editing': wechatEditingId === item.id }" :title="item.timeLabel">
                         <label class="wx-avatar-pick"
                             :title="(item.role === 'user' ? '点击更换我的头像' : '点击更换对方头像')">
                             <img v-if="(item.role === 'user' ? wechatUserAvatar : wechatAvatar)" class="wx-avatar"
@@ -3028,6 +3028,11 @@
             </div>
 
             <footer class="wx-composer">
+                <div class="wx-time-row">
+                    <span class="wx-time-current">剧情时间 <time>{{ wechatClockLabel }}</time></span>
+                    <button class="wx-time-button" :class="{ on: wechatSendAt }" @click="openWechatTimePicker" :disabled="isWechatGenerating" aria-label="选择发送时间">{{ wechatSendTimeLabel }} <span aria-hidden="true">⌄</span></button>
+                    <button v-if="wechatSendAt" class="wx-time-reset" @click="resetWechatSendTime" :disabled="isWechatGenerating" aria-label="取消指定时间">×</button>
+                </div>
                 <div v-if="wechatActivity" class="wx-activity" aria-label="系统处理状态">
                     <div class="wx-activity-heading" role="status"><span class="wx-progress-dot" aria-hidden="true"></span><strong>{{ wechatActivity.title }}</strong></div>
                     <div class="wx-activity-detail">{{ wechatActivity.detail }}</div>
@@ -3085,6 +3090,36 @@
                     <strong>{{ isWechatGenerating || isWechatDocumentPreparing || isWechatMediaPreparing ? '正在处理消息' : '松手，添加到这段聊天' }}</strong>
                     <span>{{ isWechatGenerating || isWechatDocumentPreparing || isWechatMediaPreparing ? '完成后再拖入附件' : '图片或文本文件 · 添加后由你确认发送' }}</span>
                 </div>
+            </div>
+
+            <div v-if="showWechatTimePicker" class="wx-drawer-mask wx-drawer-mask--center" @click.self="showWechatTimePicker = false" @keydown.esc="showWechatTimePicker = false">
+                <section class="wx-modal wx-time-modal" role="dialog" aria-modal="true" aria-labelledby="wx-time-title">
+                    <div class="wx-drawer-head"><h2 id="wx-time-title">选择发送时间</h2><button class="wx-icon-btn" @click="showWechatTimePicker = false" aria-label="关闭时间选择">×</button></div>
+                    <div class="wx-drawer-body">
+                        <p class="wx-hint">下一次发送使用这个剧情时间。连续发送默认沿用上一条时间。</p>
+                        <label class="wx-field"><span>日期与时间</span><input id="wechat-send-time" type="datetime-local" step="1" v-model="wechatTimeDraft" :min="wechatClock.established ? wechatClockLabel.replace(' ', 'T') : undefined" aria-label="剧情发送日期时间" @keydown.enter.prevent="applyWechatSendTime"></label>
+                        <div class="wx-time-tags-heading"><span>快捷时间</span><button class="wx-time-button" @click="toggleWechatTimeTagManager" :aria-pressed="wechatTimeTagsManaging" :disabled="!wechatTimeTagsLoaded || wechatTimeTagsSaving">{{ wechatTimeTagsManaging ? '完成管理' : '管理标签' }}</button></div>
+                        <div class="wx-time-presets">
+                            <span v-for="choice in wechatTimeTags" :key="choice.id" class="wx-time-tag">
+                                <button class="wx-ghost" @click="advanceWechatSendTime(choice.minutes)" :title="`${choice.minutes} 分钟后`" :disabled="isWechatGenerating || wechatTimeTagsSaving">{{ choice.label }}</button>
+                                <template v-if="wechatTimeTagsManaging">
+                                    <button class="wx-time-tag-tool" @click="editWechatTimeTag(choice)" :aria-label="`编辑标签 ${choice.label}`" :disabled="wechatTimeTagsSaving">✎</button>
+                                    <button class="wx-time-tag-tool" @click="deleteWechatTimeTag(choice)" :aria-label="`删除标签 ${choice.label}`" :disabled="wechatTimeTagsSaving">×</button>
+                                </template>
+                            </span>
+                            <button class="wx-ghost wx-time-tag-add" @click="editWechatTimeTag()" :disabled="!wechatTimeTagsLoaded || wechatTimeTagsSaving">＋ 添加标签</button>
+                        </div>
+                        <div v-if="wechatTimeTagEditing" class="wx-time-tag-editor" @keydown.enter.prevent="saveWechatTimeTag">
+                            <label class="wx-field"><span>多少分钟后</span><input id="wechat-time-tag-minutes" type="number" min="1" step="1" v-model="wechatTimeTagDraft.minutes" placeholder="例如 15" aria-label="快捷标签分钟数" :disabled="wechatTimeTagsSaving"></label>
+                            <label class="wx-field"><span>标签名称 <small>选填</small></span><input v-model="wechatTimeTagDraft.label" maxlength="24" placeholder="默认显示为几分钟后" aria-label="快捷标签名称" :disabled="wechatTimeTagsSaving"></label>
+                            <div class="wx-time-tag-editor-actions"><button class="wx-ghost" @click="cancelWechatTimeTagEdit" :disabled="wechatTimeTagsSaving">取消编辑</button><button class="wx-primary" @click="saveWechatTimeTag" :disabled="wechatTimeTagsSaving">{{ wechatTimeTagsSaving ? '保存中…' : '保存标签' }}</button></div>
+                        </div>
+                        <p v-if="wechatTimeTagError" class="wx-time-error" role="alert">{{ wechatTimeTagError }}</p>
+                        <p v-if="wechatTimeError" class="wx-time-error" role="alert">{{ wechatTimeError }}</p>
+                        <p class="wx-hint">当前：{{ wechatClockLabel }}。时间会在消息发送后推进；角色回复也可能按人设稍晚发出。</p>
+                        <div class="wx-time-actions"><button class="wx-ghost" @click="resetWechatSendTime">沿用当前时间</button><button class="wx-primary" @click="applyWechatSendTime" :disabled="isWechatGenerating">使用这个时间</button></div>
+                    </div>
+                </section>
             </div>
 
             <div v-if="showWechatStickers" class="wx-drawer-mask wx-drawer-mask--center" @click.self="showWechatStickers = false">
@@ -3361,6 +3396,7 @@
         document.write('<script src="assets/js/wechat-document-search.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-documents.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-voice.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/wechat-time.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-protocol.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/emoji-catalog.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/data-services.js?v=' + new Date().getTime() + '"><\/script>');

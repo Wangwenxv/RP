@@ -177,11 +177,12 @@
         __s.computeRecapCoverage = computeRecapCoverage;
 
         /** 单条微信消息 → 转述素材行。 */
-        const formatRecapWechatLine = (item, characterName) => {
+        const formatRecapWechatLine = (item, characterName, clock) => {
             const name = item.role === 'user' ? __s.user.name : characterName;
             const text = item.type === 'document' ? (__s.wechatDocumentRecordText?.(item) || '[文件]') : item.type === 'image' ? (__s.wechatImageRecordText?.(item) || '[图片]') : item.type === 'voice' ? (__s.wechatVoiceRecordText?.(item) || `[语音] ${item.content}`) : item.type === 'sticker' ? `[表情 ${item.content}]` : item.content;
             const silent = item.role === 'user' && item.replyDecision === 'silent';
-            return `${name}：${text}` + (silent
+            const timed = window.RPHubWeChatTime.annotate(`${name}：${text}`, window.RPHubWeChatTime.itemTime(item), clock);
+            return timed + (silent
                 ? `\n【未发送消息的行为记录】${characterName}此轮未发微信；${window.RPHubWeChatProtocol.describeSilence(item.replySilence)}。这是内部状态，不是微信正文。` : '');
         };
 
@@ -236,12 +237,13 @@
             const characterName = String(__s.currentCharacter.value?.wechatPeerName || '').trim()
                 || __s.currentCharacter.value?.name || '角色';
             let wxSeen = 0;
+            const clock = { time: null };
             for (const item of (__s.wechatTimeline?.value || [])) {
-                if (item.channel === 'rp') { emitRp(item.rpIndex); continue; }
+                if (item.channel === 'rp') { emitRp(item.rpIndex); clock.time = null; continue; }
                 if (item.channel !== 'wechat' || item.role === 'system') continue;
                 if (wxSeen >= coversWechatCount) continue;
                 wxSeen += 1;
-                lines.push(formatRecapWechatLine(item, characterName));
+                lines.push(formatRecapWechatLine(item, characterName, clock));
             }
             // 时间线里没有镜像的 RP 正文（微信未启用 / 镜像缺失）按原文顺序补在末尾
             rpEntries.forEach((entry) => emitRp(entry.index));
@@ -297,11 +299,12 @@
                 || __s.currentCharacter.value?.name || '角色';
             const lines = [];
             let wxSeen = 0;
+            const clock = { time: null };
             for (const item of (__s.wechatTimeline?.value || [])) {
                 if (item.channel !== 'wechat' || item.role === 'system') continue;
                 wxSeen += 1;
                 if (wxSeen < wxStartSeen || wxSeen > coveredWx) continue;
-                lines.push(formatRecapWechatLine(item, characterName));
+                lines.push(formatRecapWechatLine(item, characterName, clock));
             }
             return lines.join('\n');
         };

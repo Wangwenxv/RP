@@ -87,7 +87,7 @@
 【第二步：有条件回复，但此刻愿意吗、有没有社交精力？】
 - 正在闹矛盾或吵架，可能气得不想回、需要冷静、抗拒解释或暂时不想见对方，可以沉默，即使问题没有解决。也可能回一句冷淡的话、继续争辩或试图和好，按冲突原因、人物处理矛盾的习惯、关系和当下情绪决定。
 - 情绪低落、疲惫、耗尽精力、想独处，可能连一句解释都不想打，可以沉默；也可能只对亲近的人回应。不要强迫每次空回前都交代「我累了」，也不要把人物写成必定会安慰任何人的客服。
-- 懒得打字、不喜欢线上文字沟通、想当面说，也可以暂时不回。有意愿且有精力时，可以简短提出稍后聊或见面，但不必为了证明原因发消息。当前微信协议不能自行执行见面、打电话、转入 RP 或推进剧情；不要把「不想打字」自动写成这些事情已经发生。
+- 懒得打字、不喜欢线上文字沟通、想当面说，也可以暂时不回。有意愿且有精力时，可以简短提出稍后聊或见面，但不必为了证明原因发消息。发送时间字段可以推进剧情钟，但微信协议不能自行执行见面、打电话或转入 RP；不要把「不想打字」自动写成这些事情已经发生。
 - 沉默有原因，但原因不必向对方展示。不要凭空制造绑架、忙碌、抑郁或争吵来找理由，也不要只因人设写了「冷淡」就永远不回。
 - 状态有连续性，也会变化：追问不自动使人消气；道歉的内容、时间在故事中的推进、事情处理完、关系变化等可以影响意愿。不要机械地永远沉默，也不要被下一句问号自动重置成热情接话。
 
@@ -141,6 +141,8 @@
         // 预设规则（破限、人格内核…）排在最前：它们是"你是什么状态"的前提，先于格式契约。
         if (extra.presetRules) parts.push(`【预设规则】\n${String(extra.presetRules).trim()}`);
         parts.push(PROTOCOL);
+        if (window.RPHubWeChatTime) parts.push(window.RPHubWeChatTime.RULE);
+        if (extra.storyClock) parts.push(String(extra.storyClock));
         if (extra.stickerRule) parts.push(String(extra.stickerRule).trim());
         // 表情包库目录紧跟在频率策略之后：PROTOCOL 里说的「下方【表情包库】」指的就是它。
         if (extra.stickerCatalog) parts.push(String(extra.stickerCatalog).trim());
@@ -259,10 +261,11 @@
                 continue;
             }
             if (typeof item !== 'object') continue;
+            const timing = window.RPHubWeChatTime?.metadata(item) || {};
 
             if (['voice_request', 'voice'].includes(String(item.type).toLowerCase())) {
                 if (!window.RPHubWeChatVoice) throw new Error('语音模块尚未加载');
-                out.push(window.RPHubWeChatVoice.normalizeIntent(item));
+                out.push({ ...window.RPHubWeChatVoice.normalizeIntent(item), ...timing });
                 window.RPHubWeChatVoice.validateBatch(out);
                 continue;
             }
@@ -271,7 +274,7 @@
                 if (!window.RPHubWeChatMedia || item.type !== 'image_request') throw new Error('图片回复必须使用有效的 image_request');
                 const media = window.RPHubWeChatMedia.normalizeIntent(item.media);
                 if (out.some(message => message.type === 'image_request')) throw new Error('一轮最多发送一张图片');
-                out.push({ type: 'image_request', media });
+                out.push({ type: 'image_request', media, ...timing });
                 continue;
             }
 
@@ -283,7 +286,7 @@
             if (type !== 'text' && type !== 'sticker') type = 'text';
             if (type === 'text' && isPureEmoji(content)) type = 'sticker';
 
-            out.push({ type, content });
+            out.push({ type, content, ...timing });
         }
         return out;
     }

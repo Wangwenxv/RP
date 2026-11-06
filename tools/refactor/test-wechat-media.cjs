@@ -49,6 +49,7 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
     showToast: (...args) => toasts.push(args),
     requestTrackedChatCompletion: async options => { requests.push(structuredClone({ ...options, signal: undefined })); return respond(options, requests.length); }
   };
+  vm.runInContext(read('wechat-time.js'), context);
   vm.runInContext(read('wechat-protocol.js'), context);
   vm.runInContext(read('app/25-wechat.js'), context); context.window.RPHubAppSections.wechat(s);
   vm.runInContext(read('app/27-wechat-media.js'), context); context.window.RPHubAppSections.wechatMedia(s);
@@ -347,6 +348,29 @@ test('RP 主动微信拒绝图片意图，保留文字队列', () => {
   assert.equal(h.s.pendingActiveWechatMessages.length, 0);
   h.s.deliverActiveWechatMessage('下班了吗');
   assert.equal(h.s.pendingActiveWechatMessages[0], '下班了吗');
+});
+
+test('图片资源准备与任务重试保留模型发送时间，不按请求耗时重算', async () => {
+  const h = harness(async () => ({ content: JSON.stringify({ messages: [
+    { type: 'image_request', media: { mode: 'album', assetId: 'builtin-salad' }, delayMinutes: 60 },
+    { type: 'text', content: '晚饭', delayMinutes: 5 }
+  ] }) }));
+  const T = h.context.window.RPHubWeChatTime;
+  h.s.wechatTimeDraft.value = '2023-08-01T18:00'; h.s.applyWechatSendTime();
+  await h.send('看看照片');
+  assert.deepEqual(plain(h.s.wechatTimeline.value.map(item => T.format(item.storyAt))), ['2023-08-01 18:00', '2023-08-01 19:00', '2023-08-01 19:05']);
+  const retry = harness(async () => ({ content: JSON.stringify({ messages: [
+    { type: 'image_request', media: { mode: 'album', assetId: 'later-found' }, delayMinutes: 60 },
+    { type: 'text', content: '晚饭', delayMinutes: 5 }
+  ] }) }));
+  retry.s.wechatTimeDraft.value = '2023-08-01T18:00'; retry.s.applyWechatSendTime();
+  await retry.send('看看照片');
+  assert.equal(retry.s.wechatClockLabel.value, '2023-08-01 18:00', '准备失败不能提前跳时');
+  const task = retry.s.wechatMediaTasks.value[0];
+  assert.equal(task.messages[0].storyAt, T.parse('2023-08-01 19:00'));
+  retry.images.set('later-found', { id: 'later-found', caption: '晚饭照片' });
+  await retry.s.retryWechatMediaTask(task);
+  assert.deepEqual(plain(retry.s.wechatTimeline.value.map(item => T.format(item.storyAt))), ['2023-08-01 18:00', '2023-08-01 19:00', '2023-08-01 19:05']);
 });
 test('缩略图最多四张并发，切会话后排队任务不读图、不保留 URL', async () => {
   const h = harness(); const releases = []; let active = 0, peak = 0, reads = 0;

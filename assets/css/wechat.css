@@ -227,6 +227,31 @@
     margin: 4px 0;
 }
 
+/* 剧情钟沿用微信的绿灰配色和原有弹窗。 */
+.wx-time-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; font-size: 12px; color: var(--wx-muted); }
+.wx-time-current { flex: 1; min-width: 160px; }
+.wx-time-current time { margin-left: 6px; font-family: var(--wx-utility-font); font-variant-numeric: tabular-nums; }
+.wx-time-button, .wx-time-reset { border: 0; padding: 5px 8px; border-radius: 5px; background: transparent; color: var(--wx-muted); cursor: pointer; font: inherit; }
+.wx-time-button:hover, .wx-time-button.on { background: var(--wx-bubble-me); color: var(--wx-accent); }
+.wx-time-button:disabled, .wx-time-reset:disabled { opacity: .5; cursor: default; }
+.wx-time-modal { width: 420px; max-width: calc(100vw - 24px); }
+.wx-time-presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.wx-time-presets .wx-ghost { margin: 0; padding: 7px 10px; }
+.wx-time-tags-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--wx-muted); }
+.wx-time-tag { display: inline-flex; align-items: center; max-width: 100%; border: 1px solid var(--wx-line); border-radius: 6px; background: var(--wx-bar); }
+.wx-time-tag .wx-ghost { min-width: 0; border: 0; background: transparent; overflow-wrap: anywhere; }
+.wx-time-tag-tool { flex: 0 0 auto; padding: 7px; border: 0; background: transparent; color: var(--wx-muted); font-size: 14px; cursor: pointer; }
+.wx-time-tag-tool:hover { color: var(--wx-accent); }
+.wx-time-tag-tool:disabled { opacity: .5; }
+.wx-time-tag-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 12px; border: 1px solid var(--wx-line); border-radius: 8px; background: var(--wx-bg); }
+.wx-time-tag-editor input { min-width: 0; width: 100%; }
+.wx-time-tag-editor-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.wx-time-tag-editor-actions .wx-primary { width: auto; margin: 0; padding: 7px 12px; }
+.wx-time-modal .wx-drawer-body { max-height: calc(85dvh - 75px); overflow-y: auto; }
+.wx-time-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+.wx-time-actions .wx-primary { width: auto; margin: 0; }
+.wx-time-error { color: #b84949; font-size: 12px; }
+
 .wx-row {
     display: flex;
     align-items: flex-start;

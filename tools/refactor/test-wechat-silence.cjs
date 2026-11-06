@@ -10,6 +10,7 @@ const ROOT = path.resolve(__dirname, '../..');
 const protocolSource = fs.readFileSync(path.join(ROOT, 'assets/js/wechat-protocol.js'), 'utf8');
 const wechatSource = fs.readFileSync(path.join(ROOT, 'assets/js/app/25-wechat.js'), 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
+const withoutTime = value => String(value).replace(/【发送时间：[^】]*】\n/g, '');
 const defer = () => {
   let resolve;
   const promise = new Promise(done => { resolve = done; });
@@ -36,6 +37,7 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
     getScopedStoredValue: async (key, scope) => plain(stored.get(`${key}/${scope}`) || []),
     setScopedStoredValue: async (key, scope, value) => { stored.set(`${key}/${scope}`, plain(value)); }
   });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/wechat-time.js'), 'utf8'), context, { filename: 'wechat-time.js' });
   vm.runInContext(protocolSource, context, { filename: 'wechat-protocol.js' });
   vm.runInContext(wechatSource, context, { filename: '25-wechat.js' });
   const state = {
@@ -152,7 +154,7 @@ test('1+1 → 2 → 好的 → 空回 → 新问题：无空白气泡，状态�
   assert.equal(s.wechatTimeline.value.at(-1).content, '4');
   const chat = h.requests.at(-1).messages.slice(1);
   assert.ok(chat[0].content.includes('连续 1 轮'));
-  assert.deepEqual(plain(chat.filter(m => !m.content.startsWith('【')).map(m => ({ role: m.role, content: m.content }))), [
+  assert.deepEqual(plain(chat.map(m => ({ role: m.role, content: withoutTime(m.content) })).filter(m => !m.content.startsWith('【'))), [
     { role: 'user', content: '1+1=几？' }, { role: 'assistant', content: '2' },
     { role: 'user', content: '好的' }, { role: 'user', content: '2+2=几？' }
   ]);
@@ -341,10 +343,10 @@ test('RP 恢复事件在原时间位置送入下一次微信请求，之前的�
   const chat = h.requests[1].messages.slice(2);
   assert.deepEqual(plain(chat.map(m => m.role)), ['user', 'user', 'assistant', 'user', 'user']);
   assert.ok(chat[0].content.includes('尚未获救'));
-  assert.equal(chat[1].content, '还在忙吗？');
+  assert.equal(withoutTime(chat[1].content), '还在忙吗？');
   assert.ok(chat[2].content.includes('未发送消息的行为记录'));
   assert.ok(chat[3].content.includes('已被解救') && chat[3].content.includes('依然疲惫'));
-  assert.equal(chat[4].content, '现在怎么样？');
+  assert.equal(withoutTime(chat[4].content), '现在怎么样？');
   assert.equal(h.state.wechatTimeline.value.at(-1).content, '我安全了');
 });
 
@@ -442,7 +444,7 @@ test('重复嗯嗯保留两次自然收尾记录，第三轮可以回复而非�
     : { content: '{"messages":[{"content":"怎么发这么多嗯嗯"}]}' });
   for (let i = 0; i < 3; i++) await h.send('嗯嗯');
   assert.equal(behaviorRecords(h.requests[2]).length, 2);
-  assert.equal(h.requests[2].messages.filter(m => m.role === 'user' && m.content === '嗯嗯').length, 3);
+  assert.equal(h.requests[2].messages.filter(m => m.role === 'user' && withoutTime(m.content) === '嗯嗯').length, 3);
   assert.ok(h.requests[2].messages[1].content.includes('话题自然结束'));
   assert.equal(h.state.wechatTimeline.value.at(-1).content, '怎么发这么多嗯嗯');
 });
