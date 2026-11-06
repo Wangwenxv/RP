@@ -11,6 +11,12 @@ test('自包含地图包原图字节、坐标/用途/道路/文化/开放规则�
     assert.equal(value.world.places.length, world.places.length); assert.equal(value.world.edges.length, world.edges.length);
     assert.deepEqual(value.world.districts, world.districts); assert.deepEqual(value.world.culture, world.culture);
     assert.deepEqual(value.world.landmarks, world.landmarks);
+    assert.deepEqual(value.world.everyday, world.everyday);
+    for (const id of ['youkang', 'turf', 'stadium']) {
+        const p = value.world.places.find(p => p.id === id), source = world.places.find(p => p.id === id);
+        assert.deepEqual(p.services, source.services); assert.equal(p.usage, source.usage);
+    }
+    assert.equal(G.execute(value.world, {}, { operation: 'search', query: '洗衣液' }).results[0].id, 'youkang');
     assert.deepEqual(value.world.places.find(p => p.id === 'dorm-13').access, world.places.find(p => p.id === 'dorm-13').access);
     assert.equal(G.route(value.world, '13栋', '实验楼A区').duration.typicalMinutes, 35);
     assert.ok(!value.world.image && !JSON.stringify(G.execute(value.world, {}, { operation: 'place', query: '13栋', detail: 'full' })).includes('base64'));

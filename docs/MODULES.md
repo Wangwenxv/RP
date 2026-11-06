@@ -1,5 +1,7 @@
 # App 模块地图（assets/js/app/）
 
+> 30地理适配新增轻量生活需求预取，复用RP/微信本轮文本，不额外调用意图模型；geography.js提供needs/everydayContext及按用途搜索，地图包保留新资料。见[生活需求预取交接](./geography-everyday.md)。
+
 > 地图库的只读浏览界面新增`map-atlas.js`组件，`map-components.js`增加“浏览地点”入口；读取31模块当前地图库记录，不改地图或模型提示。见[地点可视化交接](./geography-atlas.md)。
 
 > 30地理适配的后续修复：微信连发读取当前未回复的一批文本，最多4地点短资料预取；引擎识别已知地点＋房号，不把询问/计划作为到达。见[场景预取交接](./geography-scene-prefetch.md)。

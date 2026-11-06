@@ -39,6 +39,7 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
             const tool = (id, args) => ({ id, type: 'function', function: { name: 'tool_geo', arguments: JSON.stringify(args) } });
             let message;
             if (fixture === 'burst-rooms') message = say('你先在B栋401上课，别着凉。');
+            else if (fixture === 'daily-supplies' || fixture === 'running') message = say('我先把手头的事做完，再看看。');
             else if (fixture === 'prefetch') message = say('我还在实验楼A区。风采园是南苑食堂，我看下路程再决定。');
             else if (fixture === 'clean') message = say('好呀。');
             else if (geoResult) message = say('走过去大概35分钟，我先找辆车，你等我。');
@@ -73,10 +74,10 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
         for (const target of ['rp', 'wechat']) {
             channel = target;
             await page.evaluate(async target => { const r = window.__APP_PROXY__; if (target === 'rp') r.closeWechat(); else await r.openWechat(); }, target);
-            for (const scenario of ['parallel', 'combined', 'prefetch', 'clean']) {
+            for (const scenario of ['parallel', 'combined', 'prefetch', 'daily-supplies', 'running', 'clean']) {
                 fixture = scenario; const start = requests.length;
                 await page.evaluate(async ({ target, scenario }) => {
-                    const r = window.__APP_PROXY__, input = scenario === 'clean' ? '谢谢啦' : '我在风采园，你在哪里？';
+                    const r = window.__APP_PROXY__, input = scenario === 'clean' ? '谢谢啦' : scenario === 'daily-supplies' ? '洗衣液又用完了...' : scenario === 'running' ? '陪我去跑步' : '我在风采园，你在哪里？';
                     if (target === 'rp') { r.userInput = input; await r.sendMessage(); }
                     else { r.wechatInput = input; r.wechatBurstMode = false; await r.sendWechatMessage(); }
                 }, { target, scenario });
@@ -91,8 +92,15 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
                     check(target + '一组合调用返回食堂功能和双交通耗时', turn.length === 2 && context.places.to.id === 'canteen-3' && context.routes.walk.duration && context.routes.bike.duration);
                 } else if (scenario === 'prefetch') {
                     check(target + '本轮速查包含风采园功能，不需要额外模型请求', turn.length === 1 && turn[0].messages.some(m => m.role === 'system' && m.content.includes('本轮地理速查') && m.content.includes('南苑西南')));
+                } else if (scenario === 'daily-supplies' || scenario === 'running') {
+                    const system = turn[0].messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
+                    const line = system.split('\n').find(line => line.startsWith('本轮地理速查'));
+                    const context = JSON.parse(line.split('）：').at(-1));
+                    const life = context.everyday;
+                    check(target + scenario + '无地名需求进入实际请求，只有一次模型请求', turn.length === 1 && life.possibleNeeds[0].id === scenario && !turn[0].messages.some(m => m.role === 'tool'));
+                    check(target + scenario + '候选与估算成本正确，短资料遵守预算', life.candidates[0].id === (scenario === 'running' ? 'turf' : 'youkang') && life.candidates[0].costs.walk.roundTrip >= life.candidates[0].costs.walk.oneWay && JSON.stringify(context).length <= 6000);
                 } else {
-                    check(target + '下一轮普通聊天不重放工具结果/速查', turn.length === 1 && !turn[0].messages.some(m => m.role === 'tool' || (m.role === 'system' && m.content.includes('本轮地理速查'))));
+                    check(target + '下一轮普通聊天不重放工具结果/速查', turn.length === 1 && !turn[0].messages.some(m => m.role === 'tool' || (m.role === 'system' && (m.content.includes('本轮地理速查') || m.content.includes('possibleNeeds')))));
                 }
             }
         }

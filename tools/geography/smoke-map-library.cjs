@@ -50,7 +50,7 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         check('地理环境管理入口可显示内置江大地图', await page.locator('.map-view article').count() === 1);
         await page.getByRole('button', { name: '浏览地点', exact: true }).click();
         const atlas = page.getByTestId('map-atlas'); await atlas.waitFor();
-        check('地点浏览默认展示全部54个场景地点', await atlas.locator('.atlas-place-button').count() === 54);
+        check('地点浏览默认展示全部场景地点', await atlas.locator('.atlas-place-button').count() === atlasWorld.places.filter(p => p.kind !== 'junction').length);
         await page.getByLabel('浏览地点目录').selectOption('library');
         check('浏览器完整展示图书馆介绍，不使用工具的180字截断', await page.getByTestId('atlas-local-scene').textContent() === atlasWorld.places.find(p => p.id === 'library').scene);
         await atlas.locator('summary').filter({ hasText: '所属片区完整背景' }).click();
@@ -58,7 +58,7 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         await page.getByLabel('浏览搜索地点').fill('声控灯');
         check('地点介绍可搜索，找到B栋', await atlas.locator('.atlas-place-button').count() === 1 && (await atlas.locator('.atlas-place-button').textContent()).includes('B栋'));
         await page.getByLabel('浏览搜索地点').fill(''); await atlas.getByLabel('显示路网节点').check();
-        check('可显示全部71个地点和路网节点', await atlas.locator('.atlas-place-button').count() === 71);
+        check('可显示全部地点和路网节点', await atlas.locator('.atlas-place-button').count() === atlasWorld.places.length);
         await page.screenshot({ path: path.join(tmp, 'atlas-desktop.png'), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: path.join(tmp, 'atlas-mobile.png'), fullPage: true });
         check('手机地点浏览无横向溢出', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
@@ -67,7 +67,8 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: '导出地图包', exact: true }).click();
         const download = await downloaded, output = path.join(tmp, 'pilot.rpmap.json'); await download.saveAs(output);
         const pack = JSON.parse(fs.readFileSync(output, 'utf8'));
-        check('浏览器导出原图片字节与地点道路文化，自包含且无本地路径', Buffer.compare(Buffer.from(pack.image.dataUrl.split(',')[1], 'base64'), fs.readFileSync(path.join(root, 'card/江大南校区.jpeg'))) === 0 && pack.world.places.length === 71 && !pack.world.image);
+        check('浏览器导出原图片字节与地点道路文化，自包含且无本地路径', Buffer.compare(Buffer.from(pack.image.dataUrl.split(',')[1], 'base64'), fs.readFileSync(path.join(root, 'card/江大南校区.jpeg'))) === 0 && pack.world.places.length === atlasWorld.places.length && !pack.world.image);
+        check('浏览器导出保留生活需求、服务和使用惯例', JSON.stringify(pack.world.everyday) === JSON.stringify(atlasWorld.everyday) && pack.world.places.find(p => p.id === 'youkang').usage === atlasWorld.places.find(p => p.id === 'youkang').usage);
         await page.getByTestId('map-import').setInputFiles(output); await page.waitForFunction(() => window.__APP_PROXY__.mapRecords.length === 2);
         check('同ID导入为副本，内置世界保持原ID', await page.evaluate(() => { const r = window.__APP_PROXY__.mapRecords; return r[0].world.id === 'jiangnan-south-campus' && r[1].world.id.includes('-import-'); }));
         await page.locator('.map-view article').last().getByRole('button', { name: '查看 / 编辑' }).click();
@@ -120,6 +121,7 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         await page.evaluate(async () => { const r = window.__APP_PROXY__; await r.selectCharacter(r.characters.length - 1, false, { silent: true }); });
         await page.reload({ waitUntil: 'domcontentloaded' }); await boot();
         check('刷新后原图、编辑用途、道路、角色绑定都从IndexedDB恢复', await page.evaluate(id => { const r = window.__APP_PROXY__, record = r.mapRecords.find(m => m.world.id === id); return r.mapRecords.length === 3 && record.imageData.startsWith('data:image/jpeg') && record.world.edges[0].points.length === 1 && r.characters.at(-1).geography.worldId === id && r.mapRecords[1].world.places.find(p => p.id === 'canteen-3').function === '测试食堂用途'; }, id));
+        check('编辑保存与刷新载入后仍保留生活需求和服务检索', await page.evaluate(() => { const w = window.__APP_PROXY__.mapRecords[1].world, G = window.RPHubGeography; return G.needs(w, '洗衣液用完了')[0].id === 'daily-supplies' && G.execute(w, {}, { operation: 'search', query: '洗衣液' }).results[0].id === 'youkang' && w.places.find(p => p.id === 'turf').usage.includes('日常跑步'); }));
         check('自建图的局部查询不含图片和完整世界数据', await page.evaluate(id => { const record = window.__APP_PROXY__.mapRecords.find(m => m.world.id === id); const text = JSON.stringify(window.RPHubGeography.execute(record.world, {}, { operation: 'place', query: '测试食堂' })); return text.includes('供应夜宵') && !/base64|edges|metersPerUnit/.test(text); }, id));
         await page.evaluate(async () => {
             const r = window.__APP_PROXY__; await r.selectCharacter(r.characters.length - 1, false, { silent: true });

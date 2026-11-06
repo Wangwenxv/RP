@@ -6,10 +6,14 @@
     const pick = (value, keys) => Object.fromEntries(keys.filter(k => value?.[k] !== undefined).map(k => [k, clone(value[k])]));
     const prepareWorld = source => {
         if (JSON.stringify(source).length > 2 * 1024 * 1024) throw new Error('地点和道路数据不能超过2MB');
-        const w = pick(source, ['version', 'id', 'name', 'imageSize', 'coordinateSystem', 'culture', 'districts', 'landmarks', 'metersPerUnit', 'calibration']);
+        const w = pick(source, ['version', 'id', 'name', 'imageSize', 'coordinateSystem', 'culture', 'districts', 'landmarks', 'everyday', 'metersPerUnit', 'calibration']);
         if (typeof w.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(w.id) || typeof w.name !== 'string' || !w.name.trim()) throw new Error('地图需要名称，以及字母/数字/横线组成的ID');
         if (!Array.isArray(w.imageSize) || w.imageSize.length !== 2 || !w.imageSize.every(n => Number.isFinite(n) && n > 0 && n <= 50000)) throw new Error('地图需要有效的imageSize坐标尺寸');
-        w.places = (source.places || []).map(p => pick(p, ['id', 'name', 'point', 'kind', 'district', 'aliases', 'function', 'scene', 'access']));
+        w.places = (source.places || []).map(p => pick(p, ['id', 'name', 'point', 'kind', 'district', 'aliases', 'function', 'scene', 'access', 'services', 'usage']));
+        if (w.everyday && typeof w.everyday === 'object' && !Array.isArray(w.everyday)) {
+            w.everyday = pick(w.everyday, ['knowledge', 'needs']);
+            if (Array.isArray(w.everyday.needs)) w.everyday.needs = w.everyday.needs.map(n => pick(n, ['id', 'label', 'terms', 'places']));
+        }
         w.edges = (source.edges || []).map(e => pick(e, ['id', 'from', 'to', 'modes', 'points', 'meters', 'oneWay', 'closed', 'bikeDismount', 'provenance', 'note']));
         const text = (v, label) => { if (v !== undefined && (typeof v !== 'string' || v.length > 30000)) throw new Error(label + '应为不超过30000字的文本'); };
         text(w.name, '名称');

@@ -126,6 +126,82 @@ test('微信本次连发同时预取B栋和图书馆简介，不把图书馆问�
     assert.ok(!h.s.buildGeographyPrompt().includes('本轮地理速查'));
 });
 
+const preparedPrompt = prompt => JSON.parse(prompt.split('\n').find(line => line.startsWith('本轮地理速查')).split('）：').at(-1));
+
+test('又康可独立定位、按用途搜索，并沿活动中心同址路网计算', () => {
+    assert.equal(G.resolve(W, '又康').place.id, 'youkang');
+    assert.equal(G.resolve(W, '又康超市').place.id, 'youkang');
+    for (const query of ['日用品', '洗衣液', '牙膏']) assert.equal(G.execute(W, {}, { operation: 'search', query }).results[0].id, 'youkang');
+    assert.equal(G.route(W, '3栋', '又康').duration.typicalMinutes, G.route(W, '3栋', '活动中心').duration.typicalMinutes);
+    assert.ok(G.route(W, '3栋', '又康').warnings.some(n => /店内.*排队/.test(n)));
+    assert.deepEqual(json(G.execute(W, {}, { operation: 'search', query: '跑步' }).results.slice(0, 2).map(p => p.id)), ['turf', 'stadium']);
+});
+
+test('无地点名的日用品抱怨预取候选；住址与用户位置不冒充角色当前位置', () => {
+    const h = adapter(); h.s.chatHistory.value = [message('user', '我在13栋', 'u1'), message('user', '洗衣液又用完了...')];
+    const before = json(h.status()), prompt = h.s.buildGeographyPrompt(), r = preparedPrompt(prompt);
+    assert.equal(r.everyday.possibleNeeds[0].id, 'daily-supplies');
+    assert.match(r.everyday.possibleNeeds[0].label, /可能.*抱怨/);
+    assert.equal(r.everyday.candidates[0].id, 'youkang'); assert.equal(r.everyday.origin.status, 'needs_location');
+    assert.ok(!r.everyday.candidates[0].costs); h.s.resetGeographyBudget(); assert.deepEqual(json(h.status()), before);
+    assert.match(prompt, /顺路必须有既定行程依据/); assert.match(prompt, /库存、临时占用未知/);
+    assert.ok(!r.reach); assert.ok(prompt.length < 2200);
+});
+
+test('跑步默认候选假草；实际往返成本与当前角色的短记忆进入预取', () => {
+    const h = adapter(); h.s.currentCharacter.value.geography.placeMemories.turf = '她喜欢傍晚去假草慢跑。'.repeat(30);
+    h.s.chatHistory.value = [message('user', '我在13栋'), message('assistant', '我在3栋'), message('user', '陪我去跑步')];
+    const prompt = h.s.buildGeographyPrompt(), r = preparedPrompt(prompt);
+    assert.deepEqual(json(r.everyday.candidates.map(p => p.id)), ['turf', 'stadium']);
+    const p = r.everyday.candidates[0]; assert.equal(r.everyday.origin.name, '北苑3栋');
+    assert.equal(p.costs.walk.oneWay, 36); assert.equal(p.costs.walk.roundTrip, 72);
+    assert.equal(p.costs.bike.oneWay, 16); assert.equal(p.costs.bike.roundTrip, 32);
+    assert.equal(p.costs.walk.confidence, 'estimated'); assert.ok(p.characterContext.length <= 140);
+    assert.match(r.everyday.candidates[1].usage, /校运会.*田径队/); assert.ok(prompt.length < 3200);
+    h.s.chatHistory.value.push(message('user', '陪我去真草场跑步'));
+    assert.equal(preparedPrompt(h.s.buildGeographyPrompt()).places.to.id, 'stadium');
+    assert.match(h.s.buildGeographyPrompt(), /明确指定的地点优先/);
+    h.s.currentCharacter.value.geography.placeMemories = {};
+    assert.ok(!preparedPrompt(h.s.buildGeographyPrompt()).everyday.candidates.some(p => p.characterContext));
+    h.s.chatHistory.value.push(message('assistant', '先把作业做完吧'), message('user', '谢谢啦'));
+    assert.ok(!h.s.buildGeographyPrompt().includes('本轮地理速查')); assert.ok(!h.s.buildGeographyPrompt().includes('possibleNeeds'));
+});
+
+test('明确提及地点的自动预取也带私人记忆；微信连发合并两类需求且遵守brief预算', () => {
+    const h = adapter(); h.s.chatHistory.value = [message('user', '你在图书馆吗？')];
+    assert.match(preparedPrompt(h.s.buildGeographyPrompt()).mentionedPlaces[0].characterContext, /她下午在四楼/);
+    h.s.chatHistory.value = [];
+    h.s.wechatTimeline.value = [message('assistant', '我在3栋'), message('user', '洗衣液又用完了'), message('user', '陪我去跑步')].map(m => ({ ...m, channel: 'wechat' }));
+    const r = preparedPrompt(h.s.buildGeographyPrompt());
+    assert.deepEqual(json(r.everyday.possibleNeeds.map(n => n.id)), ['daily-supplies', 'running']);
+    assert.equal(r.everyday.candidates.length, 3); assert.ok(JSON.stringify(r).length < 6000);
+    h.s.wechatTimeline.value.push({ channel: 'wechat', ...message('assistant', '晚点再说') }, { channel: 'wechat', role: 'user', type: 'image', content: 'attachment' });
+    assert.ok(!h.s.buildGeographyPrompt().includes('possibleNeeds'));
+});
+
+test('新生活资料保持世界隔离；复杂本轮不会挤掉已有位置与路线', () => {
+    const w = json(W); delete w.everyday;
+    assert.equal(G.everydayContext(w, {}, '陪我去跑步'), null);
+    assert.equal(G.needs(W, '谢谢啦').length, 0);
+    const h = adapter(); h.s.chatHistory.value = [message('user', '我在13栋'), message('assistant', '我在3栋'), message('user', '洗衣液用完了，陪我去跑步，然后去图书馆和B栋、一饭、13栋')];
+    const r = preparedPrompt(h.s.buildGeographyPrompt());
+    assert.equal(r.status, 'ok'); assert.ok(r.routes.walk.duration); assert.equal(r.locations.character.placeId, 'dorm-3');
+    assert.ok(r.everyday.candidates.length <= 3); assert.ok(JSON.stringify(r).length <= 6000);
+    for (const mutate of [w => w.everyday.needs[0].places.push('missing'), w => w.everyday.needs[0].terms = ['x'.repeat(41)], w => w.places[0].services = [false], w => w.places[0].usage = 'x'.repeat(181)]) {
+        const invalid = json(W); mutate(invalid); assert.throws(() => G.validate(invalid));
+    }
+});
+
+test('往返沿两个方向分别寻路，单行路不能简单乘二或编造返回时间', () => {
+    const w = { version: 1, id: 'one-way', places: ['home', 'shop', 'bridge'].map((id, i) => ({ id, name: id, point: [i, 0] })),
+        edges: [['home', 'shop', 75], ['shop', 'bridge', 150], ['bridge', 'home', 150]].map(([from, to, meters]) => ({ id: from + to, from, to, meters, provenance: 'measured', modes: ['walk'], oneWay: true })),
+        everyday: { knowledge: [], needs: [{ id: 'buy', label: '买东西', terms: ['买东西'], places: ['shop'] }] } };
+    G.validate(w);
+    const cost = () => G.everydayContext(w, { character: { placeId: 'home' } }, '买东西').candidates[0].costs;
+    assert.equal(cost().walk.oneWay, 1); assert.equal(cost().walk.roundTrip, 5); assert.equal(cost().bike.status, 'unreachable');
+    w.edges.pop(); assert.equal(cost().walk.returnStatus, 'unreachable'); assert.equal(cost().walk.roundTrip, undefined);
+});
+
 test('同条多个地点预取与长别名去重，不超过四个；RP也读取本轮多个提及地点', () => {
     assert.deepEqual(json(G.mentions(W, '图书馆和B栋')), ['图书馆', 'B栋']);
     assert.ok(G.mentions(W, '图书馆一楼通宵自习室').length <= 1);

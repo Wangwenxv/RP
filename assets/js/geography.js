@@ -22,6 +22,21 @@
         }
         if (world.metersPerUnit !== undefined && (!Number.isFinite(world.metersPerUnit) || world.metersPerUnit <= 0)) throw new Error('地图比例必须为正数');
         if (world.calibration?.uncertainty !== undefined && (!Number.isFinite(world.calibration.uncertainty) || world.calibration.uncertainty < 0 || world.calibration.uncertainty > 1)) throw new Error('地图估算误差应为0至1');
+        const strings = (value, count, length) => Array.isArray(value) && value.length <= count && value.every(s => typeof s === 'string' && s.trim() && s.length <= length);
+        for (const p of world.places) {
+            if (p.services !== undefined && !strings(p.services, 24, 40)) throw new Error('地点服务需要最多24个短名称');
+            if (p.usage !== undefined && (typeof p.usage !== 'string' || p.usage.length > 180)) throw new Error('地点使用惯例应为不超过180字符的文本');
+        }
+        if (world.everyday !== undefined) {
+            const e = world.everyday;
+            if (!e || typeof e !== 'object' || Array.isArray(e) || !strings(e.knowledge, 4, 160) || !Array.isArray(e.needs) || e.needs.length > 8) throw new Error('生活常识需要knowledge短文本数组与needs需求数组');
+            const needIds = new Set();
+            for (const n of e.needs) {
+                if (!n || typeof n.id !== 'string' || !n.id.trim() || n.id.length > 100 || needIds.has(n.id) || typeof n.label !== 'string' || !n.label.trim() || n.label.length > 80
+                    || !strings(n.terms, 24, 40) || !n.terms.length || !strings(n.places, 4, 100) || !n.places.length || n.places.some(id => !ids.has(id))) throw new Error('生活需求需要唯一ID、短标签、触发词与有效候选地点');
+                needIds.add(n.id);
+            }
+        }
         return world;
     };
     const resolve = (world, query) => {
@@ -118,12 +133,14 @@
         const p = hit.place;
         return { status: 'ok', worldId: world.id, id: p.id, name: p.name, zone: world.districts?.[p.district]?.label || p.district || '',
             function: p.function || '', access: p.access || {}, ...(hit.subLocation ? { subLocation: hit.subLocation } : {}),
+            ...(p.services?.length ? { services: p.services } : {}), ...(p.usage ? { usage: p.usage } : {}),
             scene: String(p.scene || '').slice(0, 1200), district: String(world.districts?.[p.district]?.scene || '').slice(0, 1500),
             culture: (world.culture || []).slice(0, 6), provenance: '建筑位置来自示意图；功能、文化与开放规则来自RP设定，不是现实校园调查' };
     };
     const textLimit = (value, max) => String(value || '').slice(0, max);
     const briefPlace = result => result.status !== 'ok' ? result : ({
         status: 'ok', id: result.id, name: result.name, function: textLimit(result.function, 120),
+        ...(result.usage ? { usage: textLimit(result.usage, 180) } : {}),
         ...(result.subLocation ? { subLocation: result.subLocation } : {}),
         ...(result.access && Object.keys(result.access).length ? { access: result.access } : {}),
         ...(result.scene ? { scene: textLimit(result.scene, 180) } : {})
@@ -222,6 +239,34 @@
         return chosen.map(hit => hit.name);
     };
     const mention = (world, text) => mentions(world, text, 1)[0] || '';
+    // Broad recall supplies possibilities, never commands or location evidence.
+    const needs = (world, text, limit = 2) => {
+        const source = norm(text);
+        return (world.everyday?.needs || []).filter(n => n.terms.some(term => source.includes(norm(term)))).slice(0, limit);
+    };
+    const everydayContext = (world, state, text) => {
+        const matches = needs(world, text);
+        if (!matches.length) return null;
+        const origin = placeOf(world, state.character?.placeId);
+        const cost = (id, mode) => {
+            const outward = route(world, origin.id, id, { mode });
+            if (outward.status !== 'ok') return { status: outward.status };
+            const inward = route(world, id, origin.id, { mode });
+            return { status: 'ok', oneWay: outward.duration.typicalMinutes, range: outward.duration.rangeMinutes, confidence: outward.confidence === 'measured' && inward.confidence === 'measured' ? 'measured' : 'estimated',
+                ...(inward.status === 'ok' ? { roundTrip: outward.duration.typicalMinutes + inward.duration.typicalMinutes }
+                    : { returnStatus: inward.status }),
+                warnings: [...new Set([...outward.warnings, ...(inward.warnings || [])])].slice(0, 4) };
+        };
+        const ids = [...new Set(matches.flatMap(n => n.places))].slice(0, 3);
+        return { possibleNeeds: matches.map(n => ({ id: n.id, label: n.label })),
+            origin: origin ? { status: 'last_confirmed', actor: 'character', name: origin.name } : { status: 'needs_location', actor: 'character' },
+            unit: '分钟', candidates: ids.map(id => {
+                const p = briefPlace(placeInfo(world, id));
+                return { id: p.id, name: p.name, function: p.function, ...(p.usage ? { usage: p.usage } : {}),
+                    ...(p.access ? { access: p.access } : {}), forNeeds: matches.filter(n => n.places.includes(id)).map(n => n.id),
+                    ...(origin ? { costs: { walk: cost(id, 'walk'), bike: cost(id, 'bike') } } : {}) };
+            }), note: '只是可能相关的地点，不代表请求代办、已经出发或到达。往返只含通行，不含活动、楼内时间和排队；库存与临时占用未知，营业按剧情时间核对。' };
+    };
     // Conservative evidence replay. Commands are accepted only in HUMAN messages.
     // No memory summaries, attachments, tools, CoT, quotations or future plans are location evidence.
     const project = (world, messages, bindings = {}) => {
@@ -309,12 +354,18 @@
             if (args.detail === 'full' && result.status === 'ok') result.coordinates = { system: world.coordinateSystem || 'world_coordinates', point: resolve(world, args.query).place.point };
             return args.detail === 'full' ? result : briefPlace(result);
         }
-        if (args.operation === 'search') return { status: 'ok', results: world.places.filter(p => p.kind !== 'junction' && names(p).some(n => norm(n).includes(norm(args.query)))).slice(0, 8).map(p => ({ id: p.id, name: p.name, function: p.function })) };
+        if (args.operation === 'search') {
+            const query = norm(args.query);
+            const preferred = [...new Set(needs(world, query).flatMap(n => n.places))];
+            const hits = world.places.filter(p => p.kind !== 'junction' && (preferred.includes(p.id) || [...names(p), p.function, ...(p.services || [])].some(n => norm(n).includes(query))));
+            hits.sort((a, b) => (preferred.includes(a.id) ? preferred.indexOf(a.id) : preferred.length) - (preferred.includes(b.id) ? preferred.indexOf(b.id) : preferred.length));
+            return { status: 'ok', results: hits.slice(0, 8).map(p => ({ id: p.id, name: p.name, function: p.function, ...(p.usage ? { usage: p.usage } : {}) })) };
+        }
         if (args.operation === 'route') {
             const result = route(world, endpoint(state, args.from), endpoint(state, args.to), args);
             return args.detail === 'full' ? result : briefRoute(result);
         }
         throw new Error('需要 operation: search/place/route/status');
     };
-    window.RPHubGeography = { validate, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, project, definition, execute, compass, relation, reachability };
+    window.RPHubGeography = { validate, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, needs, everydayContext, project, definition, execute, compass, relation, reachability };
 })();
