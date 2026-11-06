@@ -1,12 +1,14 @@
 /** Map editor follows the existing management pages and form controls. */
 (function () {
     const MapsView = {
-        components: { SettingsPageHeader: window.RPHubComponents.SettingsPageHeader },
+        components: { SettingsPageHeader: window.RPHubComponents.SettingsPageHeader, MapAtlas: window.RPHubMapAtlas },
         props: { records: Array, busy: Boolean, save: Function, getImage: Function, returnToCharacter: Boolean },
         emits: ['menu', 'import', 'export', 'delete', 'return-character'],
         setup(props) {
             const { ref, computed } = Vue, P = window.RPHubMapPackages;
             const draft = ref(null), originalId = ref(''), image = ref(''), tab = ref('places'), selected = ref(''), action = ref('select'), zoom = ref(1), filter = ref(''), error = ref(''), dirty = ref(false);
+            const browsing = ref(null);
+            const browse = record => { browsing.value = record; };
             const routeFrom = ref(''), routeTo = ref(''), routeResult = ref(''), jsonText = ref(''), showJson = ref(false), scaleSelection = ref(null);
             const place = computed(() => draft.value?.places.find(p => p.id === selected.value));
             const edge = computed(() => draft.value?.edges.find(e => e.id === selected.value));
@@ -27,7 +29,7 @@
                 originalId.value = ''; image.value = ''; selected.value = ''; dirty.value = true; error.value = ''; action.value = 'select'; zoom.value = 1;
                 scaleSelection.value = null; showJson.value = false; routeResult.value = ''; filter.value = ''; routeFrom.value = ''; routeTo.value = '';
             };
-            const back = () => { if (allowLeave()) { draft.value = null; dirty.value = false; } };
+            const back = () => { if (allowLeave()) { draft.value = null; browsing.value = null; dirty.value = false; } };
             const upload = async event => {
                 const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
                 try {
@@ -88,26 +90,27 @@
             };
             const openJson = () => { jsonText.value = JSON.stringify(draft.value, null, 2); showJson.value = true; };
             const applyJson = () => { try { draft.value = P.prepareWorld(JSON.parse(jsonText.value)); draft.value.places.forEach(p => p.access ||= {}); scaleSelection.value = null; showJson.value = false; dirty.value = true; selected.value = ''; error.value = ''; } catch (e) { error.value = e.message; } };
-            return { draft, originalId, image, tab, selected, action, zoom, filter, error, dirty, place, edge, places, edges, routeFrom, routeTo, routeResult, jsonText, showJson, scaleMode, name, edit, create, back, upload, newPlace, newEdge, selectPlace, mapClick, linePoints, deleteSelected, setModes, setScaleMode, checkRoute, saveDraft, openJson, applyJson };
+            return { browsing, browse, draft, originalId, image, tab, selected, action, zoom, filter, error, dirty, place, edge, places, edges, routeFrom, routeTo, routeResult, jsonText, showJson, scaleMode, name, edit, create, back, upload, newPlace, newEdge, selectPlace, mapClick, linePoints, deleteSelected, setModes, setScaleMode, checkRoute, saveDraft, openJson, applyJson };
         },
         template: `
         <div class="management-view map-view">
             <settings-page-header title="地图与地理环境" @menu="$emit('menu')">
                 <button v-if="returnToCharacter" class="settings-create-button" @click="$emit('return-character')">返回角色编辑</button>
-                <button v-if="draft" class="settings-create-button" @click="back">返回列表</button>
+                <button v-if="draft || browsing" class="settings-create-button" @click="back">返回列表</button>
                 <label v-else class="settings-create-button cursor-pointer" :class="{ 'opacity-50': busy }">导入地图包<input data-testid="map-import" type="file" accept=".json,.rpmap.json" class="hidden" :disabled="busy" @change="$emit('import', $event)"></label>
-                <button v-if="!draft" class="settings-create-button" @click="create" :disabled="busy">新建地图</button>
+                <button v-if="!draft && !browsing" class="settings-create-button" @click="create" :disabled="busy">新建地图</button>
             </settings-page-header>
             <p class="text-sm text-gray-500 mb-4">地图属于共享世界。在角色编辑的「地理环境」页绑定后，RP与微信共用地点与路程。世界书可保留简短世界说明。</p>
-            <div v-if="!draft" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <map-atlas v-if="browsing" :world="browsing.world" :image-data="browsing.imageData"></map-atlas>
+            <div v-if="!draft && !browsing" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 <article v-for="record in records" :key="record.world.id" class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                     <img v-if="record.imageData || record.world.image" :src="record.imageData || record.world.image" class="w-full h-40 object-contain bg-gray-50" :alt="record.world.name + '底图'">
                     <div class="p-4"><h3 class="font-bold text-gray-800">{{ record.world.name }}</h3>
                     <p class="text-xs text-gray-500 mt-1">{{ record.builtin ? '内置试点 · ' : '本地地图 · ' }}{{ record.world.places.length }} 个地点 / {{ record.world.edges.length }} 条道路</p>
-                    <div class="flex flex-wrap gap-2 mt-4"><button class="settings-create-button" :disabled="busy" @click="edit(record)">查看 / 编辑</button><button class="settings-icon-button" :disabled="busy" @click="$emit('export', record.world.id)">导出地图包</button><button v-if="!record.builtin" class="settings-icon-button text-gray-500" :disabled="busy" @click="$emit('delete', record.world.id)">删除</button></div></div>
+                    <div class="flex flex-wrap gap-2 mt-4"><button class="settings-create-button" @click="browse(record)">浏览地点</button><button class="settings-icon-button" :disabled="busy" @click="edit(record)">查看 / 编辑</button><button class="settings-icon-button" :disabled="busy" @click="$emit('export', record.world.id)">导出地图包</button><button v-if="!record.builtin" class="settings-icon-button text-gray-500" :disabled="busy" @click="$emit('delete', record.world.id)">删除</button></div></div>
                 </article>
             </div>
-            <p v-if="!draft" class="text-xs text-gray-500 mt-5">地图包为自包含的 .rpmap.json，携带原图、地点坐标与用途、道路、文化及标定。单独的角色卡只携带地图绑定；分享自建世界时，请同时分享地图包。图片不会自动识别地点或推算真实尺度。</p>
+            <p v-if="!draft && !browsing" class="text-xs text-gray-500 mt-5">地图包为自包含的 .rpmap.json，携带原图、地点坐标与用途、道路、文化及标定。单独的角色卡只携带地图绑定；分享自建世界时，请同时分享地图包。图片不会自动识别地点或推算真实尺度。</p>
             <div v-if="draft" @input="dirty = true" @change="dirty = true">
                 <div class="map-toolbar"><input aria-label="地图名称" v-model="draft.name" class="map-input flex-1" placeholder="地图名称"><label class="settings-create-button cursor-pointer">上传底图<input data-testid="map-image" type="file" accept="image/png,image/jpeg,image/webp" class="hidden" @change="upload"></label><button class="settings-create-button" :disabled="busy" @click="saveDraft(false)">{{ busy ? '保存中…' : '保存地图' }}</button><button class="settings-icon-button" :disabled="busy" @click="saveDraft(true)">另存副本</button><span class="text-xs text-gray-500">{{ dirty ? '未保存' : '已保存' }}</span></div>
                 <p v-if="error" role="alert" class="text-sm text-red-600 my-3">{{ error }}</p>

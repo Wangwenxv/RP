@@ -38,7 +38,8 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
             const say = text => ({ role: 'assistant', content: channel === 'wechat' ? JSON.stringify({ messages: [{ type: 'text', content: text }] }) : text });
             const tool = (id, args) => ({ id, type: 'function', function: { name: 'tool_geo', arguments: JSON.stringify(args) } });
             let message;
-            if (fixture === 'prefetch') message = say('我还在实验楼A区。风采园是南苑食堂，我看下路程再决定。');
+            if (fixture === 'burst-rooms') message = say('你先在B栋401上课，别着凉。');
+            else if (fixture === 'prefetch') message = say('我还在实验楼A区。风采园是南苑食堂，我看下路程再决定。');
             else if (fixture === 'clean') message = say('好呀。');
             else if (geoResult) message = say('走过去大概35分钟，我先找辆车，你等我。');
             else message = { role: 'assistant', content: '', tool_calls: fixture === 'parallel'
@@ -95,6 +96,16 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
                 }
             }
         }
+        channel = 'wechat'; fixture = 'burst-rooms'; const burstStart = requests.length;
+        await page.evaluate(async () => {
+            const r = window.__APP_PROXY__; await r.openWechat(); r.wechatBurstMode = true;
+            for (const text of ['8点左右', '多穿衣服了没', '你在图书馆吗？', '我在B栋401']) { r.wechatInput = text; await r.sendWechatMessage(); }
+            await r.requestWechatReplyNow();
+        });
+        const burst = requests.slice(burstStart).map(r => r.body);
+        const burstPrompt = burst[0].messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
+        check('微信连发自动预取B栋和图书馆简介，只需一次模型请求', burst.length === 1 && burstPrompt.includes('mentionedPlaces') && burstPrompt.includes('中文系教室与办公室') && burstPrompt.includes('借阅与自习'));
+        check('微信实际提示确认玩家在B栋401，询问图书馆不改角色位置', burstPrompt.includes('"user":{"status":"last_confirmed","placeId":"teaching-B"') && burstPrompt.includes('"room":"401"') && !burstPrompt.includes('"character":{"status":"last_confirmed","placeId":"library"'));
         check('浏览器无运行错误', errors.length === 0);
     } finally { if (browser) await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

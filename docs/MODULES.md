@@ -1,5 +1,9 @@
 # App 模块地图（assets/js/app/）
 
+> 地图库的只读浏览界面新增`map-atlas.js`组件，`map-components.js`增加“浏览地点”入口；读取31模块当前地图库记录，不改地图或模型提示。见[地点可视化交接](./geography-atlas.md)。
+
+> 30地理适配的后续修复：微信连发读取当前未回复的一批文本，最多4地点短资料预取；引擎识别已知地点＋房号，不把询问/计划作为到达。见[场景预取交接](./geography-scene-prefetch.md)。
+
 > 2026-11-06新增31号共享地图库管理：地图管理入口、角色绑定、原图与标注/路网自包含包、IndexedDB持久化，接入30地理适配；原图资源按需加载，RP/微信按需取得局部结果。setup末段为25→27→28→29→30→31→26。详见[地图管理与便携地图包交接](./geography-map-manager.md)。
 
 > 01~24 号模块由原 `app.js` 的 `setup()`（661 条顶层语句、662 个声明）机械拆分而来，行为与原文件完全一致；
@@ -74,6 +78,8 @@
 后续多调用与context/batch组合查询在`api-utils`、`30`、`15`、`25`接线，默认brief并提供本轮本地速查。当前预算与协议见[地理工具与费用](./geography-tools-cost.md)。
 
 `30-geography.js`（`geography`）接入RP/微信共享地图与工具；`geography.js`负责别名、道路寻路与位置证据重放；`worlds/*.json`是共享资料源，`world-data.js`是生成的浏览器注册表。RP挂点`15/18`，微信挂点`25`，卡扩展往返`core-utils/22`。使用、地图替换及待校准限制见[地理交接](./geography-pilot.md)。
+
+v2（同日）在引擎侧增加`compass`/`relation`/`reachability`，`briefState`改为`(state, world)`并输出`zone`/`point`/`relation`，`contextInfo`带`reach`；适配层据`world.landmarks`现算"从这里出发到各处"的分钟表。角色卡只管能力声明与"她对距离的反应"，不再存分钟数。详见[位置、距离表与卡片剥离](./geography-v2-positions.md)。
 
 ## 新增功能的落点建议
 

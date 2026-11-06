@@ -1,0 +1,92 @@
+<div id="jiangnan-campus-atlas">
+  <div class="viz-row"><h2>江大南校区</h2><span class="text-small text-muted" data-counts></span></div>
+  <div class="atlas-layout">
+    <div>
+      <svg class="campus-map" role="img" aria-label="江大南校区地点分布，选择标记查看完整介绍">
+        <image data-basemap href="__IMAGE__" preserveAspectRatio="none"></image>
+        <g data-marks></g>
+      </svg>
+    </div>
+    <div class="atlas-detail">
+      <label class="form-label">全部地点<select class="form-select" aria-label="江大地点目录" data-select></select></label>
+      <section aria-live="polite">
+        <h3 data-name></h3>
+        <p class="text-small text-muted" data-district></p>
+        <p class="text-small" data-aliases></p>
+        <h3>用途 / 功能</h3><p data-function></p>
+        <h3>地点完整介绍</h3><p class="preserve-lines" data-scene></p>
+        <div data-access></div>
+        <details data-inherited><summary>所属片区完整背景</summary><p class="preserve-lines" data-district-scene></p></details>
+        <details><summary>共享世界文化</summary><div data-culture></div></details>
+      </section>
+    </div>
+  </div>
+</div>
+<style>
+#jiangnan-campus-atlas { color: var(--foreground); }
+#jiangnan-campus-atlas .atlas-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: calc(var(--font-size-base) * 1); margin-top: calc(var(--font-size-base) * 1); }
+#jiangnan-campus-atlas .campus-map { display: block; width: 100%; height: auto; }
+#jiangnan-campus-atlas .atlas-detail { min-width: 0; }
+#jiangnan-campus-atlas .atlas-detail section { display: flex; flex-direction: column; gap: calc(var(--font-size-base) * .5); margin-top: calc(var(--font-size-base) * 1); }
+#jiangnan-campus-atlas .preserve-lines { white-space: pre-wrap; overflow-wrap: anywhere; }
+#jiangnan-campus-atlas details p { margin-top: calc(var(--font-size-base) * .5); }
+#jiangnan-campus-atlas circle[data-dot] { fill: var(--muted-foreground); stroke: var(--background); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+#jiangnan-campus-atlas circle[data-dot].is-current { fill: var(--viz-series-1); stroke-width: 2; }
+#jiangnan-campus-atlas .map-hit { fill: transparent; }
+#jiangnan-campus-atlas .selection-ring { fill: none; stroke: var(--viz-series-1); stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+@media (max-width: 600px) { #jiangnan-campus-atlas .atlas-layout { grid-template-columns: minmax(0, 1fr); } }
+</style>
+<script type="application/json" id="jiangnan-campus-atlas-data">__DATA_JSON__</script>
+<script>
+(() => {
+  const root = document.getElementById('jiangnan-campus-atlas');
+  const world = JSON.parse(document.getElementById('jiangnan-campus-atlas-data').textContent);
+  const find = selector => root.querySelector(selector);
+  const svg = find('.campus-map'), image = find('[data-basemap]'), select = find('[data-select]');
+  const ordinary = world.places.filter(p => p.kind !== 'junction'), nodes = world.places.filter(p => p.kind === 'junction');
+  svg.setAttribute('viewBox', '0 0 ' + world.imageSize.join(' '));
+  image.setAttribute('width', world.imageSize[0]); image.setAttribute('height', world.imageSize[1]);
+  find('[data-counts]').textContent = ordinary.length + ' 个场景地点 · ' + nodes.length + ' 个路网节点';
+  const label = id => world.districts[id]?.label || id || '未分片区';
+  for (const [id, district] of Object.entries(world.districts)) {
+    const group = document.createElement('optgroup'); group.label = district.label || id;
+    for (const p of ordinary.filter(p => p.district === id)) { const option = document.createElement('option'); option.value = p.id; option.textContent = p.name; group.appendChild(option); }
+    select.appendChild(group);
+  }
+  const net = document.createElement('optgroup'); net.label = '路网连接节点';
+  for (const p of nodes) { const option = document.createElement('option'); option.value = p.id; option.textContent = p.name; net.appendChild(option); } select.appendChild(net);
+  const ns = 'http://www.w3.org/2000/svg', circles = new Map();
+  const clusters = new Map();
+  for (const p of world.places) { const key = p.point.join(','); if (!clusters.has(key)) clusters.set(key, []); clusters.get(key).push(p); }
+  let selectedId = '';
+  for (const group of clusters.values()) {
+    const mark = document.createElementNS(ns, 'g');
+    const hit = document.createElementNS(ns, 'circle'), dot = document.createElementNS(ns, 'circle');
+    for (const circle of [hit, dot]) { circle.setAttribute('cx', group[0].point[0]); circle.setAttribute('cy', group[0].point[1]); }
+    hit.setAttribute('r', world.imageSize[0] / 60); hit.setAttribute('class', 'map-hit cursor-interaction'); hit.dataset.tooltip = group.map(p => p.name).join(' / ');
+    dot.setAttribute('r', world.imageSize[0] / (group.every(p => p.kind === 'junction') ? 220 : 145)); dot.setAttribute('data-dot', '');
+    hit.addEventListener('click', () => { const i = group.findIndex(p => p.id === selectedId); choose(group[(i + 1) % group.length].id, true); });
+    mark.append(hit, dot); find('[data-marks]').appendChild(mark); group.forEach(p => circles.set(p.id, dot));
+  }
+  const ring = document.createElementNS(ns, 'circle'); ring.setAttribute('r', world.imageSize[0] / 70); ring.setAttribute('class', 'selection-ring'); svg.appendChild(ring);
+  const titles = { open: '开放', close: '关闭', check: '查寝', sessions: '开放时段', restriction: '进入限制', note: '说明' };
+  function choose(id, save) {
+    const p = world.places.find(p => p.id === id); if (!p) return;
+    selectedId = id; select.value = id;
+    find('[data-name]').textContent = p.name; find('[data-district]').textContent = label(p.district);
+    find('[data-aliases]').textContent = p.aliases?.length ? '别名：' + p.aliases.join('、') : '';
+    find('[data-function]').textContent = p.function || (p.kind === 'junction' ? '连接道路，用于寻路。' : '尚未填写');
+    find('[data-scene]').textContent = p.scene || '尚无独立介绍；所属片区背景可展开查看。';
+    const access = find('[data-access]'); access.replaceChildren();
+    for (const [key, value] of Object.entries(p.access || {})) { const para = document.createElement('p'); para.textContent = (titles[key] || key) + '：' + (Array.isArray(value) ? value.join('、') : value); access.appendChild(para); }
+    const district = world.districts[p.district]; find('[data-inherited]').hidden = !district?.scene; find('[data-district-scene]').textContent = district?.scene || '';
+    find('[data-culture]').replaceChildren(); world.culture.forEach(text => { const para = document.createElement('p'); para.textContent = text; find('[data-culture]').appendChild(para); });
+    circles.forEach(dot => dot.classList.remove('is-current')); circles.get(id)?.classList.add('is-current');
+    ring.setAttribute('cx', p.point[0]); ring.setAttribute('cy', p.point[1]);
+    if (save && window.openai?.setWidgetState) window.openai.setWidgetState({ modelContent: { selectedPlace: p.name, placeId: p.id }, privateContent: null }).catch(() => {});
+  }
+  select.addEventListener('change', () => choose(select.value, true));
+  window.addEventListener('openai:set_globals', event => { const id = event.detail?.globals?.widgetState?.modelContent?.placeId; if (id) choose(id, false); });
+  choose(window.openai?.widgetState?.modelContent?.placeId || 'teaching-B', false);
+})();
+</script>

@@ -1,6 +1,7 @@
 // Actual Vue UI, native file input/download, image decoding and IndexedDB persistence.
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os'), http = require('node:http'), assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../..');
+const atlasWorld = JSON.parse(fs.readFileSync(path.join(root, 'worlds/jiangnan-south-campus.json'), 'utf8'));
 const { chromium } = require(require.resolve('playwright-core', { paths: [path.join(root, 'tools/refactor')] }));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rphub-maps-')), errors = [], warnings = [];
 const requests = []; let channel = 'rp';
@@ -47,6 +48,22 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: 'domcontentloaded' }); await boot();
         await page.getByRole('button', { name: '查看 / 编辑', exact: true }).waitFor();
         check('地理环境管理入口可显示内置江大地图', await page.locator('.map-view article').count() === 1);
+        await page.getByRole('button', { name: '浏览地点', exact: true }).click();
+        const atlas = page.getByTestId('map-atlas'); await atlas.waitFor();
+        check('地点浏览默认展示全部54个场景地点', await atlas.locator('.atlas-place-button').count() === 54);
+        await page.getByLabel('浏览地点目录').selectOption('library');
+        check('浏览器完整展示图书馆介绍，不使用工具的180字截断', await page.getByTestId('atlas-local-scene').textContent() === atlasWorld.places.find(p => p.id === 'library').scene);
+        await atlas.locator('summary').filter({ hasText: '所属片区完整背景' }).click();
+        check('完整片区背景可展开查看', await page.getByTestId('atlas-district-scene').textContent() === atlasWorld.districts.library.scene);
+        await page.getByLabel('浏览搜索地点').fill('声控灯');
+        check('地点介绍可搜索，找到B栋', await atlas.locator('.atlas-place-button').count() === 1 && (await atlas.locator('.atlas-place-button').textContent()).includes('B栋'));
+        await page.getByLabel('浏览搜索地点').fill(''); await atlas.getByLabel('显示路网节点').check();
+        check('可显示全部71个地点和路网节点', await atlas.locator('.atlas-place-button').count() === 71);
+        await page.screenshot({ path: path.join(tmp, 'atlas-desktop.png'), fullPage: true });
+        await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: path.join(tmp, 'atlas-mobile.png'), fullPage: true });
+        check('手机地点浏览无横向溢出', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await page.getByRole('button', { name: '返回列表', exact: true }).click();
         const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: '导出地图包', exact: true }).click();
         const download = await downloaded, output = path.join(tmp, 'pilot.rpmap.json'); await download.saveAs(output);
         const pack = JSON.parse(fs.readFileSync(output, 'utf8'));

@@ -8,8 +8,9 @@ const image = 'data:image/jpeg;base64,' + fs.readFileSync(path.join(root, 'card/
 test('自包含地图包原图字节、坐标/用途/道路/文化/开放规则往返，35分钟标定保留', () => {
     const value = JSON.parse(JSON.stringify(P.encode(world, image)));
     assert.equal(Buffer.compare(Buffer.from(value.image.dataUrl.split(',')[1], 'base64'), fs.readFileSync(path.join(root, 'card/江大南校区.jpeg'))), 0);
-    assert.equal(value.world.places.length, 71); assert.equal(value.world.edges.length, 72);
+    assert.equal(value.world.places.length, world.places.length); assert.equal(value.world.edges.length, world.edges.length);
     assert.deepEqual(value.world.districts, world.districts); assert.deepEqual(value.world.culture, world.culture);
+    assert.deepEqual(value.world.landmarks, world.landmarks);
     assert.deepEqual(value.world.places.find(p => p.id === 'dorm-13').access, world.places.find(p => p.id === 'dorm-13').access);
     assert.equal(G.route(value.world, '13栋', '实验楼A区').duration.typicalMinutes, 35);
     assert.ok(!value.world.image && !JSON.stringify(G.execute(value.world, {}, { operation: 'place', query: '13栋', detail: 'full' })).includes('base64'));

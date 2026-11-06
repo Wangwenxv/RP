@@ -12,6 +12,11 @@
 .map-point { fill: var(--primary-color, #6366f1); stroke: white; stroke-width: 1; vector-effect: non-scaling-stroke; cursor: pointer; }
 .map-point.is-selected { fill: #db2777; stroke-width: 3; }
 .map-point-label { fill: #111827; paint-order: stroke; stroke: white; stroke-width: 3; }
+.atlas-hit { fill: transparent; cursor: pointer; }
+.atlas-selection-ring { fill: none; stroke: var(--primary-color, #db2777); stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.atlas-place-list { max-height: 15rem; overflow-y: auto; }
+.atlas-place-button { border-radius: .5rem; padding: .4rem .55rem; font-size: .8rem; text-align: left; }
+:root[data-app-theme="dark"] .atlas-selection-ring { stroke: var(--night-accent); }
 .character-editor-tabs { display: flex; flex-wrap: wrap; gap: .35rem; }
 .character-editor-tabs button { flex: 1; padding: .55rem .35rem; border-radius: .7rem; font-size: .8rem; white-space: nowrap; }
 :root[data-app-theme="dark"] .map-input { border-color: var(--night-border); background: var(--night-field); color: var(--night-text); }

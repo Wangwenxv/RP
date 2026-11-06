@@ -22,8 +22,12 @@ test('骑车单独按可骑道路寻路；时间与找车成本分开说明', ()
     assert.match(r.duration.includes, /找车/);
     assert.match(r.duration.includes, /下车推行/);
 });
-test('不能用直线跨水；断路和不可达不伪造结果', () => {
-    const w = json(W); w.edges = w.edges.filter(e => e.from !== 'tunnel-west' || e.to !== 'tunnel-east');
+test('不能用直线跨水；两条独立通路都切断后才不可达', () => {
+    const w = json(W); w.edges = w.edges.filter(e => !(e.from === 'tunnel-west' && e.to === 'tunnel-east'));
+    // 地下隧道之外，北三路→图书馆→环湖南侧石桥是第二条真实存在的路，切了隧道应走绕行而不是报不可达。
+    const detour = G.route(w, '13栋', '实验楼A区');
+    assert.equal(detour.status, 'ok'); assert.ok(detour.duration.typicalMinutes > 35); assert.ok(detour.via.some(n => n.includes('图书馆')));
+    w.edges = w.edges.filter(e => !(e.from.startsWith('lake-') && e.to.startsWith('lake-')));
     assert.equal(G.route(w, '13栋', '实验楼A区').status, 'unreachable');
     assert.equal(G.route(W, '语心湖', '实验楼A区').status, 'unreachable');
 });
@@ -94,6 +98,42 @@ function adapter() {
     ctx.window.RPHubAppSections.geography(s);
     return { s, switchScope() { scope = 'b'; }, setLoaded() { loaded = scope; }, status() { return s.executeGeographyTool({ function: { name: 'tool_geo', arguments: '{"operation":"status"}' } }).locations; } };
 }
+
+test('楼名加房号仅定位所属建筑；精确房间条目优先，问句与计划不设位置', () => {
+    for (const query of ['B栋401', 'B栋 401教室', 'B栋-401室']) {
+        const hit = G.resolve(W, query); assert.equal(hit.place.id, 'teaching-B'); assert.equal(hit.subLocation.room, '401');
+    }
+    const state = G.project(W, [message('user', '我在B栋401'), message('user', '你在图书馆吗？')]);
+    assert.equal(state.user.placeId, 'teaching-B'); assert.equal(state.user.subLocation.room, '401'); assert.equal(state.character.status, 'unknown');
+    assert.equal(G.project(W, [message('user', '我要去B栋401')]).user.status, 'unknown');
+    assert.equal(G.project(W, [message('user', '我在B栋401吗？')]).user.status, 'unknown');
+    assert.equal(G.resolve(W, '陌生B栋401').status, 'unknown_place');
+    const w = json(W); w.places.push({ id: 'room-b401', name: 'B栋401', point: [100, 100], kind: 'room' });
+    assert.equal(G.resolve(w, 'B栋401').place.id, 'room-b401');
+    assert.ok(G.route(W, 'B栋401', '图书馆').warnings.some(s => s.includes('楼内')));
+});
+
+test('微信本次连发同时预取B栋和图书馆简介，不把图书馆问句变成角色位置', () => {
+    const h = adapter(); h.s.wechatTimeline.value = ['8点左右', '多穿衣服了没', '你在图书馆吗？', '我在B栋401'].map((content, i) => ({ channel: 'wechat', ...message('user', content, 'w' + i) }));
+    const prompt = h.s.buildGeographyPrompt(); const result = JSON.parse(prompt.split('）：').at(-1).trim());
+    assert.deepEqual(json(result.mentionedPlaces.map(p => p.id)), ['teaching-B', 'library']);
+    assert.equal(result.mentionedPlaces[1].function, '借阅与自习'); assert.equal(result.mentionedPlaces[1].access.close, '22:30');
+    assert.equal(result.locations.user.placeId, 'teaching-B'); assert.equal(result.locations.character.status, 'unknown');
+    assert.ok(!prompt.includes('【空间性格】')); assert.ok(prompt.length < 6000);
+    h.s.wechatTimeline.value.push({ channel: 'wechat', ...message('assistant', '我不在图书馆'), }, { channel: 'wechat', ...message('user', '谢谢啦') });
+    assert.ok(!h.s.buildGeographyPrompt().includes('本轮地理速查'));
+    h.s.wechatTimeline.value.push({ channel: 'wechat', role: 'user', type: 'image', content: 'attachment' });
+    assert.ok(!h.s.buildGeographyPrompt().includes('本轮地理速查'));
+});
+
+test('同条多个地点预取与长别名去重，不超过四个；RP也读取本轮多个提及地点', () => {
+    assert.deepEqual(json(G.mentions(W, '图书馆和B栋')), ['图书馆', 'B栋']);
+    assert.ok(G.mentions(W, '图书馆一楼通宵自习室').length <= 1);
+    assert.ok(G.mentions(W, 'B栋 图书馆 13栋 3栋 一饭 二饭 实验楼A区').length <= 4);
+    const h = adapter(); h.s.chatHistory.value = [message('assistant', '好'), message('user', '你在图书馆吗？我在B栋401')];
+    const result = JSON.parse(h.s.buildGeographyPrompt().split('）：').at(-1).trim());
+    assert.equal(result.mentionedPlaces.length, 2); assert.equal(result.locations.character.status, 'unknown');
+});
 test('微信和RP按镜像锚点重放，后续RP不能被较早微信位置覆盖', () => {
     const h = adapter(), s = h.s;
     s.chatHistory.value = [message('user', '我在13栋', 'r1'), message('user', '我在图书馆', 'r2')];
@@ -115,14 +155,25 @@ test('两边已确认时自动注入35分钟约束；个人地点记忆只由本
     assert.match(r.characterContext, /她下午在四楼/);
     assert.equal(h.s.getEnabledActiveTools()[0].callName, 'tool_geo'); assert.equal(h.s.buildActiveToolDefinitions(h.s.getEnabledActiveTools())[0].function.name, 'tool_geo');
 });
-test('context一次返回风采园功能、位置、步行与骑车时间，默认不传原始坐标/区域长文', () => {
+test('context一次返回风采园功能、位置、步行与骑车时间，默认只给片区与坐标，不传区域长文', () => {
     const locations = G.project(W, [message('user', '我在风采园，你在哪里？'), message('assistant', '我在实验楼A区')], bindings);
     const r = G.execute(W, locations, { operation: 'context', query: '风采园' });
     assert.equal(r.status, 'ok'); assert.equal(r.places.to.id, 'canteen-3');
     assert.match(r.places.to.function, /食堂/); assert.match(r.places.to.scene, /南苑西南/);
     assert.equal(r.locations.character.placeId, 'lab-A'); assert.equal(r.routes.walk.status, 'ok'); assert.equal(r.routes.bike.status, 'ok');
     assert.ok(r.routes.bike.duration.typicalMinutes < r.routes.walk.duration.typicalMinutes);
+    assert.equal(r.locations.user.zone, '生活区'); assert.equal(r.locations.user.point.length, 2);
+    assert.equal(r.locations.relation.userToCharacter.bearing, '东北方'); assert.ok(r.locations.relation.userToCharacter.straightMeters > 0);
+    assert.ok(r.reach.rows.length > 0); assert.ok(r.reach.rows.every(row => Number.isFinite(row.walk)));
     assert.ok(JSON.stringify(r).length < 3000); assert.ok(!JSON.stringify(r).includes('coordinateSystem')); assert.ok(!JSON.stringify(r).includes('district'));
+});
+test('一方位置未知时，速查给出从已确认一方到常去地点的分钟表', () => {
+    const locations = G.project(W, [message('user', '我在13栋，你能来吗？')], bindings);
+    const r = G.execute(W, locations, { operation: 'context', query: '13栋' });
+    assert.equal(r.status, 'needs_location'); assert.equal(r.reach.from, '南苑13栋');
+    assert.equal(r.reach.rows.find(x => x.name === '实验楼A区').walk, 35);
+    assert.ok(!r.reach.rows.some(x => x.name === '南苑13栋'));
+    assert.equal(G.execute(W, { user: {}, character: {} }, { operation: 'context' }).reach, undefined);
 });
 test('batch一次取多个独立查询，保留未知地点结果，并拒绝嵌套/超额/非法参数', () => {
     const r = G.execute(W, {}, { operation: 'batch', requests: [{ operation: 'place', query: '风采园' }, { operation: 'route', from: '13栋', to: '实验楼A区' }, { operation: 'place', query: '不存在' }] });

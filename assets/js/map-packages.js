@@ -6,7 +6,7 @@
     const pick = (value, keys) => Object.fromEntries(keys.filter(k => value?.[k] !== undefined).map(k => [k, clone(value[k])]));
     const prepareWorld = source => {
         if (JSON.stringify(source).length > 2 * 1024 * 1024) throw new Error('地点和道路数据不能超过2MB');
-        const w = pick(source, ['version', 'id', 'name', 'imageSize', 'coordinateSystem', 'culture', 'districts', 'metersPerUnit', 'calibration']);
+        const w = pick(source, ['version', 'id', 'name', 'imageSize', 'coordinateSystem', 'culture', 'districts', 'landmarks', 'metersPerUnit', 'calibration']);
         if (typeof w.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(w.id) || typeof w.name !== 'string' || !w.name.trim()) throw new Error('地图需要名称，以及字母/数字/横线组成的ID');
         if (!Array.isArray(w.imageSize) || w.imageSize.length !== 2 || !w.imageSize.every(n => Number.isFinite(n) && n > 0 && n <= 50000)) throw new Error('地图需要有效的imageSize坐标尺寸');
         w.places = (source.places || []).map(p => pick(p, ['id', 'name', 'point', 'kind', 'district', 'aliases', 'function', 'scene', 'access']));
@@ -16,7 +16,13 @@
         if (w.culture !== undefined && (!Array.isArray(w.culture) || w.culture.some(v => typeof v !== 'string' || v.length > 30000))) throw new Error('文化背景需要文本数组');
         if (w.districts !== undefined) {
             if (!w.districts || typeof w.districts !== 'object' || Array.isArray(w.districts)) throw new Error('片区背景需要对象');
-            w.districts = Object.fromEntries(Object.entries(w.districts).map(([id, d]) => { text(d.scene, '片区背景'); text(d.source, '背景来源'); return [id, pick(d, ['scene', 'source'])]; }));
+            w.districts = Object.fromEntries(Object.entries(w.districts).map(([id, d]) => { text(d.label, '片区名'); text(d.scene, '片区背景'); text(d.source, '背景来源'); return [id, pick(d, ['label', 'scene', 'source'])]; }));
+        }
+        if (w.landmarks !== undefined) {
+            if (!Array.isArray(w.landmarks) || !w.landmarks.length || w.landmarks.length > 40 || w.landmarks.some(id => typeof id !== 'string' || id.length > 100)) throw new Error('常用地标需要1—40个地点ID');
+            const ids = new Set(w.places.map(p => p.id));
+            if (w.landmarks.some(id => !ids.has(id))) throw new Error('常用地标必须是这张地图里的地点');
+            w.landmarks = [...new Set(w.landmarks)];
         }
         for (const p of w.places) {
             for (const k of ['id', 'name', 'kind', 'district', 'function', 'scene']) text(p[k], '地点' + k);

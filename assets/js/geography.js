@@ -28,6 +28,14 @@
         const q = norm(query);
         if (!q) return unknown('unknown_place');
         const exact = world.places.filter(p => names(p).some(n => norm(n) === q));
+        // An exact known building + a room number identifies the building only.
+        // Do not infer the room's use, or match an arbitrary substring as a building.
+        const room = !exact.length && /^(.*?)[-—]?(\d{3,4})(?:室|教室|寝室|房间)?$/.exec(q);
+        if (room && room[1]) {
+            const parents = world.places.filter(p => p.kind !== 'junction' && names(p).some(n => norm(n) === room[1]));
+            if (parents.length === 1) return { status: 'ok', place: parents[0], subLocation: { room: room[2], note: '房号来自发言；只定位所属地点，房间用途与室内路径未建模' } };
+            if (parents.length > 1) return unknown('ambiguous_place', { query, candidates: parents.slice(0, 8).map(p => ({ id: p.id, name: p.name })) });
+        }
         const hits = exact.length ? exact : world.places.filter(p => p.kind !== 'junction' && names(p).some(n => norm(n).includes(q)));
         if (hits.length !== 1) return unknown(hits.length ? 'ambiguous_place' : 'unknown_place', { query, candidates: hits.slice(0, 8).map(p => ({ id: p.id, name: p.name })) });
         return { status: 'ok', place: hits[0] };
@@ -88,6 +96,7 @@
             via: found.nodes.map(id => world.places.find(p => p.id === id).name),
             warnings: [...new Set(found.edges.map(e => e.note).filter(Boolean))]
         };
+        if (a.subLocation || b.subLocation) result.warnings.push('房号仅归属到建筑；该路程不包含楼内上下楼和房间间通行');
         if (rain) result.warnings.push('雨天按1.2倍时间估算，湿滑/人流情况未实测');
         if (options.time) {
             const match = /^(\d{2}):(\d{2})$/.exec(options.time);
@@ -107,13 +116,16 @@
         const hit = resolve(world, query);
         if (hit.status !== 'ok') return hit;
         const p = hit.place;
-        return { status: 'ok', worldId: world.id, id: p.id, name: p.name, function: p.function || '', access: p.access || {},
+        return { status: 'ok', worldId: world.id, id: p.id, name: p.name, zone: world.districts?.[p.district]?.label || p.district || '',
+            function: p.function || '', access: p.access || {}, ...(hit.subLocation ? { subLocation: hit.subLocation } : {}),
             scene: String(p.scene || '').slice(0, 1200), district: String(world.districts?.[p.district]?.scene || '').slice(0, 1500),
             culture: (world.culture || []).slice(0, 6), provenance: '建筑位置来自示意图；功能、文化与开放规则来自RP设定，不是现实校园调查' };
     };
     const textLimit = (value, max) => String(value || '').slice(0, max);
     const briefPlace = result => result.status !== 'ok' ? result : ({
-        status: 'ok', id: result.id, name: result.name, function: textLimit(result.function, 120), access: result.access,
+        status: 'ok', id: result.id, name: result.name, function: textLimit(result.function, 120),
+        ...(result.subLocation ? { subLocation: result.subLocation } : {}),
+        ...(result.access && Object.keys(result.access).length ? { access: result.access } : {}),
         ...(result.scene ? { scene: textLimit(result.scene, 180) } : {})
     });
     const briefRoute = result => result.status !== 'ok' ? result : ({
@@ -121,11 +133,52 @@
         estimatedMeters: result.distance.estimatedMeters, confidence: result.confidence,
         ...(result.arrival ? { arrival: result.arrival } : {}), warnings: result.warnings.slice(0, 4).map(n => textLimit(n, 160))
     });
-    const briefState = state => Object.fromEntries(['user', 'character'].map(key => {
-        const s = state[key] || { status: 'unknown' };
-        return [key, { status: s.status, ...(s.placeId ? { placeId: s.placeId, name: s.name } : {}),
-            ...(s.messageId ? { source: { messageId: s.messageId, channel: s.channel } } : {}), ...(s.candidates?.length ? { candidates: s.candidates.slice(0, 5) } : {}) }];
-    }));
+    // 坐标不是给人看的小数，只用来判断“谁在哪一侧”。八方位按图像坐标：x 向右、y 向下，所以北是 -y。
+    const dirs = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
+    const placeOf = (world, id) => (world && id ? world.places.find(p => p.id === id) || null : null);
+    const compass = (from, to) => {
+        const dx = to[0] - from[0], dy = to[1] - from[1];
+        if (!Number.isFinite(dx) || !Number.isFinite(dy) || (!dx && !dy)) return '';
+        return dirs[Math.round((((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360) / 45) % 8];
+    };
+    const relation = (world, state) => {
+        const a = placeOf(world, state.user?.placeId), b = placeOf(world, state.character?.placeId);
+        if (!a || !b) return null;
+        if (a.id === b.id) return { samePlace: true, place: a.name, note: '两处位置证据指向同一地点' };
+        const scale = world.metersPerUnit || 1;
+        const straight = Math.round((Math.hypot(b.point[0] - a.point[0], b.point[1] - a.point[1]) * scale) / 10) * 10;
+        return { userToCharacter: { bearing: compass(a.point, b.point) + '方', straightMeters: straight, note: '直线距离，不是走动距离；耗时查 route' } };
+    };
+    const briefState = (state, world) => {
+        const out = Object.fromEntries(['user', 'character'].map(key => {
+            const s = state[key] || { status: 'unknown' };
+            const place = placeOf(world, s.placeId);
+            return [key, { status: s.status, ...(s.placeId ? { placeId: s.placeId, name: s.name } : {}),
+                ...(s.subLocation ? { subLocation: s.subLocation } : {}),
+                ...(place ? { zone: world.districts?.[place.district]?.label || place.district || '', point: place.point } : {}),
+                ...(s.messageId ? { source: { messageId: s.messageId, channel: s.channel } } : {}), ...(s.candidates?.length ? { candidates: s.candidates.slice(0, 5) } : {}) }];
+        }));
+        const pair = relation(world, state);
+        if (pair) out.relation = pair;
+        return out;
+    };
+    // 一方位置已确认、另一方还没说时，先把“从这里出发要多久”算出来，
+    // 免得模型自己许愿一个地点，再让他毫无代价地“走过去”。
+    const reachability = (world, anchorId, exclude = [], limit = 8) => {
+        const anchor = placeOf(world, anchorId);
+        if (!anchor || !Array.isArray(world.landmarks)) return null;
+        const rows = [];
+        for (const id of world.landmarks) {
+            if (id === anchorId || exclude.includes(id)) continue;
+            const walk = route(world, anchorId, id, { mode: 'walk' });
+            if (walk.status !== 'ok') continue;
+            const bike = route(world, anchorId, id, { mode: 'bike' });
+            const minutes = walk.duration.typicalMinutes;
+            rows.push({ name: walk.to, walk: minutes, ...(bike.status === 'ok' && bike.duration.typicalMinutes < minutes ? { bike: bike.duration.typicalMinutes } : {}) });
+            if (rows.length >= limit) break;
+        }
+        return rows.length ? { from: anchor.name, unit: '分钟', note: '楼外步行/低速骑行，不含楼内上下楼、找车与排队', rows } : null;
+    };
     const endpoint = (state, value) => ['user', 'character'].includes(value) ? state[value]?.placeId || '' : value;
     const contextInfo = (world, state, args = {}) => {
         const from = endpoint(state, args.from || 'character'), to = endpoint(state, args.to || args.query || 'user');
@@ -136,8 +189,11 @@
             routes[mode] = detail ? value : briefRoute(value);
         }
         const a = placeInfo(world, from), b = placeInfo(world, to);
+        const anchor = a.status === 'ok' ? a.id : b.status === 'ok' ? b.id : null;
+        const reach = anchor ? reachability(world, anchor, [a.id, b.id].filter(Boolean)) : null;
         return { status: a.status === 'ok' && b.status === 'ok' ? 'ok' : 'needs_location', worldId: world.id,
-            locations: briefState(state), places: { from: detail ? a : briefPlace(a), to: detail ? b : briefPlace(b) }, routes,
+            locations: briefState(state, world), places: { from: detail ? a : briefPlace(a), to: detail ? b : briefPlace(b) }, routes,
+            ...(reach ? { reach } : {}),
             culture: (world.culture || []).slice(0, 2).map(n => textLimit(n, 120)),
             note: '路线是行动成本，估算不是实测；只使用明确位置证据，计划不算到达。' };
     };
@@ -155,11 +211,17 @@
         if (JSON.stringify(copy).length > limit) return { status: 'result_too_large', note: '结果仍超过资料预算，请缩小查询范围。' };
         return copy;
     };
-    const mention = (world, text) => {
+    const mentions = (world, text, limit = 4) => {
         const source = norm(text);
-        const hits = world.places.flatMap(p => p.kind === 'junction' ? [] : names(p).filter(n => norm(n).length >= 2 && source.includes(norm(n))).map(n => ({ name: n, length: norm(n).length })));
-        return hits.sort((a, b) => b.length - a.length)[0]?.name || '';
+        const hits = world.places.flatMap(p => p.kind === 'junction' ? [] : names(p).filter(n => norm(n).length >= 2 && source.includes(norm(n))).map(n => ({ id: p.id, name: n, length: norm(n).length })));
+        const chosen = [];
+        for (const hit of hits.sort((a, b) => b.length - a.length)) {
+            if (chosen.some(old => old.id === hit.id || norm(old.name).includes(norm(hit.name)))) continue;
+            chosen.push(hit); if (chosen.length >= limit) break;
+        }
+        return chosen.map(hit => hit.name);
     };
+    const mention = (world, text) => mentions(world, text, 1)[0] || '';
     // Conservative evidence replay. Commands are accepted only in HUMAN messages.
     // No memory summaries, attachments, tools, CoT, quotations or future plans are location evidence.
     const project = (world, messages, bindings = {}) => {
@@ -201,14 +263,14 @@
                     // Resolve at most one statement; never use substring containment to guess a building.
                     if (location === '宿舍' || location === '寝室') location = bindings[speaker]?.home || '';
                     const result = resolve(world, location);
-                    state[speaker] = result.status === 'ok' ? { status: 'last_confirmed', placeId: result.place.id, name: result.place.name, ...source } : { status: result.status, ...source, candidates: result.candidates || [] };
+                    state[speaker] = result.status === 'ok' ? { status: 'last_confirmed', placeId: result.place.id, name: result.place.name, ...(result.subLocation ? { subLocation: result.subLocation } : {}), ...source } : { status: result.status, ...source, candidates: result.candidates || [] };
                 }
                 continue;
             }
             source.evidence = text.slice(0, 80);
             if (['unknown', '未知'].includes(location)) { state[speaker] = { status: 'unknown', ...source }; continue; }
             const hit = resolve(world, location);
-            state[speaker] = hit.status === 'ok' ? { status: 'last_confirmed', placeId: hit.place.id, name: hit.place.name, ...source } : { status: hit.status, ...source, candidates: hit.candidates || [] };
+            state[speaker] = hit.status === 'ok' ? { status: 'last_confirmed', placeId: hit.place.id, name: hit.place.name, ...(hit.subLocation ? { subLocation: hit.subLocation } : {}), ...source } : { status: hit.status, ...source, candidates: hit.candidates || [] };
         }
         return state;
     };
@@ -220,7 +282,7 @@
         weather: { type: 'string', enum: ['normal', 'rain'] }, time: { type: 'string', description: '剧情出发时间HH:MM，不能用系统时间' },
         detail: { type: 'string', enum: ['brief', 'full'], description: '默认brief只取行动需要的短结果；要丰富场景描写才选full' }
     };
-    const definition = { type: 'function', function: { name: 'tool_geo', description: '地理问题优先context一查取齐地点功能/环境、位置证据、两种交通路程；已提供本轮地理速查时不重复查。同次需要多地点用batch。只读，不改变位置，未知会澄清。', parameters: { type: 'object', properties: {
+    const definition = { type: 'function', function: { name: 'tool_geo', description: '地理问题优先context一查取齐地点功能/环境、双方位置与片区、两种交通路程，并给出从已确认一方到常去地点的分钟表；已提供本轮地理速查时不重复查。坐标只表明谁在哪一侧。同次需要多地点用batch。只读，不改变位置，未知会澄清。', parameters: { type: 'object', properties: {
         ...properties, operation: { ...properties.operation, enum: [...properties.operation.enum, 'batch'] },
         requests: { type: 'array', minItems: 1, maxItems: 4, description: 'batch最多4个独立查询，一次返回；不许嵌套batch', items: { type: 'object', properties, required: ['operation'], additionalProperties: false } }
     }, required: ['operation'], additionalProperties: false } } };
@@ -241,7 +303,7 @@
         validateArgs(args);
         if (args.operation === 'batch') return boundResult({ status: 'ok', worldId: world.id, results: args.requests.map((item, index) => ({ index, result: execute(world, state, item) })) }, args.detail);
         if (args.operation === 'context') return boundResult(contextInfo(world, state, args), args.detail);
-        if (args.operation === 'status') return { status: 'ok', worldId: world.id, locations: args.detail === 'full' ? state : briefState(state), note: '最近确认位置不是GPS；工具知道不等于人物获知。' };
+        if (args.operation === 'status') return { status: 'ok', worldId: world.id, locations: args.detail === 'full' ? state : briefState(state, world), note: '最近确认位置不是GPS；工具知道不等于人物获知。' };
         if (args.operation === 'place') {
             const result = placeInfo(world, args.query);
             if (args.detail === 'full' && result.status === 'ok') result.coordinates = { system: world.coordinateSystem || 'world_coordinates', point: resolve(world, args.query).place.point };
@@ -254,5 +316,5 @@
         }
         throw new Error('需要 operation: search/place/route/status');
     };
-    window.RPHubGeography = { validate, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, project, definition, execute };
+    window.RPHubGeography = { validate, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, project, definition, execute, compass, relation, reachability };
 })();
