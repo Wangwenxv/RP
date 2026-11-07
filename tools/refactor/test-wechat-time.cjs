@@ -18,7 +18,7 @@ function harness(response = { messages: [] }) {
     setStoredValue: async (key, data) => stored.set(key, plain(data)),
     getScopedStoredValue: async (key, branch) => plain(stored.get(`${key}/${branch}`) || []),
     setScopedStoredValue: async (key, branch, data) => stored.set(`${key}/${branch}`, plain(data)) });
-  for (const name of ['wechat-time.js', 'wechat-protocol.js', 'app/25-wechat.js']) vm.runInContext(read(name), c);
+  for (const name of ['built-in-content.js', 'wechat-time.js', 'wechat-protocol.js', 'app/25-wechat.js']) vm.runInContext(read(name), c);
   const s = { currentCharacter: { value: { uuid: 'char', name: '林晚', wechatEnabled: true, wechatSpeed: 'fast', wechatStickerRate: 'high' } },
     chatHistory: { value: [] }, classicMemories: { value: [] }, storyRecap: { value: null }, memorySettings: { enabled: false },
     activeStoryBranchId: { value: 'a' }, worldInfo: { value: [] }, presets: { value: [] }, user: { name: '我' },

@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const { createVoiceServer } = require('../wechat-voice-server.cjs');
 const root = path.resolve(__dirname, '../..');
 const sandbox = vm.createContext({ window: {}, console, URL });
-for (const file of ['wechat-voice.js', 'wechat-protocol.js']) vm.runInContext(fs.readFileSync(path.join(root, 'assets/js', file), 'utf8'), sandbox);
+for (const file of ['built-in-content.js', 'wechat-voice.js', 'wechat-protocol.js']) vm.runInContext(fs.readFileSync(path.join(root, 'assets/js', file), 'utf8'), sandbox);
 const V = sandbox.window.RPHubWeChatVoice, P = sandbox.window.RPHubWeChatProtocol;
 const voice = (content = '我在呢') => ({ type: 'voice_request', content, instructions: '轻声，语气放松' });
 test('语音按原位置解析，原文和语气分离；非法意图不冒充文字或空回', () => {

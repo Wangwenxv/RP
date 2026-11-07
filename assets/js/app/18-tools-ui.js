@@ -312,9 +312,15 @@
                 const continuationToolUi = toolUis[toolUis.length - 1];
                 if (continuationToolUi.status !== 'error') continuationToolUi.status = 'continuing';
                 __s.activeToolQueueRunning.value = false;
-                __s.activeToolContinuationPending.value = true;
                 await __s.saveChatHistoryNow();
                 if (toolAbort.signal.aborted) throw __s.createAbortReason();
+                // 主动联系把当前回合交给玩家。发送回执不能充当玩家回复，
+                // 不再请求模型续写，避免它接着虚构收到消息、确认约定和赴约。
+                if (records.some(record => record.payload.status === 'ok' && record.payload.operation === 'wechat')) {
+                    if (continuationToolUi.status === 'continuing') continuationToolUi.status = 'done';
+                    return false;
+                }
+                __s.activeToolContinuationPending.value = true;
                 await __s.generateResponse(Date.now(), {
                     activeToolDepth: activeToolDepth + 1,
                     continueAssistantMessageId: assistantMessage.id,

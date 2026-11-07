@@ -13,10 +13,10 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.7.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
     <script src="../assets/js/built-in-content.js"></script>
     <script src="../assets/js/core-utils.js"></script>
     <script src="../assets/js/api-utils.js"></script>
+    <script src="../assets/js/data-services.js"></script>
     <style>
         :root {
             --app-visual-height: 100vh;
@@ -2175,18 +2175,18 @@
                 };
 
 
-                // Storage Logic (IndexedDB via localforage)
+                // 工坊草稿与 RP / 微信共用存储，旧 AICharGen 数据只读迁移。
                 const characters = ref([createEmptyCharacter()]);
                 const isLoaded = ref(false);
 
-                // Initialize localforage
-                localforage.config({ name: 'AICharGen', storeName: 'characters' });
+                const workshopStorage = window.RPHubStorage;
 
                 // Load Data
                 const loadData = async () => {
                     try {
                         // Load from IndexedDB
-                        const saved = await localforage.getItem('ai_chargen_characters');
+                        await workshopStorage.migrateWorkshopStorage();
+                        const saved = await workshopStorage.getStoredValue('workshop_characters');
                         if (saved) {
                             const parsed = JSON.parse(saved);
                             // Ensure every character has an ID for virtualization keys
@@ -2219,11 +2219,11 @@
                 // Trigger load
                 loadData();
 
-                // Save to localforage whenever characters change (Debounced)
+                // 草稿变动防抖写入共用 IndexedDB。
                 const debouncedSave = debounce(async (newVal) => {
                     try {
                         const json = JSON.stringify(newVal);
-                        await localforage.setItem('ai_chargen_characters', json);
+                        await workshopStorage.setStoredValue('workshop_characters', json);
                         if (storageQuotaExceeded.value) {
                             storageQuotaExceeded.value = false;
                         }
@@ -2499,7 +2499,7 @@
                     createNewCharacter();
                     currentCharacterIndex.value = 0;
                     // Force update storage
-                    await localforage.setItem('ai_chargen_characters', JSON.stringify(characters.value));
+                    await workshopStorage.setStoredValue('workshop_characters', JSON.stringify(characters.value));
                     showToast('所有角色已清空', 'success');
                 };
 

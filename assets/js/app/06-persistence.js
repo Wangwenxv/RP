@@ -114,7 +114,7 @@
         };
         __s.saveCharactersNow = saveCharactersNow;
         const saveData = async (options = {}) => {
-            const { saveMemories = true, saveCharacters = true } = options;
+            const { saveMemories = true, saveCharacters = true, saveChat = true, throwOnError = false } = options;
             try {
                 if (!getMainDb()) await initDB();
                 __s.settings.contextSize = __s.MAX_CONTEXT_SIZE;
@@ -138,9 +138,10 @@
                 }
 
                 // Save Chat State
-                if (__s.currentCharacterIndex.value >= 0) {
+                if (saveChat && __s.currentCharacterIndex.value >= 0 && !__s._isApplyingCharacterScopedData) {
                     await setStoredValue('last_active_char', __s.currentCharacterIndex.value);
-                    await saveChatHistoryNow();
+                    const saved = await saveChatHistoryNow();
+                    if (throwOnError && !saved) throw new Error('当前聊天记录尚未保存，完整备份已停止');
                 }
 
                 // Save Memory State
@@ -153,6 +154,7 @@
                 if (e.name === 'QuotaExceededError') {
                     __s.showToast('存储空间不足，无法保存', 'error');
                 }
+                if (throwOnError) throw e;
             }
         };
         __s.saveData = saveData;

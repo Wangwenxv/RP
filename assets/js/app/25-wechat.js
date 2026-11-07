@@ -426,6 +426,12 @@
             }, 300);
         };
         __s.scheduleWechatSave = scheduleWechatSave;
+        __s.flushPendingWechatSave = async () => {
+            clearTimeout(wechatSaveTimer);
+            wechatSaveTimer = null;
+            const scope = wechatScopeId();
+            if (scope && __s.getLoadedWechatScopeId?.() === scope) await saveWechatTimelineNow(scope, wechatTimeline.value);
+        };
 
         // ---- 表情包库持久化（全局，不随角色/分支）----
         const loadWechatStickers = async () => {
@@ -683,13 +689,17 @@
                 if (item.role !== 'user' && item.role !== 'assistant') continue;
                 const text = normalizeRpText(item.content, item.role);
                 if (!text) continue;
-                lines.push(`${item.role === 'user' ? '对方' : `你（${who}）`}：${text}`);
+                const source = item.role === 'user'
+                    ? `【RP玩家原输入｜${__s.user.name || '用户'}】`
+                    : `【RP叙述｜非${who}的微信发言】`;
+                lines.push(`${source}${text}`);
             }
             if (!lines.length) return '';
             const kept = lines.slice(-WECHAT_RP_SEGMENT_MESSAGES);
             const omitted = lines.length - kept.length;
             return [
-                '【roleplay 剧情｜以下是你和对方在 roleplay 里发生的事，只作为背景，不是微信消息】',
+                '【roleplay 剧情｜以下是叙述资料，可能包含多场景；不是微信消息，也不等于角色亲历】',
+                `RP叙述中的第二人称“你”指玩家「${__s.user.name || '用户'}」，角色台词按说话人判定。只继承${who}实际参与的处境与有来源的认知；其他场景、他人内心与玩家未传达的行动不自动成为${who}知道的事。`,
                 omitted > 0 ? `（这段更早的 ${omitted} 条已省略）` : '',
                 ...kept
             ].filter(Boolean).join('\n');
@@ -857,6 +867,7 @@
             const char = __s.currentCharacter.value || {};
             return wxProtocol.buildSystemPrompt(buildWechatCharacterCard(), {
                 characterName: String(char.wechatPeerName || '').trim() || char.name || '',
+                userName: __s.user.name,
                 presetRules: buildWechatPresetRules(),
                 worldInfo: buildWechatWorldInfo(),
                 userInfo: __s.buildUserInfoPrompt(),
@@ -2124,9 +2135,12 @@
         const deliverActiveWechatMessage = (content) => {
             const text = String(content || '').trim();
             if (!text) throw new Error('微信消息内容为空');
-            if (wxProtocol.parseReply(text).some(message => ['image_request', 'voice_request'].includes(message.type))) throw new Error('RP 主动微信工具目前只发送文字或表情，图片与语音请在微信回合发送');
+            if (__s.pendingActiveWechatMessages.length) throw new Error('本轮已发起微信联系，等待玩家回应；不能继续自问自答或补发下一轮消息');
+            // 主动联系不是被动微信的多气泡回复：不接受嵌套消息列表或发送者字段。
+            if (wxProtocol.extractJSON(text) !== null || /^\s*```/.test(text)) throw new Error('RP 主动微信工具目前只发送文字或表情：content 必须是角色的一条纯文本消息，不接受 JSON 消息列表、发送者或媒体意图');
+            if (text.length > wxProtocol.MAX_CONTENT_LEN) throw new Error(`主动微信消息不得超过 ${wxProtocol.MAX_CONTENT_LEN} 字符`);
             __s.pendingActiveWechatMessages.push(text);
-            return { delivered: true, content: text };
+            return { queued: true, delivered: false, awaitingPlayer: true, content: text };
         };
         __s.deliverActiveWechatMessage = deliverActiveWechatMessage;
 
@@ -2134,12 +2148,11 @@
         const playActiveWechatMessages = async (contents) => {
             if (!contents.length) return;
             const tier = wechatStickerTier();
-            // 与被动回复走同一条解析链：parseReply 负责把纯 emoji 升级成 sticker 气泡、
-            // 容忍模型偶发输出 JSON 信封；档位裁剪对整批一次生效。
+            // 一次主动联系只发送一个气泡，换行仍属于同一条；emoji 归一化为表情。
             const parsed = [];
             for (const raw of contents) {
                 const text = String(raw || '').trim();
-                if (text) parsed.push(...wxProtocol.parseReply(text));
+                if (text) parsed.push(...wxProtocol.normalizeMessages([{ type: 'text', content: text }]));
             }
             const messages = wxProtocol.applyStickerPolicy(parsed, tier);
             if (messages.some(message => ['image_request', 'voice_request'].includes(message.type))) throw new Error('RP 主动微信不支持图片或语音意图');

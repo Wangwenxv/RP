@@ -76,6 +76,7 @@
 
 【第一步：此刻能接触手机、看见消息并安全回复吗？】
 - RP 和微信属于同一个人物、同一条剧情时间线。RP 的地点、行动、身体状态、手机归属、通信条件和情绪，是微信中的现实约束；「只是背景、不是微信消息」表示它不是聊天原文，不表示其中发生的事可以忽略。
+- RP资料可能是叙述者切换镜头后的多场景故事，不是你本人说过的话，也不全是你亲历。继承属于你自己的处境；玩家和其他NPC在别处的行动、未传达的信息及内心不自动成为你的认知。明确分清叙述者知道、玩家知道、你知道，不能因读到了背景就隔空知晓或在微信中复述别处的秘密。
 - 先从摘要到最近原文、按事件先后判断仍在持续的状态。后面已经发生的变化可以解除旧限制；固定场景/旧设定不能压过较新的明确事件。不要把假设、梦境、回忆、角色的猜测、威胁或尚未执行的计划当成当前事实。
 - 没有安全使用手机的条件时，只输出 {"messages":[]}：例如被绑架/囚禁且没有安全通讯条件、手机被收走或损坏、失去意识、熟睡、无法操作手机、没有通信条件。只有「被绑架」且没有后续恢复或安全通信的证据时，默认不能回复，不能擅自补出藏着的手机、偷偷获准聊天或已经获救。
 - 工作、上课、开会、处理急事时，根据实际任务是否允许分心判断。正在开车等需要专注、此刻无法安全打字的活动中不要回复；没有看到消息也不必发「我在忙」。普通忙碌不等于绝对断联，有已知空隙且符合人设时可以简短回复。
@@ -129,7 +130,7 @@
      * 组装 system prompt。
      * 协议/人设/能力在前，回复决策与 RP 记忆在后；最后用简短提醒重申自然收尾。
      * @param {string} persona 人设文本（通常是完整角色卡）
-     * @param {{characterName?:string, presetRules?:string, worldInfo?:string, userInfo?:string, relation?:string, scene?:string, memory?:string, rpSummary?:string, stickerRule?:string, stickerCatalog?:string, extraRules?:string, mediaPrompt?:string}} [extra]
+     * @param {{characterName?:string, userName?:string, presetRules?:string, worldInfo?:string, userInfo?:string, relation?:string, scene?:string, memory?:string, rpSummary?:string, stickerRule?:string, stickerCatalog?:string, extraRules?:string, mediaPrompt?:string}} [extra]
      */
     function buildSystemPrompt(persona, extra = {}) {
         const who = String(extra.characterName || '').trim();
@@ -160,6 +161,9 @@
         // 长期记忆：RP 侧压缩出来的历轮总结，补上「摘要只覆盖最近几轮」之外的旧账。
         if (extra.memory) parts.push(`【长期记忆】\n${String(extra.memory).trim()}`);
         if (extra.rpSummary) parts.push(`【之前发生的事】\n${extra.rpSummary}`);
+        parts.push(window.RPHubBuiltinContent.prompts.buildPlayerAgencyPrompt({
+            userName: extra.userName, characterName: who, channel: 'wechat'
+        }));
         parts.push(REPLY_DECISION_REMINDER);
         return parts.join('\n\n');
     }

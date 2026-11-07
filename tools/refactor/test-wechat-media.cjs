@@ -25,7 +25,7 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
     getScopedStoredValue: async (key, scopeId) => structuredClone(stored.get(`${key}/${scopeId}`) || [])
   });
   // Use the same worldbook matcher as RP, without replacing the in-memory test storage.
-  context.window.RPHubBuiltinContent = { prompts: {} };
+  vm.runInContext(read('built-in-content.js'), context);
   context.window.RPHubUtils = { generateUUID: context.generateUUID };
   vm.runInContext(read('data-services.js'), context);
   context.window.RPHubStorage = storage;

@@ -182,7 +182,7 @@
             __s.removeLegacyUserRegex();
 
             // Save enforced defaults immediately (仅保存预设/正则等结构性数据)
-            __s.saveData({ saveMemories: false, saveCharacters: false });
+            __s.saveData({ saveMemories: false, saveCharacters: false, saveChat: false });
 
             // 初始化守卫解除：此后 saveData 才允许写入 user / memorySettings
             __s._initComplete = true;

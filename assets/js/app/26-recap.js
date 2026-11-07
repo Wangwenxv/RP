@@ -204,7 +204,12 @@
                     const text = __s.stripDisabledImageGenContext(
                         __s.stripNextResponsePrompt(__s.stripUiTemplateContextInjection(parsedMain))
                     ).replace(/\s+/g, ' ').trim();
-                    if (text) entries.push({ index, turn: turnInfo.turn, text });
+                    if (text) {
+                        const source = message.role === 'user'
+                            ? `【RP玩家原输入｜${__s.user.name || '用户'}】`
+                            : `【RP AI叙述｜${__s.currentCharacter.value?.name || '角色'}】`;
+                        entries.push({ index, turn: turnInfo.turn, text: `${source}${text}` });
+                    }
                 });
             });
             return entries;
@@ -321,7 +326,7 @@
             if (!text) return [];
             const messages = [{
                 role: 'user',
-                content: `【前情提要｜此前剧情的压缩摘要，作为你已知的背景】\n${text}`,
+                content: `【前情提要｜此前剧情的压缩摘要，作为叙述背景；人物是否知情按实际来源区分】\n${text}`,
                 _sourceIndexes: [],
                 _preventContextMerge: true
             }];

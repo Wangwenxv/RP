@@ -224,15 +224,6 @@
             }
 
             // 记忆压缩：一次总结替换旧 AI 消息；二次总结合并每五轮中有效的记忆。
-            const recentThinkingByMessage = new Map();
-            if (cotPresets.length > 0) {
-                for (let index = __s.chatHistory.value.length - 1; index >= 0 && recentThinkingByMessage.size < 2; index--) {
-                    const source = __s.chatHistory.value[index];
-                    if (source?.role !== 'assistant' || source === openingSourceMessage || source === continuationTargetMessage) continue;
-                    const thinking = __s.getMessageThinkingText(source, useThinkingTag);
-                    if (thinking) recentThinkingByMessage.set(source, thinking);
-                }
-            }
             let chatHistoryForContext = postprocessedChatHistory.map((message, index) => ({
                 ...message,
                 _contextFloor: index + 1
@@ -337,13 +328,12 @@
                         ? sourceIndexes.map(sourceIndex => __s.chatHistory.value[sourceIndex]).filter(source => source && source.role === m.role)
                         : [m];
                     const cleanSourceContent = (source) => {
-                        // Remove internal thinking/COT from history before sending, then restore only the retained recent blocks.
+                        // 普通历史只带正文，旧思考中的预测/待行动方案不能反复作为背景输入。
+                        // 本轮原生工具的必要推理与签名由 activeToolMessages 单独保留。
                         const parsedData = parseCot(source.content || '');
                         let content = __s.stripUiTemplateContextInjection(parsedData.main);
                         if (!__s.settings.uiTemplateEnabled || !__s.settings.uiTemplateMainModelAnalysis) content = stripUiTemplateUpdateBlock(content);
                         content = __s.stripDisabledImageGenContext(__s.stripNextResponsePrompt(content));
-                        const recentThinking = source.role === 'assistant' ? recentThinkingByMessage.get(source) : '';
-                        if (recentThinking) content = `${__s.wrapAnalysis(retainedThinkingTag, recentThinking)}${content}`;
                         if (source === openingSourceMessage && openingThinking) content = `${openingThinking}${content}`;
                         if (source.role === 'user') content = __s.appendMessageImageDescriptions(source, content);
                         if (__s.settings.uiTemplateEnabled
@@ -382,7 +372,6 @@
                     .map(preset => preset.content
                         .replace(/^\s*<writing_style>\s*/i, '')
                         .replace(/\s*<\/writing_style>\s*$/i, ''))
-                .concat(/deepseek/i.test(requestModel) ? '正文最少700字。' : [])
                     .join('\n\n')
             });
 
@@ -504,6 +493,12 @@
                     if (geographyPrompt) messages.unshift({ role: 'system', content: geographyPrompt });
                 }
                 messages.push(...__s.activeToolMessages);
+                // 每条主请求及工具续写都带本体玩家边界，放在正则/记忆/地理注入之后。
+                messages = BUILTIN_PROMPTS.appendPlayerAgencyPrompt(messages, {
+                    userName: __s.user.name,
+                    characterName: __s.currentCharacter.value.name,
+                    includeTurnReminder: true
+                });
                 const contextViewerState = buildContextViewerState({
                     messages,
                     budgetedEntries,
@@ -674,8 +669,9 @@
                     __s.resetActiveToolResultContext();
                     __s.activeToolHandoffPending.value = false;
                 }
+                const activeWechatTurnEnded = !activeToolContinued && __s.pendingActiveWechatMessages.length > 0;
                 const needsPostGenerationTurns = !wasCancelled && !generationFailed
-                    && !toolResponse
+                    && (!toolResponse || activeWechatTurnEnded)
                     && ((__s.settings.uiTemplateEnabled && generatedAssistantMessageId)
                         || __s.memorySettings.enabled);
                 const hasCompletedTurns = !activeToolContinued && needsPostGenerationTurns && __s.buildConversationTurnSnapshot().turns.length > 0;

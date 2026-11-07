@@ -37,6 +37,7 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
     getScopedStoredValue: async (key, scope) => plain(stored.get(`${key}/${scope}`) || []),
     setScopedStoredValue: async (key, scope, value) => { stored.set(`${key}/${scope}`, plain(value)); }
   });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/built-in-content.js'), 'utf8'), context, { filename: 'built-in-content.js' });
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/wechat-time.js'), 'utf8'), context, { filename: 'wechat-time.js' });
   vm.runInContext(protocolSource, context, { filename: 'wechat-protocol.js' });
   vm.runInContext(wechatSource, context, { filename: '25-wechat.js' });
@@ -62,6 +63,42 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
   context.window.RPHubAppSections.wechat(state);
   return {
     state, protocol: context.window.RPHubWeChatProtocol, stored, requests, toasts,
+    loadRpTools(tools) {
+      Object.assign(context, {
+        BUILTIN_PROMPTS: context.window.RPHubBuiltinContent.prompts,
+        ACTIVE_TOOL_WECHAT_TYPE: 'wechat_message', ACTIVE_TOOL_WEB_TYPE: 'web_search',
+        ACTIVE_TOOL_RANDOM_TYPE: 'random_number', ACTIVE_TOOL_KEYWORD_TYPE: 'keyword_dialogue',
+        ACTIVE_TOOL_MAX_AUTO_CONTINUE: 4, crypto: require('node:crypto').webcrypto,
+        console: { ...console, info() {} }
+      });
+      const continuations = [], toolResults = [];
+      Object.assign(state, {
+        normalizeActiveTools: () => tools, normalizeActiveToolBaseCallName: value => value,
+        getActiveToolAggressiveness: () => 'adaptive', getActiveToolAggressivenessLabel: () => '按需',
+        getActiveToolLatestUserReminder: () => '按需调用',
+        activeToolMessages: [], activeToolQueueRunning: { value: false },
+        activeToolHandoffPending: { value: false }, activeToolContinuationPending: { value: false },
+        saveChatHistoryNow: async () => {},
+        generateResponse: async (...args) => { continuations.push(args); },
+        appendAssistantResponseError: (message, error) => { message.responseError = error; }
+      });
+      for (const file of ['14-tools-runtime.js', '17-retrieval-web-tools.js', '18-tools-ui.js']) {
+        vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/app', file), 'utf8'), context);
+      }
+      context.window.RPHubAppSections.toolsRuntime(state);
+      context.window.RPHubAppSections.retrievalWeb(state);
+      context.window.RPHubAppSections.toolsUi(state);
+      const appendResult = state.appendActiveToolResult;
+      state.appendActiveToolResult = (callId, payload) => { toolResults.push({ callId, payload }); appendResult(callId, payload); };
+      return { continuations, toolResults, async execute(calls) {
+        const message = { id: 'rp-turn', role: 'assistant', content: '她拿起手机，准备联系。' };
+        const uis = new Map();
+        state.syncNativeActiveToolUis(message, calls, uis, tools, true);
+        const native = { role: 'assistant', content: message.content, tool_calls: calls, extra_content: { signature: 'signed' } };
+        const continued = await state.handleActiveToolCallFromAssistant(message, { assistantMessage: native, toolCalls: calls }, uis, tools, 0);
+        return { message, continued, uis: [...uis.values()] };
+      } };
+    },
     async loadRecap() {
       context.getStoredValue = async () => null;
       state.buildConversationTurnSnapshot = () => ({ turns: [] });
@@ -74,6 +111,67 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
     async send(content) { state.wechatInput.value = content; await state.sendWechatMessage(); }
   };
 }
+
+const rpWechatTool = { id: 'tool_wechat', name: '主动微信', type: 'wechat_message', callName: 'tool_wechat', enabled: true };
+const nativeCall = (id, content, name = 'tool_wechat') => ({ id, type: 'function', function: {
+  name, arguments: JSON.stringify(typeof content === 'string' ? { content } : content)
+} });
+
+test('RP主动微信同轮四个并行调用只接收第一条，成功后不自动续写', async () => {
+  const h = harness(), runtime = h.loadRpTools([rpWechatTool]);
+  const run = await runtime.execute(['在忙吗', '图书馆', '好', '你早点弄完 别太晚'].map((text, i) => nativeCall(`call-${i}`, text)));
+  assert.equal(run.continued, false);
+  assert.equal(runtime.continuations.length, 0);
+  assert.deepEqual(plain(h.state.pendingActiveWechatMessages), ['在忙吗']);
+  assert.deepEqual(plain(runtime.toolResults.map(item => item.payload.status)), ['ok', 'error', 'error', 'error']);
+  assert.deepEqual(plain(runtime.toolResults.map(item => item.callId)), ['call-0', 'call-1', 'call-2', 'call-3']);
+  assert.deepEqual(plain(run.uis.map(ui => ui.status)), ['done', 'error', 'error', 'error']);
+  assert.equal(runtime.toolResults[0].payload.results[0].delivered, false, '排队不冒充已经送达');
+  assert.equal(runtime.toolResults[0].payload.results[0].awaitingPlayer, true);
+  assert.equal(h.state.activeToolContinuationPending.value, false);
+  assert.equal(h.state.activeToolQueueRunning.value, false);
+});
+
+test('主动微信不把嵌套发送者或多消息JSON解析成角色气泡，错误仍可由模型修正', async () => {
+  const h = harness(), runtime = h.loadRpTools([rpWechatTool]);
+  const run = await runtime.execute([nativeCall('bad-envelope', JSON.stringify({ messages: [
+    { role: 'user', content: '还在实验室 你呢' }, { role: 'assistant', content: '图书馆' }
+  ] }))]);
+  assert.equal(h.state.pendingActiveWechatMessages.length, 0);
+  assert.equal(runtime.toolResults[0].payload.status, 'error');
+  assert.equal(run.continued, true, '没有成功联系时保留原工具错误修正管线');
+  assert.equal(runtime.continuations.length, 1);
+  assert.throws(() => h.state.deliverActiveWechatMessage('{"role":"user","content":"好"}'), /一条纯文本/);
+  assert.throws(() => h.state.deliverActiveWechatMessage('```json\n{"messages":[]}\n```'), /一条纯文本/);
+});
+
+test('主动微信原生发送者字段被拒绝，合法调用仍可交接；换行只生成一个气泡', async () => {
+  const h = harness(), runtime = h.loadRpTools([rpWechatTool]);
+  const run = await runtime.execute([nativeCall('bad-sender', { content: '还在实验室', sender: '陈璃' }), nativeCall('valid', '在忙吗\n我刚下课')]);
+  assert.equal(run.continued, false);
+  assert.deepEqual(plain(runtime.toolResults.map(item => item.payload.status)), ['error', 'ok']);
+  await h.state.flushActiveWechatMessages();
+  const messages = h.state.wechatTimeline.value.filter(item => item.channel === 'wechat');
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].role, 'assistant');
+  assert.equal(messages[0].content, '在忙吗\n我刚下课');
+});
+
+test('主动联系交接保留同批其他工具结果，非微信工具仍自动续写并保留原生签名', async () => {
+  const random = { id: 'tool_random', callName: 'tool_random', name: '随机', type: 'random_number', enabled: true };
+  const h = harness(), runtime = h.loadRpTools([random, rpWechatTool]);
+  const calls = [nativeCall('random', { min: 1, max: 1 }, 'tool_random'), nativeCall('contact', '在忙吗')];
+  const run = await runtime.execute(calls);
+  assert.equal(run.continued, false);
+  assert.equal(runtime.toolResults[0].payload.results[0].value, 1);
+  assert.equal(runtime.toolResults[1].payload.operation, 'wechat');
+  assert.equal(h.state.activeToolMessages[0].extra_content.signature, 'signed');
+  const other = harness(), onlyRandom = other.loadRpTools([random]);
+  const continued = await onlyRandom.execute([nativeCall('random-only', { min: 1, max: 1 }, 'tool_random')]);
+  assert.equal(continued.continued, true);
+  assert.equal(onlyRandom.continuations.length, 1);
+  assert.equal(other.state.pendingActiveWechatMessages.length, 0);
+});
 
 test('明确空回、代码块、思考块与前言：均不会变成文字或表情', () => {
   const { protocol: p } = harness();
@@ -283,6 +381,20 @@ const imageItems = (count, prefix) => Array.from({ length: count }, (_, i) => ({
   id: `${prefix}-${i}`, ts: i + 10, channel: 'wechat', role: 'user', type: 'image',
   content: `data:image/png;base64,${prefix}-${i}`
 }));
+
+test('多场景RP作为叙述资料进入微信，不再标成角色自己的话或默认亲历', async () => {
+  const h = harness();
+  h.state.wechatTimeline.value = [rpItem('阿伟在实验室独自修改代码，小A并不在场。', 0),
+    rpItem('与此同时，小A和朋友在食堂聊天，尚不知道实验室的事情。', 1)];
+  await h.send('吃饭了吗');
+  const request = h.requests[0];
+  const background = request.messages.find(message => String(message.content).includes('【roleplay 剧情｜'));
+  assert.ok(background);
+  assert.match(background.content, /可能包含多场景；不是微信消息，也不等于角色亲历/);
+  assert.match(background.content, /【RP叙述｜非小A的微信发言】阿伟在实验室/);
+  assert.ok(!background.content.includes('你（小A）：阿伟'));
+  assert.match(request.messages[0].content, /玩家和其他NPC在别处的行动、未传达的信息及内心不自动成为你的认知/);
+});
 
 test('模型判断期间不显示人物正在输入，主动空回也不产生输入提示', async () => {
   const started = defer();

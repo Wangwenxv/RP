@@ -270,8 +270,16 @@ const app = createApp({
         __sections.geography(__s);
         __sections.mapLibrary(__s);
         __sections.recap(__s);
+        __sections.fullBackup(__s);
 
         return {
+            fullBackupBusy: __s.fullBackupBusy, fullBackupProgress: __s.fullBackupProgress, fullBackupError: __s.fullBackupError,
+            fullBackupBlocked: __s.fullBackupBlocked, backupIncludeCredentials: __s.backupIncludeCredentials,
+            fullBackupPreview: __s.fullBackupPreview, importBackupCredentials: __s.importBackupCredentials,
+            exportAllContent: __s.exportAllContent, importAllContent: __s.importAllContent,
+            cancelFullBackupImport: __s.cancelFullBackupImport, confirmFullBackupImport: __s.confirmFullBackupImport,
+            formatFullBackupDate: __s.formatFullBackupDate,
+            fullBackupDialog: __s.fullBackupDialog, onFullBackupKeydown: __s.onFullBackupKeydown,
             mapRecords: __s.mapRecords, mapLibraryBusy: __s.mapLibraryBusy, geographyMapOptions: __s.geographyMapOptions,
             hasOpenedMapManager: __s.hasOpenedMapManager, mapReturnToCharacter: __s.mapReturnToCharacter,
             openMapManagerForCharacter: __s.openMapManagerForCharacter, returnToCharacterFromMaps: __s.returnToCharacterFromMaps,
@@ -318,6 +326,7 @@ const app = createApp({
             quotaValue: __s.quotaValue, quotaLoading: __s.quotaLoading, quotaError: __s.quotaError,
             // Memory System Exports
             classicMemoryPage: __s.classicMemoryPage, classicMemoryPageCount: __s.classicMemoryPageCount, classicMemories: __s.classicMemories, memorySettings: __s.memorySettings, retryingClassicMemoryId: __s.retryingClassicMemoryId, retryClassicMemory: __s.retryClassicMemory,
+            memoryRecallState: __s.memoryRecallState, resetMemoryRecallFailure: __s.resetMemoryRecallFailure,
             isActiveBatchExtracting: __s.isClassicBatchExtracting,
             showMemoryBackfillModal: __s.showMemoryBackfillModal, memoryBackfillProgress: __s.memoryBackfillProgress,
             startBatchMemoryExtraction: __s.startBatchMemoryExtraction, abortBatchExtraction: __s.abortClassicBatchExtraction,

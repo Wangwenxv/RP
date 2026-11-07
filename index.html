@@ -2040,6 +2040,30 @@
                             </div>
 
                             <!-- Storage Management -->
+                            <div class="pt-6 border-t border-gray-100 mt-6" id="full-backup-settings">
+                                <h4 class="settings-subheading mb-2">全部内容备份</h4>
+                                <p class="text-sm leading-relaxed text-gray-500">一次备份所有角色与分支、RP / 微信记录、记忆与前情提要、图片 / 语音 / 文档原件、表情包、地图库和设置。</p>
+                                <label class="mt-4 flex items-center gap-2 text-sm text-gray-600">
+                                    <input type="checkbox" v-model="backupIncludeCredentials" :disabled="fullBackupBusy"
+                                        class="accent-primary-500 rounded">
+                                    包含 API 与语音密钥（用于迁移到自己的设备）
+                                </label>
+                                <p class="mt-1 text-xs leading-relaxed text-gray-500">默认不包含密钥，导入后需重新填写；已保存的本地附件、小说库和工坊草稿及偏好设置随文件打包。</p>
+                                <div class="mt-4 flex flex-wrap gap-2">
+                                    <button type="button" class="settings-action" @click="exportAllContent" :disabled="fullBackupBlocked">
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor"><use href="#icon-export"></use></svg>
+                                        导出全部内容
+                                    </button>
+                                    <label class="settings-action relative cursor-pointer" :class="{ 'opacity-40 pointer-events-none': fullBackupBlocked }">
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor"><use href="#icon-import"></use></svg>
+                                        导入全部内容
+                                        <input type="file" accept=".rphub" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                            aria-label="导入全部内容" :disabled="fullBackupBlocked" @change="importAllContent">
+                                    </label>
+                                </div>
+                                <p v-if="fullBackupBlocked && !fullBackupBusy" class="mt-2 text-xs text-gray-500">请等待当前生成、附件处理或补录完成后再备份。</p>
+                                <p v-if="fullBackupError" class="mt-3 text-sm leading-relaxed text-red-600 break-words" role="alert">{{ fullBackupError }}</p>
+                            </div>
                             <div class="pt-6 border-t border-gray-100 mt-6">
                                 <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                                     <div>
@@ -2478,7 +2502,7 @@
                                     <settings-help topic="summaryMode" :open-topic="settingsHelpTopic"
                                         label="查看基础模式说明" trigger-class="relative z-20" icon-class=""
                                         popover-class="memory-mode-help-popover" @toggle="settingsHelpTopic = $event">
-                                        使用总结模型为每轮对话生成第三人称的高密度记忆。超过保留楼层后，AI 原文会由对应的本轮记忆替代。
+                                        只使用总结模型压缩旧对话，不请求向量接口。超过保留楼层后，上下文中的 AI 原文会由本轮记忆替代；聊天记录原文仍保留。
                                     </settings-help>
                                 </div>
                                 <div class="segmented-switch__option"
@@ -2489,7 +2513,7 @@
                                     <settings-help topic="enhancedMode" :open-topic="settingsHelpTopic"
                                         label="查看增强模式说明" trigger-class="relative z-20" icon-class=""
                                         popover-class="memory-mode-help-popover is-right" @toggle="settingsHelpTopic = $event">
-                                        先使用总结模型为每轮对话生成第三人称的高密度记忆，再将用户原输入与对应总结生成向量；按最新输入召回增强记忆。
+                                        在基础总结之上，额外调用向量接口，按最新输入找回相关旧记忆。需要当前 API 支持 embeddings 和所选向量模型；向量不可用时继续使用总结。
                                     </settings-help>
                                 </div>
                             </div>
@@ -2518,7 +2542,7 @@
                                     <label class="text-sm font-semibold text-gray-700">向量模型</label>
                                     <settings-help topic="embeddingModel" :open-topic="settingsHelpTopic"
                                         label="查看向量模型说明" @toggle="settingsHelpTopic = $event">
-                                        将用户原输入与对应总结生成向量坐标，再按最新输入召回增强记忆。
+                                        使用当前 API 地址和 Key 调用 embeddings 接口，服务端需支持所选向量模型。普通聊天模型不能代替向量模型；只想压缩旧对话可选择基础模式。
                                     </settings-help>
                                 </div>
                                 <button @click="openModelSelector('memoryEmbeddingModel')"
@@ -2528,6 +2552,19 @@
                                         :class="memorySettings.embeddingModel ? 'text-gray-700' : 'text-gray-400'">{{
                                         memorySettings.embeddingModel || '请选择向量模型' }}</span>
                                 </button>
+                                <p v-if="!memorySettings.embeddingModel" class="mt-2 text-xs leading-relaxed text-gray-500">
+                                    尚未选择向量模型，仍可生成总结；如只需压缩对话，切换到基础模式即可。
+                                </p>
+                                <div v-if="memoryRecallState.status === 'error'" role="status" aria-live="polite"
+                                    class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                                    <p class="text-xs font-semibold text-amber-800">向量增强暂不可用，总结仍可使用</p>
+                                    <p class="mt-1 break-words text-xs leading-relaxed text-amber-700">{{ memoryRecallState.message }}</p>
+                                    <p class="mt-1 text-xs leading-relaxed text-amber-700">失败后暂停向量请求 1 分钟，之后按需重试；修改向量配置后会恢复尝试。</p>
+                                    <button type="button" @click="resetMemoryRecallFailure()"
+                                        class="mt-2 text-xs font-medium text-primary-700 hover:text-primary-600 underline underline-offset-2">
+                                        下次请求重试
+                                    </button>
+                                </div>
                             </div>
 
                             <div class="settings-field">
@@ -2855,6 +2892,45 @@
             @update:tavily-api-key="editingActiveTool.data.tavilyApiKey = $event"></active-tool-editor-modal>
 
         <auto-image-gen-modal :show="showAutoImageGenModal" @decide="setAutoImageGen"></auto-image-gen-modal>
+        <modal-shell v-if="fullBackupBusy || fullBackupPreview" overlay-class="z-[110] bg-black/50 backdrop-blur-sm p-3"
+            panel-class="bg-white rounded-2xl border border-gray-200 w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
+            <section ref="fullBackupDialog" tabindex="-1" class="outline-none" role="dialog" aria-modal="true" aria-labelledby="full-backup-title" @keydown="onFullBackupKeydown">
+                <modal-header @close="cancelFullBackupImport">
+                    <h3 id="full-backup-title" class="text-lg font-bold text-gray-800">{{ fullBackupBusy ? '正在处理完整备份' : '导入全部内容' }}</h3>
+                </modal-header>
+                <div class="p-5 space-y-4">
+                    <p v-if="fullBackupBusy" class="text-sm text-primary-700" role="status" aria-live="polite">{{ fullBackupProgress }}</p>
+                    <template v-else-if="fullBackupPreview">
+                        <div class="text-sm text-gray-600 space-y-1">
+                            <p class="break-all font-medium">{{ fullBackupPreview.name }}</p>
+                            <p class="text-xs text-gray-500">{{ formatFullBackupDate(fullBackupPreview.createdAt) }} · {{ formatStorageSize(fullBackupPreview.size) }}</p>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 rounded-xl bg-gray-50 border border-gray-100 p-3 text-sm text-gray-700">
+                            <span>角色 {{ fullBackupPreview.characters }}</span><span>剧情分支 {{ fullBackupPreview.branches }}</span>
+                            <span>RP 消息 {{ fullBackupPreview.rp }}</span><span>微信记录 {{ fullBackupPreview.wechat }}</span>
+                            <span>记忆 {{ fullBackupPreview.memories }}</span><span>自建地图 {{ fullBackupPreview.maps }}</span>
+                            <span>图片 {{ fullBackupPreview.images }}</span><span>语音 {{ fullBackupPreview.voices }}</span>
+                            <span>文档原件 {{ fullBackupPreview.documents }}</span>
+                            <span>工坊草稿 {{ fullBackupPreview.workshop }}</span><span>小说 {{ fullBackupPreview.novels }}</span>
+                        </div>
+                        <label v-if="fullBackupPreview.credentials" class="flex items-center gap-2 text-sm text-gray-700">
+                            <input type="checkbox" v-model="importBackupCredentials" class="accent-primary-500 rounded">恢复备份中的 API 与语音密钥
+                        </label>
+                        <div class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-relaxed text-amber-800">
+                            <p>将替换当前全部角色、RP / 微信记录、附件和设置。导入前会自动下载当前内容的回退备份，其中包含密钥，请妥善保管。</p>
+                            <p v-if="!importBackupCredentials" class="mt-1">本次不恢复密钥，导入后需重新填写 API 与语音密钥。</p>
+                            <p class="mt-1">完成后页面会自动重新载入。</p>
+                        </div>
+                        <p v-if="fullBackupError" class="text-sm text-red-600 break-words" role="alert">{{ fullBackupError }}</p>
+                        <div class="flex flex-wrap justify-end gap-2">
+                            <button type="button" class="settings-action" @click="cancelFullBackupImport">取消</button>
+                            <button type="button" class="settings-action bg-primary-50 text-primary-700" @click="confirmFullBackupImport" :disabled="fullBackupBlocked">覆盖并导入全部内容</button>
+                        </div>
+                    </template>
+                </div>
+            </section>
+        </modal-shell>
+
         <export-selection-modal :show="showExportModal" :items="exportItems" :selected="selectedExportIndices"
             @close="showExportModal = false" @select-all="selectAllExportItems"
             @deselect-all="deselectAllExportItems" @toggle="toggleExportSelection"
@@ -3400,6 +3476,7 @@
         document.write('<script src="assets/js/wechat-protocol.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/emoji-catalog.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/data-services.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/backup-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/runtime-services.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/ui-components.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/map-atlas.js?v=' + new Date().getTime() + '"><\/script>');
@@ -3435,6 +3512,7 @@
         document.write('<script src="assets/js/app/29-wechat-documents.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/30-geography.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/31-map-library.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/32-full-backup.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/26-recap.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app.js?v=' + new Date().getTime() + '"><\/script>');
     </script>

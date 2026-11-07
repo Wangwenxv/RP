@@ -10,6 +10,11 @@
     let mainDb = null;
     let legacyDb = null;
     let initPromise = null;
+    let writesLocked = false;
+    let legacyFallbackDisabled = null;
+    const assertStorageWritable = () => {
+        if (writesLocked) throw new Error('正在恢复完整备份，请等待页面重新载入');
+    };
 
     const openAppDB = (name, version = DB_VERSION) => new Promise((resolve, reject) => {
         const request = indexedDB.open(name, version);
@@ -111,7 +116,9 @@
     });
 
     const dbSet = async (key, value, options = {}) => {
+        assertStorageWritable();
         if (!mainDb) await initDB();
+        assertStorageWritable();
         try {
             return await dbSetTo(mainDb, key, value, options);
         } catch (error) {
@@ -142,6 +149,8 @@
     const dbGetWithLegacy = async (key, oldKey) => {
         const value = await dbGet(key);
         if (value !== undefined || !oldKey || !legacyDb) return value;
+        if (legacyFallbackDisabled === null) legacyFallbackDisabled = await dbGet(storageKey('backup_legacy_disabled')) === true;
+        if (legacyFallbackDisabled) return undefined;
         const legacyValue = await dbGetFrom(legacyDb, oldKey);
         if (legacyValue !== undefined) await dbSet(key, legacyValue);
         return legacyValue;
@@ -155,6 +164,7 @@
     });
 
     const dbDeleteWithLegacy = async (key, oldKey) => {
+        assertStorageWritable();
         if (!mainDb) await initDB();
         await dbDeleteFrom(mainDb, key);
         if (oldKey && legacyDb) await dbDeleteFrom(legacyDb, oldKey);
@@ -180,6 +190,7 @@
     });
 
     const deleteStorageKeys = (targetDb, keys) => new Promise((resolve, reject) => {
+        try { assertStorageWritable(); } catch (error) { reject(error); return; }
         if (!targetDb || keys.length === 0) return resolve();
         const transaction = targetDb.transaction(['store'], 'readwrite');
         const store = transaction.objectStore('store');
@@ -196,6 +207,66 @@
         return value;
     };
 
+    const readStorageSnapshot = async () => {
+        if (!mainDb) await initDB();
+        const entries = new Map();
+        const fallbackDisabled = await dbGet(storageKey('backup_legacy_disabled')) === true;
+        if (!fallbackDisabled && legacyDb) await scanStorageEntries(legacyDb, 'legacy', (_, key, value) => {
+            if (key.startsWith(LEGACY_STORAGE_PREFIX)) entries.set(getStorageLogicalKey(key), value);
+        });
+        await scanStorageEntries(mainDb, 'main', (_, key, value) => {
+            if (key.startsWith(STORAGE_PREFIX)) entries.set(getStorageLogicalKey(key), value);
+        });
+        return [...entries].sort(([a], [b]) => a.localeCompare(b));
+    };
+    const migrateWorkshopStorage = async () => {
+        if (await dbGet(storageKey('workshop_characters')) !== undefined
+            || await dbGet(storageKey('backup_legacy_disabled')) === true) return;
+        // 旧工坊曾使用独立的 AICharGen 数据库，只读迁移，保留旧库。
+        const value = await new Promise((resolve, reject) => {
+            let absent = false;
+            const request = indexedDB.open('AICharGen');
+            request.onupgradeneeded = event => { absent = true; event.target.transaction.abort(); };
+            request.onerror = () => absent ? resolve(undefined) : reject(request.error);
+            request.onsuccess = () => {
+                const database = request.result;
+                if (!database.objectStoreNames.contains('characters')) { database.close(); resolve(undefined); return; }
+                const read = database.transaction('characters', 'readonly').objectStore('characters').get('ai_chargen_characters');
+                read.onsuccess = () => { database.close(); resolve(read.result); };
+                read.onerror = () => { database.close(); reject(read.error); };
+            };
+        });
+        if (value !== undefined && value !== null) await dbSet(storageKey('workshop_characters'), value);
+    };
+    // 所有 RP Hub 记录在一个事务中替换，配额/写入失败时旧数据完整保留。
+    const restoreStorageSnapshot = async entries => {
+        if (!mainDb) await initDB();
+        const seen = new Set();
+        for (const [key] of entries) {
+            if (typeof key !== 'string' || !key || key.length > 1024 || seen.has(key)) throw new Error('备份存储键无效或重复');
+            seen.add(key);
+        }
+        return new Promise((resolve, reject) => {
+            const transaction = mainDb.transaction(['store'], 'readwrite'), store = transaction.objectStore('store');
+            const request = store.openCursor();
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (cursor) {
+                    if (String(cursor.key).startsWith(STORAGE_PREFIX)) cursor.delete();
+                    cursor.continue();
+                    return;
+                }
+                try {
+                    entries.forEach(([key, value]) => store.put(value, storageKey(key)));
+                    store.put(true, storageKey('backup_legacy_disabled'));
+                } catch (error) { transaction.abort(); reject(error); }
+            };
+            transaction.oncomplete = () => { legacyFallbackDisabled = true; resolve(); };
+            transaction.onerror = () => reject(transaction.error || new Error('备份恢复失败'));
+            transaction.onabort = () => reject(transaction.error || new Error('备份恢复已回滚'));
+        });
+    };
+
     window.RPHubStorage = Object.freeze({
         cloneForStorage,
         deleteScopedStoredValue: (name, id) => dbDeleteWithLegacy(scopedStorageKey(name, id), legacyScopedStorageKey(name, id)),
@@ -209,6 +280,10 @@
         initDB,
         isDatabaseClosingError,
         readStorageKeys,
+        readStorageSnapshot,
+        migrateWorkshopStorage,
+        restoreStorageSnapshot,
+        setStorageWriteLock: value => { writesLocked = !!value; },
         scanStorageEntries,
         setScopedStoredValue: (name, id, value, options = {}) => dbSet(scopedStorageKey(name, id), value, options),
         setStoredValue: (name, value, options = {}) => dbSet(storageKey(name), value, options),

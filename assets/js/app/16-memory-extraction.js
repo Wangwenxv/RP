@@ -23,6 +23,48 @@
         __s._classicSummaryInFlightKeys = _classicSummaryInFlightKeys;
         const getMemoryEmbeddingModel = () => String(__s.memorySettings.embeddingModel || '').trim();
         __s.getMemoryEmbeddingModel = getMemoryEmbeddingModel;
+        // 向量是可选增强；失败状态只驻留内存，不写入角色设置或总结。
+        const MEMORY_RECALL_RETRY_DELAY = 60000;
+        const memoryRecallState = ref({ status: 'idle', message: '', retryAt: 0 });
+        __s.memoryRecallState = memoryRecallState;
+        const getMemoryEmbeddingConfigKey = () => JSON.stringify([
+            __s.currentCharacter.value?.uuid, __s.getCurrentStoryBranchScopeId?.(),
+            __s.memorySettings.enabled, __s.memorySettings.mode, getMemoryEmbeddingModel(),
+            __s.settings.apiUrl, __s.settings.apiKey
+        ]);
+        let memoryEmbeddingConfigKey = '';
+        const resetMemoryRecallFailure = () => {
+            memoryEmbeddingConfigKey = getMemoryEmbeddingConfigKey();
+            memoryRecallState.value = { status: 'idle', message: '', retryAt: 0 };
+        };
+        __s.resetMemoryRecallFailure = resetMemoryRecallFailure;
+        const canRequestMemoryEmbeddings = () => {
+            if (memoryEmbeddingConfigKey !== getMemoryEmbeddingConfigKey()) resetMemoryRecallFailure();
+            return Date.now() >= memoryRecallState.value.retryAt;
+        };
+        __s.canRequestMemoryEmbeddings = canRequestMemoryEmbeddings;
+        const noteMemoryRecallFailure = error => {
+            const alreadyFailed = memoryRecallState.value.status === 'error';
+            let message = String(error?.message || '向量接口没有返回有效数据');
+            const apiKey = String(__s.settings.apiKey || '');
+            if (apiKey) message = message.split(apiKey).join('[已隐藏]');
+            if (/Failed to fetch|NetworkError|Load failed/i.test(message)) {
+                message = '无法连接向量接口，请检查网络和服务端跨域设置';
+            }
+            memoryEmbeddingConfigKey = getMemoryEmbeddingConfigKey();
+            memoryRecallState.value = {
+                status: 'error', message: message.replace(/\s+/g, ' ').slice(0, 200),
+                retryAt: Date.now() + MEMORY_RECALL_RETRY_DELAY
+            };
+            if (!alreadyFailed) {
+                console.warn('[增强记忆] 向量服务不可用：', memoryRecallState.value.message);
+                __s.showToast('向量增强暂不可用，继续使用总结；详情见记忆设置', 'warning');
+            }
+        };
+        __s.noteMemoryRecallFailure = noteMemoryRecallFailure;
+        watch(() => [__s.memorySettings.enabled, __s.memorySettings.mode,
+            __s.memorySettings.embeddingModel, __s.settings.apiUrl, __s.settings.apiKey,
+            __s.currentCharacter.value?.uuid, __s.activeStoryBranchId?.value], resetMemoryRecallFailure);
         const getMemoryMessageText = message => {
             if (!message) return '';
             const indexes = message._sourceIndexes || [];
@@ -132,8 +174,8 @@
                 const marker = turnInfo.isTarget
                     ? `【最新对话：唯一总结目标｜第 ${turnInfo.turn} 轮】`
                     : `【历史背景：仅供理解，不得作为总结目标｜第 ${turnInfo.turn} 轮】`;
-                requestMessages.push({ role: 'user', content: `${marker}\n${turnInfo.userContent}` });
-                requestMessages.push({ role: 'assistant', content: `${marker}\n${turnInfo.assistantContent}` });
+                requestMessages.push({ role: 'user', content: `${marker}\n【玩家原输入】\n${turnInfo.userContent}` });
+                requestMessages.push({ role: 'assistant', content: `${marker}\n【AI叙述｜玩家行为需核对原输入】\n${turnInfo.assistantContent}` });
             });
             requestMessages.push({
                 role: 'user',
@@ -156,7 +198,12 @@
                 })
             }, {
                 role: 'user',
-                content: ordered.map(memory => `【第 ${memory.turn} 轮】\n${memory.summary}`).join('\n\n')
+                content: ordered.map(memory => [
+                    `【第 ${memory.turn} 轮｜待压缩总结】\n${memory.summary}`,
+                    String(memory.sourceUserText || '').trim()
+                        ? `【玩家原输入｜仅供核对该轮总结】\n${memory.sourceUserText}`
+                        : '【玩家原输入缺失｜来源不清的玩家决定保持未确认】'
+                ].join('\n')).join('\n\n')
             }];
             return requestClassicMemoryCompletion(requestMessages, signal);
         };
@@ -311,10 +358,6 @@
         __s.restoreSecondaryClassicMemoriesForTurnCount = restoreSecondaryClassicMemoriesForTurnCount;
         const retryClassicMemory = async (memory) => {
             if (!memory?.id || __s.retryingClassicMemoryId.value) return;
-            if (__s.memorySettings.mode === __s.MEMORY_MODE_ENHANCED && !getMemoryEmbeddingModel()) {
-                __s.showToast('请先选择向量模型', 'warning');
-                return;
-            }
             if (__s.isClassicBatchExtracting.value) {
                 __s.showToast('请先等待补录完成', 'warning');
                 return;
@@ -380,8 +423,17 @@
                 ['embeddingQ', 'embeddingScale', 'embeddingDims', 'embeddingEncoding', 'embeddingModel', 'embeddingApiUrl']
                     .forEach(key => delete updated[key]);
                 await __s.saveClassicMemoriesNow();
-                if (__s.memorySettings.mode === __s.MEMORY_MODE_ENHANCED) await indexSummaryMemories(snapshot, undefined, [updated]);
                 __s.showToast(`第 ${job.turn} 轮总结已重新生成`, 'success');
+                if (__s.memorySettings.enabled && __s.memorySettings.mode === __s.MEMORY_MODE_ENHANCED
+                    && canRequestMemoryEmbeddings()) {
+                    try {
+                        await indexSummaryMemories(snapshot, undefined, [updated]);
+                    } catch (error) {
+                        if (error.name !== 'AbortError' && retryEpoch === __s._classicExtractionEpoch
+                            && __s.currentCharacter.value?.uuid === retryCharacterId
+                            && __s.getCurrentStoryBranchScopeId() === retryStoryScopeId) noteMemoryRecallFailure(error);
+                    }
+                }
             } catch (error) {
                 console.error('Retry classic memory failed:', error);
                 __s.showToast(`重试失败：${error.message}`, 'error');
@@ -420,7 +472,7 @@
             }
         };
         __s.generateAndStoreClassicMemory = generateAndStoreClassicMemory;
-        const requestMemoryEmbeddings = async (inputs, signal, model = getMemoryEmbeddingModel()) => {
+        const requestMemoryEmbeddings = async (inputs, signal, model = getMemoryEmbeddingModel(), timeoutMs) => {
             if (!__s.settings.apiUrl || !__s.settings.apiKey) throw new Error('请先配置 API 地址和 Key');
             if (!model) throw new Error('请先选择向量模型');
 
@@ -431,7 +483,7 @@
             const apiUrl = __s.settings.apiUrl;
             const apiKey = __s.settings.apiKey;
             const data = await requestJson({
-                url: buildApiEndpoint(apiUrl, 'embeddings'), apiKey, signal,
+                url: buildApiEndpoint(apiUrl, 'embeddings'), apiKey, signal, timeoutMs,
                 body: { model, input: normalizedInputs.length === 1 ? normalizedInputs[0] : normalizedInputs }
             });
             __s.recordApiUsage(getApiUsagePayload(data), {
@@ -439,7 +491,15 @@
                 durationMs: Date.now() - requestStartedAt, outputCharacters: 0
             });
             const rows = Array.isArray(data.data) ? [...data.data] : [];
+            // 多输入必须能逐条对应，重复/缺失 index 不能写错总结的坐标。
+            if (rows.length !== normalizedInputs.length || rows.some(row =>
+                !row || (!Number.isInteger(row.index) && !(rows.length === 1 && row.index == null)))) {
+                throw new Error('向量接口返回的数据不完整或缺少输入序号');
+            }
             rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+            if (rows.some((row, index) => (row.index ?? 0) !== index)) {
+                throw new Error('向量接口返回的输入序号重复或不完整');
+            }
             const vectors = rows.map(row => normalizeEmbedding(row.embedding));
 
             if (signal?.aborted) {
@@ -447,7 +507,8 @@
                 abortError.name = 'AbortError';
                 throw abortError;
             }
-            if (vectors.length !== normalizedInputs.length || vectors.some(vector => vector.length === 0 || vector.length !== vectors[0].length)) {
+            if (vectors.some(vector => vector.length === 0 || vector.length !== vectors[0].length
+                || !vector.some(value => value !== 0))) {
                 throw new Error('嵌入接口返回的数据不完整');
             }
 
@@ -480,8 +541,10 @@
             const apiUrl = __s.settings.apiUrl;
             const epoch = __s._classicExtractionEpoch;
             const scopeId = __s.getCurrentStoryBranchScopeId();
+            const configKey = getMemoryEmbeddingConfigKey();
             const isCurrent = () => !signal?.aborted && epoch === __s._classicExtractionEpoch
                 && scopeId === __s.getCurrentStoryBranchScopeId()
+                && configKey === getMemoryEmbeddingConfigKey()
                 && __s.memorySettings.mode === __s.MEMORY_MODE_ENHANCED;
             const jobs = getSummaryEmbeddingJobs(snapshot, sources);
             if (!jobs.length) return 0;
@@ -514,10 +577,14 @@
                 await __s.saveClassicMemoriesNow(scopeId, __s.classicMemories.value);
                 if (isCurrent()) onProgress?.(completed, jobs.length);
             }
+            if (isCurrent()) memoryRecallState.value = { status: 'ready', message: '', retryAt: 0 };
             return completed;
         };
         __s.indexSummaryMemories = indexSummaryMemories;
         const selectEnhancedMemories = async signal => {
+            if (signal?.aborted) throw __s.createAbortReason();
+            if (!__s.memorySettings.enabled || __s.memorySettings.mode !== __s.MEMORY_MODE_ENHANCED
+                || !canRequestMemoryEmbeddings()) return [];
             const sources = getSummarySources(__s.classicMemories.value).filter(memory => hasCurrentSummaryEmbedding(memory));
             if (!sources.length) return [];
             const latestUser = [...__s.chatHistory.value].reverse().find(message => message.role === 'user');
@@ -525,12 +592,23 @@
             if (!query) return [];
             const epoch = __s._classicExtractionEpoch;
             const scopeId = __s.getCurrentStoryBranchScopeId();
+            const configKey = getMemoryEmbeddingConfigKey();
             const isCurrent = () => !signal?.aborted && epoch === __s._classicExtractionEpoch
                 && scopeId === __s.getCurrentStoryBranchScopeId() && __s.memorySettings.enabled
+                && configKey === getMemoryEmbeddingConfigKey()
                 && __s.memorySettings.mode === __s.MEMORY_MODE_ENHANCED;
             try {
-                const [queryVector] = await requestMemoryEmbeddings([query], signal);
+                const [queryVector] = await requestMemoryEmbeddings([query], signal, getMemoryEmbeddingModel(), 15000);
                 if (!isCurrent()) return [];
+                const incompatible = sources.filter(memory => getSummaryEmbedding(memory).length !== queryVector.length);
+                if (incompatible.length) {
+                    // 让下次补录真正重建不兼容坐标，保留总结及其原文引用。
+                    incompatible.forEach(memory => { delete memory.embeddingModel; });
+                    __s.classicMemories.value = [...__s.classicMemories.value];
+                    await __s.saveClassicMemoriesNow(scopeId, __s.classicMemories.value);
+                    if (!isCurrent()) return [];
+                    throw new Error('向量维度与已有索引不一致，请补录重建向量或检查向量模型');
+                }
                 const selected = [];
                 for (let index = 0; index < sources.length; index++) {
                     const memory = sources[index];
@@ -541,13 +619,13 @@
                         if (!isCurrent()) return [];
                     }
                 }
+                memoryRecallState.value = { status: 'ready', message: '', retryAt: 0 };
                 return selected.sort((a, b) => b.score - a.score || a.turn - b.turn)
                     .slice(0, __s.SUMMARY_RECALL_LIMIT).sort((a, b) => a.turn - b.turn);
             } catch (error) {
                 if (signal?.aborted || error.name === 'AbortError') throw error;
                 if (isCurrent()) {
-                    console.warn('[增强记忆] 召回失败：', error.message);
-                    __s.showToast('记忆召回失败，本次仍使用总结上下文', 'warning');
+                    noteMemoryRecallFailure(error);
                 }
                 return [];
             }

@@ -67,7 +67,7 @@
                 parameters: tool.type === ACTIVE_TOOL_WECHAT_TYPE ? {
                     type: 'object',
                     properties: {
-                        content: { type: 'string', description: '当前角色本人发给玩家的微信正文，不能代玩家发送：真人微信口吻的短消息，口语、可带语气词，不要写成旁白、括号动作或小说描写。' },
+                        content: { type: 'string', description: '当前角色本人发给玩家的一条纯文本微信，不能代玩家发送，不接受JSON消息列表或发送者字段。本RP回合只可调用一次；调用即交给玩家回应，不再自动续写。需要叙述时先在正文写到准备联系的位置，再调用工具，不补造玩家的新消息或约定。' },
                         reason: { type: 'string', description: '可选，一句话说明为什么现在发这条微信。' }
                     },
                     required: ['content'],

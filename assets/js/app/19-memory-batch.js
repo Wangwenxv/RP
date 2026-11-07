@@ -58,16 +58,13 @@
                 progress.message = '当前没有可补录的对话。';
                 return;
             }
-            if (__s.memorySettings.mode === __s.MEMORY_MODE_ENHANCED && !__s.getMemoryEmbeddingModel()) {
-                progress.status = 'error';
-                progress.message = '请先在记忆系统设置中选择向量模型。';
-                return;
-            }
             if (!String(__s.memorySettings.classicModel || '').trim()) {
                 progress.status = 'error';
                 progress.message = '请先在记忆系统设置中选择总结模型。';
                 return;
             }
+            if (manual) __s.resetMemoryRecallFailure();
+            let vectorFailureMessage = '';
 
             const batchController = new AbortController();
             __s._classicBatchExtractAbort = batchController;
@@ -164,8 +161,19 @@
                     const currentTurnCount = __s.buildConversationTurnSnapshot(__s.chatHistory.value, { includeSystem: false }).turns.length;
                     if (jobs.length > 0 || __s._classicBatchRescanRequested || currentTurnCount !== safeTurnCount) continue;
                     if (__s.memorySettings.mode === __s.MEMORY_MODE_ENHANCED) {
-                        await __s.indexSummaryMemories(snapshot, batchController.signal, undefined,
-                            stageProgress('vector'));
+                        // 向量失败不能中断逐轮总结之后的二次压缩。
+                        if (__s.canRequestMemoryEmbeddings()) {
+                            try {
+                                await __s.indexSummaryMemories(snapshot, batchController.signal, undefined,
+                                    stageProgress('vector'));
+                                vectorFailureMessage = '';
+                            } catch (error) {
+                                if (__s._classicBatchExtractAbort !== batchController || batchController.signal.aborted) break;
+                                if (error.name === 'AbortError') throw error;
+                                __s.noteMemoryRecallFailure(error);
+                                vectorFailureMessage = __s.memoryRecallState.value.message;
+                            }
+                        } else vectorFailureMessage = __s.memoryRecallState.value.message;
                     }
                     if (__s._classicBatchExtractAbort !== batchController || batchController.signal.aborted) break;
                     await __s.compressEligibleClassicMemories(
@@ -191,7 +199,9 @@
                 if (__s._classicBatchExtractAbort === batchController) {
                     const incomplete = progress.stages.some(stage => stage.current < stage.total);
                     progress.status = incomplete ? 'error' : 'done';
-                    progress.message = incomplete ? '部分任务未完成，已完成的记忆已保留，可再次补录。'
+                    progress.message = vectorFailureMessage
+                        ? `向量增强未完成：${vectorFailureMessage}。总结与二次压缩继续正常处理，已完成的记忆已保留；可修复向量配置后再次补录。`
+                        : incomplete ? '部分任务未完成，已完成的记忆已保留，可再次补录。'
                         : progress.stages.some(stage => stage.total > 0) ? '' : '当前没有需要补录的记忆。';
                 }
             } catch (error) {
@@ -222,7 +232,7 @@
             return startClassicBatchMemoryExtraction({ manual: true });
         };
         __s.startBatchMemoryExtraction = startBatchMemoryExtraction;
-        watch(() => [__s.memorySettings.enabled, __s.memorySettings.mode, __s.memorySettings.classicModel, __s.memorySettings.embeddingModel, __s.settings.apiUrl], () => {
+        watch(() => [__s.memorySettings.enabled, __s.memorySettings.mode, __s.memorySettings.classicModel, __s.memorySettings.embeddingModel, __s.settings.apiUrl, __s.settings.apiKey], () => {
             abortClassicBatchExtraction();
         });
     };

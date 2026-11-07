@@ -366,10 +366,12 @@
         // Debounce function
         const debounce = (fn, delay) => {
             let timeoutId;
-            return (...args) => {
+            const debounced = (...args) => {
                 clearTimeout(timeoutId);
                 timeoutId = setTimeout(() => fn(...args), delay);
             };
+            debounced.cancel = () => { clearTimeout(timeoutId); timeoutId = null; };
+            return debounced;
         };
         __s.debounce = debounce;
 
