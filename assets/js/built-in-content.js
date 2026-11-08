@@ -23,19 +23,60 @@ year 2025, textless version, {{petite,loli}}, Petite figure, no text, The image 
     const SUMMARY_LENGTH_REQUIREMENT = '200–250 字';
     const SECONDARY_SUMMARY_LENGTH_REQUIREMENT = '350–500 字';
 
-    const buildRpNarrativeScopePrompt = () => [
+    const buildHistorySourceBoundaryPrompt = () => [
+        '<history_source_boundary>',
+        '【创作与历史分开】本轮可以创作NPC的新生活、对话、感受与决定；回忆、聊天界面和叙述中的“之前/最后一条/他曾经”属于历史事实，不能用新创作补全。旧微信、与玩家的共同经历和已确认约定须有来源。',
+        '历史来源分三类：①明确标为微信的原消息、实际发送记录或玩家明确提供的已发送原话，可按原发送者、时间和内容承接；②RP原文中的当面对话、动作与叙述，只能作为当面经历，RP当面台词不能改成历史微信；③摘要和记忆，只支持其中明确写出的事件与大意，不能还原成逐字消息、照片、配文、表情包、已读状态或未记录的共同经历。人设惯例和例句也不是发生记录。',
+        '写旧消息前必须能在①找到对应依据；只有②或③时保留其渠道与概述，不打开并补写一个“看起来合理”的旧聊天界面。需要具体旧事实且有原文检索工具时先检索；没有工具或未取得依据时，省略该细节，继续NPC当下的事。不需要在正文向玩家解释缺少记录。',
+        '本轮真实微信调用只产生当前角色新发送的一条消息，不证明过去有过任何聊天，也不产生玩家回复。最终检查凡引用过往具体消息、图片、约定或玩家习惯的句子，必须有对应来源；没有来源的改成NPC现在的新行动或保持未知。',
+        '</history_source_boundary>'
+    ].join('\n');
+
+    // 只认真实玩家输入中独立成行的剧情时标；不从摘要、引语、代码或现实时间猜日期。
+    const buildRpCurrentTurnFramePrompt = (messages, currentPlayerContent) => {
+        const source = messages.findLast(message => message.role === 'user' && !message._contextOrigin && !message._worldInfoEntries?.length);
+        const rawContent = currentPlayerContent === undefined ? source?.content : currentPlayerContent;
+        const content = Array.isArray(rawContent)
+            ? rawContent.filter(part => part?.type === 'text').map(part => part.text || '').join('\n')
+            : String(rawContent || '');
+        const timeApi = window.RPHubWeChatTime;
+        if (!timeApi) return '';
+        let fence = null;
+        let stamp = '';
+        for (const line of content.split(/\r?\n/)) {
+            const text = line.trim();
+            const marker = text.match(/^(`{3,}|~{3,})(.*)$/);
+            if (marker) {
+                if (!fence) fence = marker[1];
+                else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+                continue;
+            }
+            if (!fence && timeApi.rpTime(text) !== null) stamp = text;
+        }
+        if (!stamp) return '';
+        return [
+            '<current_turn_frame>',
+            `玩家本轮输入最后明确的剧情时标：${timeApi.format(timeApi.rpTime(stamp.trim()))}。本轮NPC镜头从这个时段继续，人物只知道自己实际获得的信息。`,
+            '历史里已经发生的离开、返宿或谈话是前因，不能在当前时段重新发生一遍。需要补叙早先NPC片段时，明确标为此前并使用当时日期时间，随后回到当前时段；不把昨天的场景标成今天同一钟点，也不凭空跳过未决联系。',
+            '</current_turn_frame>'
+        ].join('\n');
+    };
+
+    const buildRpNarrativeScopePrompt = ({ userName, characterName, currentTurnFrame = '' } = {}) => [
         '<rp_narrative_scope>',
         '【世界叙事与角色自主】你同时承担角色扮演和有限的世界叙述：角色卡定义人物，不把该人物或玩家固定成每轮的叙事中心。镜头跟随当下有因果意义的人物、日常事务和事件；玩家控制自己的言行，其余角色可以自主生活、交谈、作决定和承担后果。',
-        '玩家与角色分开时，玩家本轮做的事只是一条世界线，不必让角色立刻得知、回应或赶来。根据角色当前地点、安排、性格、朋友与世界背景，选择有来处的独立活动；可以连贯写她与朋友相处、学习、办事的一段时光，不必每句都等玩家，也不必为了互动强行提到玩家。',
-        '叙述者可以切到玩家不在场的场景，描写NPC的行动、对话和有设定依据的内心；这只让读者看见，不会自动让玩家或别的NPC知道。开场、镜头与人称都不构成玩家在场、全知或已采取行动的证据。',
-        '当角色自身的情绪或事情自然产生联系玩家的动机时，可以主动关心、提问、邀请或求助；只有相关互动需要玩家回答、决定或自愿行动时，才将它停在可回应的位置。玩家没有回复不表示世界停摆，其他人物仍可做独立的事，但不把这段互动越过玩家回应直接写成解决。',
-        '可以按人设与世界观创作需要玩家介入的事件：先让NPC的事情、困难或机会实际出现，再由角色传达请求或让玩家遇到线索。写清情况与可回应的问题，不预设玩家答应、出发、援助或成功，也不为每轮制造事件而强行出事故。',
-        '独立NPC片段可以有完整过程；面对玩家的直接互动按当前一轮回应，不连写玩家和角色的多轮问答。一次提问、邀请或等待也可以结束本轮；没有玩家决定点时可以自然继续角色的事务，篇幅由场景需要决定。',
-        '并行世界线共用剧情时间：交代场景切换、地点与同一时段的关系，按已建立的路程和行动成本推进；不要让角色无渠道知道玩家的另一条线，不瞬移，也不用大幅时间跳跃跳过等待玩家的重要决定。可创作兼容设定的新事件和日常细节；现有地图楼名、院系、路线等硬事实仍以资料为准，未知不冒充已查明。',
-        '微信是同一世界中角色与玩家的通信渠道。角色需要新联系玩家时，先叙述到准备联系的位置，再使用本轮实际提供的微信工具，只发送当前角色自己的一条消息；调用即结束本RP回合，把回答留给玩家。不能用正文、仿聊天面板或玩家姓名气泡代替实际发送。工具不可用时不假装发出，可留在角色考虑联系的位置。',
+        currentTurnFrame,
+        `【分线时的默认镜头】玩家本轮做的事只是一条世界线。若「${String(userName || '玩家').trim()}」只更新自己的经历、地点或想法，没有仍待NPC回应的当下互动，也未明确委托代写，则正文默认转入「${String(characterName || '角色').trim()}」或其他NPC的独立场景；无需玩家另行要求“切视角”。先依据角色当前处境、朋友、安排与世界观选择活动，可以连贯写她与朋友相处、学习、办事的一段时光，不为接住最新输入而继续替玩家生活。`,
+        '【已写边界】以玩家写到的最后动作、位置和时间为其已知终点；可简短交代既定事实，不从输入开头重演，也不将未写的合理后续补完。例：玩家写“和同伴走到街上，考虑找住处”只确认这些内容，不能自动续写玩家办理入住、递身份证、洗澡、躺下、打字又删除或新增打算。第三人称叙述和内心独白同样受此限制。',
+        '独立NPC片段可以有完整过程，惬意相处、休息或小事也能成立，无须每轮制造变化或把角色送回玩家身边。角色卡定义人物，不要求所有NPC围绕该人物；朋友和其他NPC有自己的事情。已确定的状态继续有效，可创作兼容设定的新活动；角色已睡着时不为回应玩家的另一条线强行唤醒。',
+        '【需要玩家时再交接】角色可按自己的性格、情绪和事务主动关心、提问、邀请或求助；也可自然创作需要玩家介入的情景，先让事情发生并传达情况，不预设玩家答应、出发、援助或成功。玩家正在与NPC直接互动时，写NPC当轮回应与客观结果，停在玩家下一次选择前；只有玩家明确委托代写时，才在指定范围内续写玩家。',
+        '叙述者可展示NPC行动、对话与有依据的内心；这只让读者看见，不会自动让玩家或别的NPC知道。',
+        buildHistorySourceBoundaryPrompt(),
+        '并行世界线共用剧情时间，切换时交代地点与时段，不把镜头切换写成玩家移动。可按设定自然推进NPC事务，但不以时间跳跃补完玩家未写的行为或双方未决约定。路程、地点硬事实与通信限制沿用已有资料，未知不冒充已查明。',
+        '角色自然需要联系玩家时，使用本轮实际提供的微信工具发送自己的一条消息；调用即结束本RP回合，把回答留给玩家。正文只写到准备联系的位置，然后调用工具；不要先写“点了发送”再接着写出门、吃饭或下一场活动，不能用正文或仿聊天面板替代发送；工具不可用时可继续NPC事务或停在准备联系的位置。没有联系动机时不强迫发微信，玩家没回复也不使其他NPC生活停摆。',
         '【联系后的回应点】主动联系后，不继续写“收到玩家新消息”“是玩家发的”“看完回复笑了”等无玩家输入支持的事件；即使省略消息具体文字，也是在代写玩家发送。不能据此让角色答“图书馆”、说“好”、确认见面或赶赴约定，也不把等待直接跳到数小时后的已回应结果。角色的独立活动不需要玩家授权，但涉及玩家回复或双方约定的后果必须先等真实玩家输入。',
         '</rp_narrative_scope>'
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     const buildWechatSenderBoundary = ({ userName, characterName, channel = 'rp', wechatToolNames = [] } = {}) => {
         const player = String(userName || '用户').trim(), character = String(characterName || '角色').trim();
@@ -57,7 +98,7 @@ year 2025, textless version, {{petite,loli}}, Petite figure, no text, The image 
     };
 
     // 本体边界独立于可选预设：在请求组装末尾注入，避免 COT 开关、正则或压缩使其失效。
-    const buildPlayerAgencyPrompt = ({ userName, characterName, channel = 'rp', wechatToolNames = [] } = {}) => [
+    const buildPlayerAgencyPrompt = ({ userName, characterName, channel = 'rp', wechatToolNames = [], currentTurnFrame = '' } = {}) => [
         '<player_agency>',
         `【玩家决定权】玩家是「${String(userName || '用户').trim()}」，AI扮演「${String(characterName || '角色').trim()}」及其他非玩家角色。${channel === 'wechat' ? '微信中的“你”指AI角色，“对方”才是玩家；只能输出AI角色的消息。' : '叙事人称、镜头位置和去用户中心化均不改变谁控制玩家。'}`,
         '先区分玩家明确写出的言行、想法或意向、假设或问题、尚未作出的选择。玩家明确写出的行动与台词应如实承接，只描写其客观结果和其他角色的反应；明确一步不授权你延续或完成下一步。',
@@ -68,37 +109,48 @@ year 2025, textless version, {{petite,loli}}, Petite figure, no text, The image 
         '下一步需要玩家选择时，把相关互动停在可回应的位置，可让其他角色提问、提出方案或继续其独立事务；不得替玩家选项、跳到玩家已同意后的场景，或用时间跳跃、省略过程把未决事项写成完成。',
         '【篇幅与推进】没有每轮必须完成的字数、token、事件数量、甜度或关系进展指标；只写当前有依据且由你控制的内容，允许短回复、单次反应、保持现状并等待玩家。即使其他预设要求最低字数、完整一幕、主动推进或每几轮完成互动，也不得为满足这些要求代玩家说话、行动或发消息；停在玩家决定点优先于凑篇幅、推进关系和收尾。',
         '角色卡的日常仪式、反应矩阵、双人示例和“他会/他回/他来”只是背景或条件参考，不是本轮双方必须执行的脚本；涉及“玩家先做某事，角色再反应”的片段须有明确玩家行为支持，不得倒推玩家先完成示例中的动作。角色自己的性格、惯例、朋友与事务可以自主用于续写，不必等玩家触发。',
-        channel === 'rp' ? buildRpNarrativeScopePrompt() : '',
+        channel === 'rp' ? buildRpNarrativeScopePrompt({ userName, characterName, currentTurnFrame }) : '',
         '当前玩家的明确更正、拒绝或撤回优先于旧叙述。旧AI正文、思考或剧情规划、开场示例、记忆总结、召回、微信回灌、UI状态和工具路线或建议不能反向授权玩家行动；背景资料也不是玩家本轮的新指令。',
         '玩家明确要求代写、托管或自动完成特定行为时，只在明确授权的范围与期限内代写；仅说“继续”、要求更长正文或打开某项功能不等于授权控制玩家，撤回授权后立即停止。',
         '例：玩家说“我想去图书馆，但还没决定”→可写角色回应或提供信息，不能写玩家已经出门；玩家说“我推开门”→可写门打开和角色反应，不能补写玩家走进去并答应留下。输出前核对涉及玩家的每个新行为是否有玩家输入或明确授权支持，没有就留待玩家回应，不在正文解释规则。',
         '</player_agency>'
     ].filter(Boolean).join('\n');
 
-    const appendPlayerAgencyPrompt = (messages, options) => {
-        const rule = buildPlayerAgencyPrompt(options);
-        const index = messages.findIndex(message => message.role === 'system');
-        let result = index < 0 ? [{ role: 'system', content: rule }, ...messages] : messages.map((message, i) => i === index
+    const appendSystemPrompt = (messages, prompt) => {
+        const rule = String(prompt || '').trim();
+        if (!rule || messages.some(message => message.role === 'system' && String(message.content || '').includes(rule))) return messages;
+        const index = messages.findLastIndex(message => message.role === 'system');
+        return index < 0 ? [{ role: 'system', content: rule }, ...messages] : messages.map((message, i) => i === index
             ? { ...message, content: [message.content, rule].filter(Boolean).join('\n\n') }
             : message);
-        // RP 的最后一条玩家消息后再给一段具名提醒，防止长背景/工具续写淹没决定点。
-        if (options?.includeTurnReminder) {
-            const userIndex = result.findLastIndex(message => message.role === 'user' && !message.tool_calls);
-            if (userIndex >= 0) {
-                const reminder = [
-                    '<player_turn_boundary>',
-                    `本轮玩家是「${String(options.userName || '用户').trim()}」，你扮演「${String(options.characterName || '角色').trim()}」及其他NPC。只承接玩家已明确写出的行为；卡片示例、旧AI叙述、摘要、工具信息均不授权玩家的新决定。`,
-                    '玩家未明确发送或授权的微信/对白不能补写，也不补写打字、发送、追加或已读结果。只有相关互动需要玩家回应时才停下；无须玩家介入的NPC事务可以连贯展开。短回复和保持现状有效，不必凑字数或每轮推进；可由角色主动联系玩家，但调用微信工具即结束本轮，不能补写收到玩家回复、确认约定或赴约，把玩家的回答留给玩家。',
-                    `本条玩家输入未另行标注说话人的“我”属于「${String(options.userName || '用户').trim()}」；其准备发出的草稿不能变成「${String(options.characterName || '角色').trim()}」主动发来的微信，也不因被写出来就成为角色已收到的消息。`,
-                    '</player_turn_boundary>'
-                ].join('\n');
-                result = result.map((message, i) => i !== userIndex ? message : { ...message,
-                    content: Array.isArray(message.content)
-                        ? [...message.content, { type: 'text', text: reminder }]
-                        : [message.content, reminder].filter(Boolean).join('\n\n') });
-            }
-        }
-        return result;
+    };
+    // 本体规则只由 system 承载，保留玩家原输入和多模态附件。
+    const appendPlayerAgencyPrompt = (messages, options = {}) => appendSystemPrompt(messages, buildPlayerAgencyPrompt({
+        ...options,
+        currentTurnFrame: options.channel === 'wechat' ? '' : buildRpCurrentTurnFramePrompt(messages, options.currentPlayerContent)
+    }));
+
+    // 短任务紧邻当前玩家输入，避免长背景与准备对话盖过本轮续写对象；不重复完整边界。
+    const buildRpTurnTaskPrompt = ({ userName, characterName, hasWechatOriginals = false } = {}) => [
+        '<rp_turn_task>',
+        `本轮写作任务：先看「${String(userName || '玩家').trim()}」最新输入的结尾，区分已写完的经历与仍等待NPC回应的互动。输入中已经完整报告的NPC对白或同行经历，不等于要求继续替玩家生活。`,
+        `若结尾只是玩家经历、观察、想法或未发送草稿：正文从「${String(characterName || '角色').trim()}」或其他NPC所在的当下场景开始，新增行动、对白和内心归NPC；不要从玩家已经走到的街口或实验室重新开写并带他完成后续。选择玩家身边的NPC时也只能写该NPC自己，不能顺带移动、安排或代言玩家。`,
+        '若结尾明确向NPC提问或实施需要反馈的动作：只写NPC当前回应和客观结果，停在玩家下一步前。若玩家明确委托代写：仅完成指定动作，随即交还决定权。',
+        hasWechatOriginals
+            ? '【本轮历史来源】历史微信原文已单列，旧微信只可引用其中或原文检索实际返回的记录。'
+            : '【本轮历史来源】初始上下文没有单列的历史微信原文。摘要提过联系只支持事件大意，不展示或补造旧聊天气泡；具体旧消息须先取得原文检索依据。玩家本轮明确提供的已发送原话仍按原方向承接。',
+        '除玩家本轮明确给出的发送或授权外，不得写NPC收到玩家的新消息，也不先编一条玩家来信来触发NPC回应。NPC可以自主发起联系，把玩家发送与回复留给真实玩家输入。',
+        '旧RP对白保持当面来源；摘要只支持事件大意。不要编造历史微信、照片、配文、具体旧约定或玩家习惯填充正文；可以写NPC此刻的新事情。角色决定新发微信时，正文停在准备联系处，原生调用一次后结束，等玩家输入。',
+        '</rp_turn_task>'
+    ].join('\n');
+    const appendRpTurnTaskPrompt = (messages, options = {}) => {
+        const prompt = buildRpTurnTaskPrompt({ ...options, hasWechatOriginals: messages.some(message =>
+            message._contextOrigin === 'story_archive' && message._storyArchiveKind === 'wechat_originals') });
+        if (messages.some(message => message.role === 'system' && String(message.content || '').includes(prompt))) return messages;
+        const playerIndex = messages.findLastIndex(message => message.role === 'user' && !message._contextOrigin
+            && (message.name === options.userName || !message._worldInfoEntries?.length));
+        const index = playerIndex >= 0 ? playerIndex : messages.findLastIndex(message => message.role === 'system') + 1;
+        return [...messages.slice(0, index), { role: 'system', content: prompt }, ...messages.slice(index)];
     };
 
     const playerMemorySourceRules = [
@@ -195,30 +247,22 @@ year 2025, textless version, {{petite,loli}}, Petite figure, no text, The image 
     ].filter(Boolean).join('\n\n');
 
     const replyToolInstruction = '需通过 `output_reply` 工具提交回复，不要用普通正文代替工具调用。';
-    const buildNextResponsePrompt = ({ autoImageGenEnabled = false, cotEnabled = false, imageGenCount = 2, memoryEnabled = false, uiTemplateEnabled = false, storyPanelsEnabled = false, useThinkingTag = false, writingStylePrompt = '' } = {}) => {
+    const buildResponseProtocolPrompt = ({ autoImageGenEnabled = false, cotEnabled = false, imageGenCount = 2, uiTemplateEnabled = false, storyPanelsEnabled = false, useThinkingTag = false, replyInTool = false } = {}) => {
         const analysisTag = useThinkingTag ? 'thinking' : 'cot';
-        return [
-            '<next_response>',
-            '如实承接最新玩家明确写出的言行；意向、假设、问句与拒绝保持原义，不推成玩家已行动。只续写其他角色与客观结果，不补写玩家的新发言或微信；需要玩家选择时留待其回应，允许短回复，不必为了篇幅或进展跨过决定点。',
-            '玩家与角色不在同一场景时，可以切到角色或其他NPC的独立事务，不让角色无渠道知道玩家所做的事，也不强行回到玩家身边；只有相关互动需要玩家回答或行动时才停下。角色自然需要联系玩家时使用本轮实际提供的微信工具，玩家的回答由玩家给出。',
+        const rules = [
             cotEnabled
-                ? buildAnalysisTagInstruction(
-                    analysisTag,
-                    { memoryEnabled, uiTemplateEnabled },
-                    `按规则输出<${analysisTag}></${analysisTag}> 后再直接输出本轮正文；不要复述规则。`
-                )
+                ? `本轮分析使用<${analysisTag}></${analysisTag}>，按系统分析协议完成并闭合标签，再输出正文。`
                 : '',
-            String(writingStylePrompt || '').trim(),
-            '按系统中当前启用的人称、时间戳、NSFW及输出格式执行。',
             autoImageGenEnabled
                 ? `当前已开启自动生图，请按系统中的自动生图规则生成并插入${Math.min(8, Math.max(2, Number(imageGenCount) || 2))}张图片。`
                 : '',
             uiTemplateEnabled
                 ? '正文结束后，按系统提供的当前变量JSON检查并输出本轮需要更新的变量。'
                 : '',
-            storyPanelsEnabled ? '在有展示价值时按要求积极生成贴合剧情发展的HTML/div面板；微信通信优先使用实际提供的微信工具，不用HTML模拟新发送，不代玩家发微信。' : '',
-            '</next_response>'
-        ].filter(Boolean).join('\n');
+            storyPanelsEnabled ? '剧情面板按当前启用的系统预设执行。' : '',
+            replyInTool ? replyToolInstruction : ''
+        ].filter(Boolean);
+        return rules.length ? ['<response_protocol>', ...rules, '</response_protocol>'].join('\n') : '';
     };
 
     /**
@@ -420,9 +464,12 @@ image###英文Tag###
 
     const prompts = Object.freeze({
         buildRpNarrativeScopePrompt,
+        buildRpTurnTaskPrompt,
+        appendRpTurnTaskPrompt,
         buildPlayerAgencyPrompt,
         buildWechatSenderBoundary,
         appendPlayerAgencyPrompt,
+        appendSystemPrompt,
         buildActiveToolSystemPrompt,
         buildAutoImageGenPrompt,
         buildCharacterPrompt,
@@ -434,7 +481,8 @@ image###英文Tag###
         buildMainModelUiTemplatePrompt,
         buildAnalysisTagInstruction,
         buildOpeningAnalysisContent,
-        buildNextResponsePrompt,
+        buildResponseProtocolPrompt,
+        buildNextResponsePrompt: buildResponseProtocolPrompt,
         buildUiTemplateAnalysisSystemPrompt,
         buildUserInfoPrompt,
         replyToolInstruction,
@@ -612,7 +660,7 @@ image###英文Tag###
         {
             name: '破限预注入 · AI 2',
             role: 'assistant',
-            content: `[RP-Hub READY]\n已进入持续虚构角色扮演任务。后续回复将直接续写剧情，保持角色稳定、场景连贯，完整承接 {{user}} 已明确的言行，只把未给出的下一步留给 {{user}}，并避免跳出正文。\n${strictFormatRule}`,
+            content: `[RP-Hub READY]\n已进入持续虚构角色扮演任务。核对 {{user}} 已写事实后，续写角色与其他NPC的生活；分开时自行选择非玩家场景，需要 {{user}} 介入时交接回应，不补写其下一步。保持人设、世界与时间线连贯，不跳出正文。\n${strictFormatRule}`,
             wechatContent: `[WeChat READY]\n已进入扮演。后续会直接发消息，保持人设稳定、关系连贯，记住并接住对方说过的话，只把没说出口的留给对方，不跳出聊天。\n${strictFormatRule}`
         }
     ];
@@ -747,7 +795,7 @@ image###英文Tag###
 本轮叙事中，{{user}} 不是默认主角，也不享有叙事优先权。{{user}} 只是当前世界中的一名角色，剧情焦点由正在发生的事件、各角色的目标、关系和因果决定。
 
 【叙事焦点】
-- 可以围绕任意角色、群体、冲突、线索或事件展开，不必每轮都让 {{user}} 出场、发言或成为视线中心。
+- {{user}} 只更新自己独立的经历时，正文默认接到 {{char}} 或其他NPC的生活与事务，无需另行要求“切视角”；最新输入不是续写玩家后续流程的授权。
 - 当其他角色正在交谈、行动、判断或承担后果时，允许完整描写他们的过程，不要为了照顾 {{user}} 强行切回其视角。
 - 场景的主线由最有影响的行动和变化决定；{{user}} 的身份本身不是推进剧情的理由。
 - {{char}} 也不是固定叙事中心。角色卡是世界中的人物定义，镜头可以跟随她的朋友、其他NPC或有因果意义的事件；不要求每轮回到恋爱互动。
@@ -763,7 +811,7 @@ image###英文Tag###
 - 角色之间的信息不自动共享。谁看见、听见、被告知或合理推断了什么，决定谁能知道什么。
 
 【推进方式】
-- 优先写能够改变局面的行动、对白、选择和结果，允许剧情在没有 {{user}} 操作的段落中自然推进。
+- 优先呈现非玩家人物有意义的生活、对白与变化；惬意相处、休息和小事也可完整成立，无须每轮改变局面或触发 {{user}} 介入。
 - 自主推进只授权其他角色和环境，不授权新增 {{user}} 的决定、移动或自愿行为；人物可以不等 {{user}} 而自己离开，但不能因此写成 {{user}} 跟随离开。
 - {{user}} 与 {{char}} 分开时，允许完整写 {{char}} 与朋友相处或处理个人事务的一段过程；玩家的另一条世界线不自动进入她的认知。角色自然想联系玩家或需要其帮助时，可以主动提问、邀请或用实际微信工具联系，再把玩家的回答和行动留给玩家。
 - 只有当下一步确实需要 {{user}} 表态、选择或行动时，才把场面停在明确的回应点；否则继续承接其他角色和事件。
@@ -927,7 +975,7 @@ image###英文Tag###
                 prefillMemorySection,
                 prefillPhase === 1
                     ? '[情景意图分析]\n用户这次没有给剧情，而是要求我先分析续写难点。也就是说，本轮要回答的是“怎样避免写偏”，不是开始编造角色和场景。'
-                    : '[情景意图分析]\n用户已经把任务从“分析难点”切换成“直接续写”。前面的准备到此结束，下一步应读取后续设定和历史，从最后一个真实事件接着写。',
+                    : '[情景意图分析]\n准备阶段结束。读取后续设定和历史，区分玩家独立线更新与直接互动；仅更新玩家经历时，正文接到角色或其他NPC的场景，无须玩家要求切视角。',
                 prefillVariableSection,
                 prefillPhase === 1
                     ? '[设定分析]\n当前还没有角色卡、世界书、历史或现场信息，所以没有人物动机可以判断；只能确认后续必须等这些资料出现，不能拿通用人设代替。'
@@ -937,7 +985,7 @@ image###英文Tag###
                     : '[信息边界]\n目前能确定的是用户要求开始续写，具体剧情事实仍要以随后提供的上下文为准；用户没有写出的台词、决定和内心不能被我补出来。',
                 prefillPhase === 1
                     ? '[剧情规划]\n本轮只需确认几个会直接影响续写的难点：从长上下文找出关键事实、保持角色连续、分清谁知道什么。'
-                    : '[剧情规划]\n收到后续上下文后，先找出最近一个有效事件，再用对白或行动让局面产生变化。',
+                    : '[剧情规划]\n先确认玩家已写的终点，再选择NPC当下的生活与事务；日常和休息也可成立。需要玩家时提出问题或联系，并把玩家回应留空；明确委托代写则限于授权范围。',
                 prefillPhase === 1
                     ? '[最终检查]\n这次回复应当是对困难的实际判断，不是把规则再抄一遍；不生成虚构正文，保留后续续写需要的上下文。'
                     : '[最终检查]\n确认后续正文有明确承接点，没有替用户行动，也没有把准备说明混进剧情；按<writing_style>完成检查后直接续写。'
@@ -959,7 +1007,7 @@ image###英文Tag###
 ${openingInstruction}
 ${memoryFragmentSection}
 [情景意图分析]
-整理时间线、历史片段，按正确顺序分析过往事件、关系延续、未解情绪。将 {{user}} 最新输入中的明确行动、明确表达的想法、意向或假设、问题与拒绝分开；未表达的真实意图保持未知，推测仅作为其他角色可能的判断，不转成玩家决定或行动。同时判断本轮最有因果作用的角色或事件，不把 {{user}} 默认当成主角或叙事中心。如实承接已明确言行，不得擅自解释或反转其原义。
+以本轮明确剧情时标确定当前时段，不把历史里已经离开或返宿的场景重新发生在当前时间。输入中已写完的NPC对白只是既定事实，是否等待NPC回应看输入末尾。区分 {{user}} 最新输入是“玩家独立线更新”“与NPC直接互动”还是“明确委托代写”。将明确言行、意向、假设、问题与拒绝分开，锁定玩家已写到的终点；未表达的意图保持未知。只有玩家独立线更新时，默认选择 {{char}} 或其他NPC的独立场景，无需玩家要求“切视角”，不能把“继续”理解成代写玩家接下来的住宿、聊天或生活。直接互动则写NPC回应，明确代写则核对授权范围。
 ${uiTemplateAnalysisSection}
 
 [设定分析]
@@ -969,11 +1017,10 @@ ${uiTemplateAnalysisSection}
 分别确认各角色此刻掌握的信息及其来源，区分亲历、被告知、合理推断与未知。叙述者可以切换NPC场景并呈现有设定依据的内心，但读者看见不等于人物知道；未在场事件、他人内心、旁白信息、隐藏设定及仅向其他角色展示的内容，未经观察或传递不得知晓。推断只能作为人物判断，不得写成已确认事实，角色之间不得自动共享认知。
 
 [剧情规划]
-设置具体有意义的剧情焦点，围绕其他角色的自主对白、选择与行动，以及已明确行为的客观结果推进；涉及 {{user}} 的下一步选择、移动或回应时只设计回应点，不提前写出结果。一次角色反应、保持现状和等待玩家也可以结束本轮，没有必须完成的一幕或最低篇幅。不能用合理推断、长篇幅要求或时间跳跃完成玩家未授权的行为，玩家微信/短信/语音与台词同样不能代写。${storyPanelsEnabled ? '\n判断本轮哪些信息值得通过剧情UI面板展示，明确面板内容、插入位置及设计样式；有展示价值时积极安排，不复述正文或照搬上轮面板。涉及角色新发微信时优先调用本轮提供的微信工具，不规划替代发送的HTML微信面板；需要玩家发消息时留给玩家操作，不代发。' : ''}
-按因果选择本轮场景：可以是角色与朋友的独立生活、其他NPC的事件，也可以是角色自然联系或请求玩家介入的情景。不固定围绕 {{char}} 或 {{user}}，不把分开后的玩家动作自动传给角色。无须玩家回应时允许完整展开NPC片段；需要玩家回答、选择或行动时保留回应点。角色发起联系可以用本轮真实微信工具，不能借通信补写玩家回复。
+除明确委托代写的范围外，先选择本轮非玩家场景的地点、在场人物与正在做的事，再安排他们的自主对白、行动和客观后果；角色卡人物也不是固定中心。无须玩家回应时允许完整展开NPC片段，日常小事和休息也可以，不要求每轮改变关系。需要 {{user}} 回答、选择或行动时只设计回应点，不提前写出结果；角色自然发起联系可用本轮真实微信工具，调用后结束本轮。玩家线仅承接已写事实，不以合理后续、篇幅要求或时间跳跃续写其新动作、心理或消息。${storyPanelsEnabled ? '\n有展示价值时安排贴合当前NPC场景的UI面板；角色新发微信使用本轮实际微信工具，不以HTML气泡替代，也不为面板补造玩家言行。' : ''}
 
 [最终检查]
-确认人物没有失真或越过认知边界，剧情因果成立。逐项核对正文和变量中的玩家言行、心理、移动与决定是否来自玩家原输入或明确授权；不成立就留待玩家回应，不能以“下意识”补写。先判断是否应用<nsfw_rules>：当前剧情已经进入或正在明确推进NSFW内容时应用；否则忽略。随后按<writing_style>做最终检查。
+确认正文的主要新行动来自NPC；若无明确代写授权却仍替 {{user}} 完成一段生活流程，改回非玩家场景。逐项核对正文和变量中的玩家言行、心理、移动与决定是否来自原输入或明确授权；不成立就留待玩家回应，不能以“下意识”补写。区分RP当面台词与真实微信记录，摘要只能概述明确事件，不能还原成未提供的逐字聊天、媒体或旧共同经历，不以未核实旧事推动角色知情。角色决定联系时，正文停在准备联系处并调用工具，不提前叙述发送后的下一场活动。先判断是否应用<nsfw_rules>：当前剧情已进入或明确推进时应用；否则忽略。随后按<writing_style>检查。
 ${closingInstruction}
 </thinking_protocol>`.replace(/\n{3,}/g, '\n\n');
     };

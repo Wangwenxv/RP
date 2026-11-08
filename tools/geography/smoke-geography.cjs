@@ -39,6 +39,8 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
             const tool = (id, args) => ({ id, type: 'function', function: { name: 'tool_geo', arguments: JSON.stringify(args) } });
             let message;
             if (fixture === 'burst-rooms') message = say('你先在B栋401上课，别着凉。');
+            else if (fixture === 'parcel-burst') message = say('取哪个站点？把收件通知发我看看。');
+            else if (fixture === 'search') message = geoResult ? say('有几个取件点，先看收件通知指定哪一个。') : { role: 'assistant', content: '', tool_calls: [tool('geo-search', { operation: 'search', query: '取快递' })] };
             else if (fixture === 'daily-supplies' || fixture === 'running') message = say('我先把手头的事做完，再看看。');
             else if (fixture === 'prefetch') message = say('我还在实验楼A区。风采园是南苑食堂，我看下路程再决定。');
             else if (fixture === 'clean') message = say('好呀。');
@@ -114,6 +116,28 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
         const burstPrompt = burst[0].messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
         check('微信连发自动预取B栋和图书馆简介，只需一次模型请求', burst.length === 1 && burstPrompt.includes('mentionedPlaces') && burstPrompt.includes('中文系教室与办公室') && burstPrompt.includes('借阅与自习'));
         check('微信实际提示确认玩家在B栋401，询问图书馆不改角色位置', burstPrompt.includes('"user":{"status":"last_confirmed","placeId":"teaching-B"') && burstPrompt.includes('"room":"401"') && !burstPrompt.includes('"character":{"status":"last_confirmed","placeId":"library"'));
+        for (const target of ['rp', 'wechat']) {
+            channel = target; fixture = 'parcel-burst'; const start = requests.length;
+            await page.evaluate(async target => {
+                const r = window.__APP_PROXY__;
+                if (target === 'wechat') {
+                    r.wechatBurstMode = true;
+                    for (const text of ['对啦，上次的衣服到啦', '填的你的名字，你去快递站找一下', '知道哪里取快递吗']) { r.wechatInput = text; await r.sendWechatMessage(); }
+                    await r.requestWechatReplyNow();
+                } else { r.userInput = '衣服到了，知道哪里取快递吗'; await r.sendMessage(); }
+            }, target);
+            const turn = requests.slice(start).map(r => r.body), prompt = turn[0].messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
+            check(target + '实际请求预取三个独立快递点及简介，不新增模型请求', turn.length === 1 && ['一饭后快递点', '二饭后快递点', '师苑快递点'].every(name => prompt.includes(name)) && prompt.includes('收件通知'));
+            fixture = 'search'; const searchStart = requests.length;
+            await page.evaluate(async target => { const r = window.__APP_PROXY__; if (target === 'wechat') { r.wechatInput = '再查一下取快递'; await r.sendWechatMessage(); await r.requestWechatReplyNow(); } else { r.userInput = '再查一下取快递'; await r.sendMessage(); } }, target);
+            const searchTurn = requests.slice(searchStart).map(r => r.body);
+            const result = searchTurn.at(-1).messages.find(m => m.role === 'tool' && m.tool_call_id === 'geo-search');
+            check(target + '真实地理search工具续写返回站点介绍与匹配原因', searchTurn.length === 2 && result && result.content.includes('parcel-canteen-1') && result.content.includes('match') && result.content.includes('scene'));
+            fixture = 'clean'; const cleanStart = requests.length;
+            await page.evaluate(async target => { const r = window.__APP_PROXY__; if (target === 'wechat') { r.wechatInput = '谢谢啦'; await r.sendWechatMessage(); await r.requestWechatReplyNow(); } else { r.userInput = '谢谢啦'; await r.sendMessage(); } }, target);
+            const clean = requests.slice(cleanStart).map(r => r.body);
+            check(target + '下一轮不重放地理工具结果或用途速查', clean.length === 1 && !clean[0].messages.some(m => m.role === 'tool' || (m.role === 'system' && m.content.includes('本轮地理速查'))));
+        }
         check('浏览器无运行错误', errors.length === 0);
     } finally { if (browser) await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

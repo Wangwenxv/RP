@@ -524,6 +524,7 @@
         };
         if (message.id) nextMessage.id = message.id;
         if (typeof message._contextOrigin === 'string') nextMessage._contextOrigin = message._contextOrigin;
+        if (typeof message._storyArchiveKind === 'string') nextMessage._storyArchiveKind = message._storyArchiveKind;
         if (Number.isFinite(message._contextFloor)) nextMessage._contextFloor = message._contextFloor;
         if (message._preventContextMerge === true) nextMessage._preventContextMerge = true;
         if (trackSources) nextMessage._sourceIndexes = getMessageSourceIndexes(message, index, true);
@@ -549,6 +550,7 @@
             if (previous
                 && previous.role === nextMessage.role
                 && previous._contextOrigin === nextMessage._contextOrigin
+                && previous._storyArchiveKind === nextMessage._storyArchiveKind
                 && mergeRoleSet.has(nextMessage.role)
                 && previous._preventContextMerge !== true
                 && nextMessage._preventContextMerge !== true) {

@@ -22,9 +22,17 @@ function assertAgency(request, player = '测试玩家') {
   }
   if (!request.model.startsWith('wx-')) {
     assert.equal((systems.match(/<rp_narrative_scope>/g) || []).length, 1);
+    assert.equal((systems.match(/<rp_turn_task>/g) || []).length, 1);
+    const playerIndex = request.messages.findLastIndex(message => message.role === 'user' && message.name === player);
+    assert.ok(playerIndex > 0);
+    assert.match(request.messages[playerIndex - 1].content, /<rp_turn_task>/);
+    assert.ok(request.messages.every(message => !('_storyArchiveKind' in message)));
     assert.match(systems, /角色卡定义人物，不把该人物或玩家固定成每轮的叙事中心/);
     assert.match(systems, /这只让读者看见，不会自动让玩家或别的NPC知道/);
-  } else assert.ok(!systems.includes('<rp_narrative_scope>'));
+  } else {
+    assert.ok(!systems.includes('<rp_narrative_scope>'));
+    assert.ok(!systems.includes('<rp_turn_task>'));
+  }
 }
 (async () => {
   let browser;
@@ -51,6 +59,12 @@ function assertAgency(request, player = '测试玩家') {
         ? '{"messages":[{"type":"text","content":"你慢慢考虑。"}]}' : '林晚点点头，留在门旁等待回应。' };
       if (body.model.startsWith('deepseek-suqixue')) message.content = '卿抬起头：“你现在去吃饭吗？”';
       if (body.model === 'rp-world-life') message.content = '同一时段，苏祈雪和沈鹿从B栋走出来。沈鹿说起课堂上的趣事，她听着笑了一下，两人慢慢聊着。';
+      if (body.model === 'qwen3.7-plus') {
+        const input = body.messages.findLast(message => message.role === 'user').content;
+        message.content = input.includes('请代写') ? '陈璃在前台递出身份证，等着登记。'
+          : input.includes('我问她') ? '苏祈雪举起转接线：“投影连不上，你有空帮我看看吗？”'
+            : '同一时段，苏祈雪把书合上。沈鹿小声道了晚安，她也笑着应了一声，两人各自关了床头灯。';
+      }
       if (body.model === 'rp-world-invitation') message.content = '苏祈雪拿出一根转接线：“文学社的投影连不上，你有空帮我看看吗？”她留在门口等陈璃回答。';
       if (body.model === 'rp-world-refusal') message.content = '“那我问问师姐。”苏祈雪收起转接线，准备去找林晚。';
       if (body.model === 'rp-sender-draft') message.content = '同一时段，苏祈雪继续整理书桌，没有收到新的消息。';
@@ -134,8 +148,8 @@ function assertAgency(request, player = '测试玩家') {
       for (const request of matching) {
         assert.ok(!request.messages.some(message => String(message.content).includes('STALE_PLAYER_DECISION') || String(message.content).includes('STALE_NATIVE_PLAYER_DECISION')));
         const lastUser = request.messages.findLast(message => message.role === 'user');
-        assert.ok(lastUser.content.endsWith('</player_turn_boundary>'));
-        assert.equal((request.messages.map(message => message.content).join('\n').match(/<player_turn_boundary>/g) || []).length, 1);
+        assert.equal(lastUser.content, '我没有出门，仍在房间。请继续写你的角色。');
+        assert.ok(!request.messages.some(message => message.role !== 'system' && /<player_turn_boundary>|<next_response>|<response_protocol>/.test(message.content)));
       }
       if (model === 'rp-cot') assert.match(matching[0].messages[0].content, /只设计回应点，不提前写出结果/);
       assert.equal(await page.evaluate(() => window.__AGENCY_SCOPE__.chatHistory.value.find(message => message.id === 'a1').reasoning),
@@ -164,6 +178,46 @@ function assertAgency(request, player = '测试玩家') {
       }
       console.log(`PASS ${model}：真实请求保留玩家决定权约束`);
     }
+    for (const model of ['rp-prompt-dedup', 'gemini-prompt-dedup']) {
+      await page.evaluate(async model => {
+        const s = window.__AGENCY_SCOPE__, builtin = window.RPHubBuiltinPresets, style = builtin.managedPresets.writingStyle;
+        s.settings.model = model; s.settings.preventTruncation = false; s.settings.activeToolsEnabled = false;
+        s.memorySettings.enabled = false; s.replaceStoryRecap(null); s.activeTools.value.forEach(tool => { tool.enabled = false; });
+        s.currentCharacter.value.first_mes = ''; s.currentCharacter.value.personality = `PERSONALITY_UNCHANGED\n${style.content}`;
+        s.worldInfo.value = ['a', 'b'].map(id => ({ id, comment: `世界条目${id}`, content: 'WORLD_ENTRY_UNCHANGED',
+          constant: true, enabled: true, position: 'before_char', order: 0 }));
+        s.presets.value = [
+          { ...style, role: 'system', enabled: true }, { ...style, name: '同文风副本', role: 'system', enabled: true },
+          { name: '系统A', role: 'system', content: 'SYSTEM_EXACT_DUPLICATE', enabled: true },
+          { name: '系统B', role: 'system', content: ' SYSTEM_EXACT_DUPLICATE\n', enabled: true },
+          { name: '系统不同', role: 'system', content: 'SYSTEM_DISTINCT_CONTENT', enabled: true },
+          ...builtin.corePresets.filter(preset => ['user', 'assistant'].includes(preset.role)).map(preset => ({ ...preset, enabled: true }))
+        ];
+        s.chatHistory.value = [{ id: 'dedup-user', role: 'user', name: '测试玩家',
+          content: '送走祈雪和林晚后，两个人在3饭继续鏖战，期间不少问题都在边碰边改，终于是在凌晨2点搞定了' }];
+        await Vue.nextTick();
+        window.__DEDUP_BEFORE__ = JSON.stringify({ personality: s.currentCharacter.value.personality,
+          worldInfo: s.worldInfo.value, presets: s.presets.value });
+        await s.generateResponse();
+      }, model);
+      const request = requests.find(request => request.model === model); assert.ok(request); assertAgency(request);
+      const system = request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
+      assert.equal((system.match(/<writing_style>\s*[\s\S]*?<\/writing_style>/g) || []).length, 1);
+      assert.equal((system.match(/SYSTEM_EXACT_DUPLICATE/g) || []).length, 1);
+      assert.match(system, /SYSTEM_DISTINCT_CONTENT/);
+      const character = request.messages.find(message => message.content.includes('PERSONALITY_UNCHANGED'));
+      assert.ok(character && !character.name && character.content.includes('<writing_style>'), 'personality里的相同文风仍完整保留');
+      assert.equal((character.content.match(/WORLD_ENTRY_UNCHANGED/g) || []).length, 2, '不去重世界书条目');
+      assert.equal(request.messages.findLast(message => message.role === 'user').content.length, 44);
+      assert.ok(request.messages.some(message => message.role === 'assistant' && message.content.includes('READY')));
+      assert.ok(request.messages.some(message => message.role === 'user' && message.content.includes('如果你理解、尊重并同意')));
+      assert.equal(await page.evaluate(() => {
+        const s = window.__AGENCY_SCOPE__;
+        return JSON.stringify({ personality: s.currentCharacter.value.personality, worldInfo: s.worldInfo.value,
+          presets: s.presets.value }) === window.__DEDUP_BEFORE__;
+      }), true, '不改写保存的角色内核和预设，包括Gemini nonce');
+      console.log(`PASS ${model}：system去重，44字玩家输入独立，personality/世界书/固定示例完整保留`);
+    }
     const card = JSON.parse(fs.readFileSync(path.join(ROOT, 'card/suqixue/苏祈雪.json'), 'utf8'));
     for (const legacy of [false, true]) {
       await page.evaluate(async ({ card, legacy }) => {
@@ -190,17 +244,68 @@ function assertAgency(request, player = '测试玩家') {
       const request = matching[0]; assertAgency(request, '陈璃');
       const prompt = request.messages.map(message => message.content).join('\n');
       assert.ok(!prompt.includes('正文最少700字。'));
-      assert.match(prompt, /本轮玩家是「陈璃」，你扮演「苏祈雪」/);
-      assert.match(prompt, /玩家未明确发送或授权的微信\/对白不能补写/);
+      assert.match(prompt, /玩家是「陈璃」，AI扮演「苏祈雪」/);
+      assert.match(prompt, /不得输出以「陈璃」为发送者的新微信/);
       assert.match(prompt, /【角色卡资料｜人物：苏祈雪】/);
       assert.doesNotMatch(prompt, /\{\{\s*(?:user|char)\s*\}\}/i, '真实请求的双方姓名占位符已解析');
       assert.match(prompt, /苏祈雪 的反应/);
       assert.match(prompt, /即使其他预设要求最低字数、完整一幕、主动推进或每几轮完成互动/);
       assert.match(prompt, /玩家自己的草稿和发话归属|台词、草稿、引语和发送意图始终归原说话人/);
+      const system = request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
+      assert.equal((system.match(/<writing_style>\s*[\s\S]*?<\/writing_style>/g) || []).length, 1);
+      assert.equal(request.messages.findLast(message => message.role === 'user').content, '我还在实验室，暂时没有离开，也没有发微信。继续。');
       // 当前磁盘卡是用户的素材；本体边界应对现有卡和旧卡都生效，不要求测试先改写它。
       const last = await page.evaluate(() => { const message = window.__AGENCY_SCOPE__.chatHistory.value.at(-1); return { content: message.content, error: message.responseError }; });
       assert.equal(last.content, '卿抬起头：“你现在去吃饭吗？”'); assert.ok(!last.error);
       console.log(`PASS ${model}：真实角色卡与陈璃身份进入API，无700字下限，短回复一次完成`);
+    }
+    for (const [stage, input, cotEnabled] of [
+      ['分线-COT关', '【2025年03月12日 02时11分】我和同伴走到街口，正在考虑找住处。也许以后带祈雪来看看。', false],
+      ['分线-COT开', '【2025年03月12日 02时11分】我忙完后走到了街上。我们已经分开了，我还没有给祈雪发微信。', true],
+      ['直接互动', '苏祈雪站在门口，我问她：“有什么事？”', true],
+      ['有限代写授权', '请代写我办理入住，只写到递出身份证，不写之后的事情。', false]
+    ]) {
+      const before = requests.length;
+      await page.evaluate(async ({ input, cotEnabled }) => {
+        const s = window.__AGENCY_SCOPE__, builtin = window.RPHubBuiltinPresets;
+        s.settings.model = 'qwen3.7-plus'; s.settings.temperature = 1; s.settings.preventTruncation = false;
+        s.settings.activeToolsEnabled = false; s.activeTools.value.forEach(tool => { tool.enabled = false; });
+        s.memorySettings.enabled = false; s.classicMemories.value = []; s.replaceStoryRecap(null); s.replaceWechatTimeline([]);
+        s.currentCharacter.value.first_mes = '';
+        s.presets.value = [{ name: '去User中心化', role: 'system', enabled: true, content: '【旧版预设】允许其他NPC独立生活，不将玩家固定为中心。' },
+          { name: 'COT', role: 'system', enabled: cotEnabled, content: builtin.buildCotPresetContent({ memoryEnabled: false, uiTemplateAnalysisEnabled: false }) }];
+        s.chatHistory.value = [{ id: 'rp-past-quote', role: 'assistant', content: '苏祈雪在食堂当面说：“明晚再说。”随后和室友离开。' },
+          { id: 'qwen-world-line-user', role: 'user', name: '陈璃', content: input }];
+        await Vue.nextTick();
+        window.__ROUTE_CORE_BEFORE__ = JSON.stringify({ personality: s.currentCharacter.value.personality, worldInfo: s.worldInfo.value });
+        await s.generateResponse();
+      }, { input, cotEnabled });
+      const matching = requests.slice(before).filter(request => request.model === 'qwen3.7-plus'); assert.equal(matching.length, 1);
+      const request = matching[0]; assert.equal(request.temperature, 1); assertAgency(request, '陈璃');
+      assert.equal(request.messages.findLast(message => message.role === 'user').content, input);
+      const system = request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
+      assert.match(system, /默认转入「苏祈雪」或其他NPC的独立场景/);
+      assert.match(system, /无需玩家另行要求“切视角”/);
+      assert.match(system, /玩家正在与NPC直接互动时，写NPC当轮回应/);
+      assert.match(system, /只有玩家明确委托代写时，才在指定范围内续写玩家/);
+      assert.match(system, /RP当面台词不能改成历史微信/);
+      assert.match(system, /【旧版预设】/, '旧保存预设保持原文，强制本体入口提供新规则');
+      assert.equal((system.match(/<thinking_protocol>/g) || []).length, cotEnabled ? 1 : 0);
+      if (cotEnabled) {
+        assert.match(system, /“玩家独立线更新”“与NPC直接互动”还是“明确委托代写”/);
+        assert.match(system, /除明确委托代写的范围外/);
+      }
+      assert.ok(request.messages.some(message => message.role === 'assistant' && message.content.includes('在食堂当面说')));
+      const state = await page.evaluate(() => {
+        const s = window.__AGENCY_SCOPE__, message = s.chatHistory.value.at(-1);
+        return { content: message.content, error: message.responseError,
+          coreUnchanged: JSON.stringify({ personality: s.currentCharacter.value.personality, worldInfo: s.worldInfo.value }) === window.__ROUTE_CORE_BEFORE__ };
+      });
+      assert.ok(!state.error); assert.equal(state.coreUnchanged, true);
+      assert.equal(state.content, stage === '有限代写授权' ? '陈璃在前台递出身份证，等着登记。'
+        : stage === '直接互动' ? '苏祈雪举起转接线：“投影连不上，你有空帮我看看吗？”'
+          : '同一时段，苏祈雪把书合上。沈鹿小声道了晚安，她也笑着应了一声，两人各自关了床头灯。');
+      console.log(`PASS qwen3.7-plus / temperature 1 / ${stage}：实际请求保留分线规则、玩家原文和人物资料；假API响应完成`);
     }
     for (const [model, input] of [
       ['rp-world-life', '我在实验室继续跑数据。我们刚分开，各自忙自己的事。'],

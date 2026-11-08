@@ -43,27 +43,6 @@
                 : ''
         ].filter(Boolean).join('\n');
         __s.getActiveToolInvocationReminder = getActiveToolInvocationReminder;
-        const appendActiveToolReminderToLatestUserMessage = (msgArray) => {
-            const tools = getEnabledActiveTools();
-            if (tools.length === 0) return msgArray;
-            const reminder = getActiveToolInvocationReminder(tools);
-            const latestUserMessage = [...msgArray].reverse().find(message => {
-                const content = String(message?.content || '');
-                return message?.role === 'user'
-                    && content.trim()
-                    && !isRoleMemoryContextContent(content);
-            });
-            if (!latestUserMessage) return msgArray;
-
-            const currentContent = String(latestUserMessage.content || '').trimEnd();
-            if (!currentContent.includes(reminder)) {
-                latestUserMessage.content = currentContent
-                    ? `${currentContent}\n${reminder}`
-                    : reminder;
-            }
-            return msgArray;
-        };
-        __s.appendActiveToolReminderToLatestUserMessage = appendActiveToolReminderToLatestUserMessage;
         const buildActiveToolDefinitions = (tools) => tools.map(tool => ({
             type: 'function',
             function: {
@@ -139,29 +118,19 @@
             ? `<${tag}>\n${text.replace(/<\s*\/?\s*(?:thinking|think|cot)\s*>/gi, '')}\n</${tag}>\n`
             : '';
         __s.wrapAnalysis = wrapAnalysis;
-        const appendNextResponsePrompt = (messageList, { cotEnabled = false, useThinkingTag = false, writingStylePrompt = '' } = {}) => {
-            const target = [...messageList].reverse().find(message => (
-                message?.role === 'user'
-                && Array.isArray(message._sourceIndexes)
-                && message._sourceIndexes.length > 0
-            ));
-            if (!target) return;
-
-            const prompt = BUILTIN_PROMPTS.buildNextResponsePrompt({
+        const appendResponseProtocolPrompt = (messageList, { cotEnabled = false, useThinkingTag = false } = {}) => {
+            const prompt = BUILTIN_PROMPTS.buildResponseProtocolPrompt({
                 autoImageGenEnabled: __s.isAutoImageGenEnabled.value,
                 cotEnabled,
                 imageGenCount: __s.settings.imageGenCount,
-                memoryEnabled: __s.memorySettings.enabled,
                 useThinkingTag,
-                writingStylePrompt,
+                replyInTool: __s.isTruncationEnabled.value,
                 storyPanelsEnabled: __s.isStoryPanelsEnabled.value,
                 uiTemplateEnabled: __s.isUiTemplateAnalysisEnabled()
             });
-            const replyToolReminder = __s.isTruncationEnabled.value
-                ? `(${BUILTIN_PROMPTS.replyToolInstruction.replace(/。$/, '')})` : '';
-            target.content = `${String(target.content || '').trimEnd()}${replyToolReminder}\n\n${prompt}`;
+            return BUILTIN_PROMPTS.appendSystemPrompt(messageList, prompt);
         };
-        __s.appendNextResponsePrompt = appendNextResponsePrompt;
+        __s.appendResponseProtocolPrompt = appendResponseProtocolPrompt;
         const usedGeminiPromptNonces = new Set();
         __s.usedGeminiPromptNonces = usedGeminiPromptNonces;
     };

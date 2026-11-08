@@ -106,7 +106,20 @@
             const enabledPresets = __s.presets.value
                 .map(__s.normalizePreset)
                 .filter(p => __s.isPresetEnabled(p) && p.content.trim());
-            const noncePreset = enabledPresets.find(p => p.role === 'system');
+            // 只在发送副本中合并完全相同的系统预设，不触碰人物资料、世界书或历史示例。
+            const uniquePresetContents = (presets) => {
+                const seen = new Set();
+                return presets.filter(preset => {
+                    const key = preset.content.trim();
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                });
+            };
+            const cotPresets = uniquePresetContents(enabledPresets.filter(p => p.name === 'COT'));
+            const systemPresets = uniquePresetContents(enabledPresets.filter(p => p.name !== 'COT'
+                && (p.role === 'system' || p.name === BUILTIN_PRESETS.writingStyle.name)));
+            const noncePreset = systemPresets[0] || cotPresets.find(p => p.role === 'system');
             if (/gemini/i.test(requestModel) && noncePreset) {
                 let nonce;
                 do {
@@ -115,10 +128,6 @@
                 __s.usedGeminiPromptNonces.add(nonce);
                 noncePreset.content = `${nonce}\n${noncePreset.content}`;
             }
-            const writingStylePresets = enabledPresets.filter(p => p.name === BUILTIN_PRESETS.writingStyle.name);
-            const cotPresets = enabledPresets.filter(p => p.name === 'COT');
-            const systemPresets = enabledPresets.filter(p => p.name !== 'COT'
-                && (p.role === 'system' || p.name === BUILTIN_PRESETS.writingStyle.name));
             const messagePresets = enabledPresets.filter(p => p.name !== 'COT'
                 && p.name !== BUILTIN_PRESETS.writingStyle.name
                 && (p.role === 'user' || p.role === 'assistant'));
@@ -215,6 +224,8 @@
                 messages.push({
                     role: 'user',
                     content: characterPreludePrompt,
+                    _contextOrigin: 'character_background',
+                    _preventContextMerge: true,
                     _worldInfoEntries: [
                         ...wiGroups.before_char,
                         ...wiGroups.after_char
@@ -391,6 +402,7 @@
                             : (m.name || (m.role === 'user' ? __s.user.name : __s.currentCharacter.value.name)),
                         content: cleanContent,
                         ...(m._contextOrigin ? { _contextOrigin: m._contextOrigin } : {}),
+                        ...(m._storyArchiveKind ? { _storyArchiveKind: m._storyArchiveKind } : {}),
                         _sourceIndexes: sourceIndexes,
                         _contextFloor: m._contextFloor,
                         _preventContextMerge: m._preventContextMerge === true
@@ -399,15 +411,6 @@
                 .filter(m => String(m.content || '').trim())
             );
             __s.appendPendingUiTemplateCorrection(messages);
-            __s.appendNextResponsePrompt(messages, {
-                cotEnabled: cotPresets.length > 0,
-                useThinkingTag: __s.usesThinkingCotTag(requestModel),
-                writingStylePrompt: writingStylePresets
-                    .map(preset => preset.content
-                        .replace(/^\s*<writing_style>\s*/i, '')
-                        .replace(/\s*<\/writing_style>\s*$/i, ''))
-                    .join('\n\n')
-            });
 
             // 世界书与其他提示处理完成后，再把召回附在最新用户消息末尾。
             messages = injectContextMessages({
@@ -415,7 +418,6 @@
                 worldInfoGroups: wiGroups,
                 safeTargetLimit
             });
-            if (activeToolDepth === 0) messages = __s.appendActiveToolReminderToLatestUserMessage(messages);
             messages = postprocessContextMessages(messages).map((message, index, array) => ({
                 ...message,
                 content: __s.processRegex(message.content || '', {
@@ -526,12 +528,21 @@
                     if (geographyPrompt) messages.unshift({ role: 'system', content: geographyPrompt });
                 }
                 messages.push(...__s.activeToolMessages);
+                // 输出开关只保留短协议；放在正则之后的 system，不混入玩家发言或重复文风/本体边界。
+                messages = __s.appendResponseProtocolPrompt(messages, {
+                    cotEnabled: cotPresets.length > 0,
+                    useThinkingTag: __s.usesThinkingCotTag(requestModel)
+                });
                 // 每条主请求及工具续写都带本体玩家边界，放在正则/记忆/地理注入之后。
                 messages = BUILTIN_PROMPTS.appendPlayerAgencyPrompt(messages, {
                     userName: __s.user.name,
                     characterName: __s.currentCharacter.value.name,
-                    wechatToolNames: requestTools.filter(__s.isWechatActiveTool).map(tool => tool.callName),
-                    includeTurnReminder: true
+                    currentPlayerContent: __s.chatHistory.value.findLast(message => message.role === 'user')?.content || '',
+                    wechatToolNames: requestTools.filter(__s.isWechatActiveTool).map(tool => tool.callName)
+                });
+                messages = BUILTIN_PROMPTS.appendRpTurnTaskPrompt(messages, {
+                    userName: __s.user.name,
+                    characterName: __s.currentCharacter.value.name
                 });
                 const contextViewerState = buildContextViewerState({
                     messages,

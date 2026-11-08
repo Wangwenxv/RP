@@ -57,6 +57,10 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         check('完整片区背景可展开查看', await page.getByTestId('atlas-district-scene').textContent() === atlasWorld.districts.library.scene);
         await page.getByLabel('浏览搜索地点').fill('声控灯');
         check('地点介绍可搜索，找到B栋', await atlas.locator('.atlas-place-button').count() === 1 && (await atlas.locator('.atlas-place-button').textContent()).includes('B栋'));
+        await page.getByLabel('浏览搜索地点').fill('取快递');
+        check('地点浏览按用途找到三个独立快递点，不把又康列作取件处', await atlas.locator('.atlas-place-button').count() === 3 && !(await atlas.locator('.atlas-place-list').textContent()).includes('又康'));
+        await page.getByLabel('浏览地点目录').selectOption('parcel-canteen-1');
+        check('快递点完整介绍与关键词可见', (await page.getByTestId('atlas-local-scene').textContent()).includes('文采园') && (await atlas.textContent()).includes('用途关键词'));
         await page.getByLabel('浏览搜索地点').fill(''); await atlas.getByLabel('显示路网节点').check();
         check('可显示全部地点和路网节点', await atlas.locator('.atlas-place-button').count() === atlasWorld.places.length);
         await page.screenshot({ path: path.join(tmp, 'atlas-desktop.png'), fullPage: true });
@@ -69,6 +73,7 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         const pack = JSON.parse(fs.readFileSync(output, 'utf8'));
         check('浏览器导出原图片字节与地点道路文化，自包含且无本地路径', Buffer.compare(Buffer.from(pack.image.dataUrl.split(',')[1], 'base64'), fs.readFileSync(path.join(root, 'card/江大南校区.jpeg'))) === 0 && pack.world.places.length === atlasWorld.places.length && !pack.world.image);
         check('浏览器导出保留生活需求、服务和使用惯例', JSON.stringify(pack.world.everyday) === JSON.stringify(atlasWorld.everyday) && pack.world.places.find(p => p.id === 'youkang').usage === atlasWorld.places.find(p => p.id === 'youkang').usage);
+        check('浏览器导出保留各地点用途关键词', pack.world.places.every(p => JSON.stringify(p.keywords) === JSON.stringify(atlasWorld.places.find(source => source.id === p.id).keywords)));
         await page.getByTestId('map-import').setInputFiles(output); await page.waitForFunction(() => window.__APP_PROXY__.mapRecords.length === 2);
         check('同ID导入为副本，内置世界保持原ID', await page.evaluate(() => { const r = window.__APP_PROXY__.mapRecords; return r[0].world.id === 'jiangnan-south-campus' && r[1].world.id.includes('-import-'); }));
         await page.locator('.map-view article').last().getByRole('button', { name: '查看 / 编辑' }).click();
@@ -77,6 +82,14 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         check('实际编辑器路程检查仍为35分钟', (await page.locator('.map-form pre').textContent()).includes('"typicalMinutes": 35'));
         await page.getByRole('button', { name: '地点', exact: true }).click(); await page.getByLabel('选择地点道路').selectOption('canteen-3');
         await page.getByLabel('用途 / 功能', { exact: true }).fill('测试食堂用途');
+        await page.getByLabel('地点用途关键词', { exact: true }).fill('夜宵补给，测试吃饭');
+        await page.getByLabel('地点服务', { exact: true }).fill('测试餐饮');
+        await page.getByLabel('地点使用说明', { exact: true }).fill('测试营业说明，不能据此判断正在营业。');
+        await page.screenshot({ path: path.join(tmp, 'keyword-editor-desktop.png'), fullPage: true });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.screenshot({ path: path.join(tmp, 'keyword-editor-mobile.png'), fullPage: true });
+        check('新增关键词和服务表单在手机尺寸无横向溢出', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        await page.setViewportSize({ width: 1440, height: 1000 });
         await page.getByRole('button', { name: '在图上定位', exact: true }).click();
         await page.getByTestId('map-canvas').evaluate(svg => { const pt = svg.createSVGPoint(); pt.x = 100; pt.y = 100; const screen = pt.matrixTransform(svg.getScreenCTM()); svg.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: screen.x, clientY: screen.y })); });
         const coords = [+(await page.getByLabel('X', { exact: true }).inputValue()), +(await page.getByLabel('Y', { exact: true }).inputValue())];
@@ -121,6 +134,7 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         await page.evaluate(async () => { const r = window.__APP_PROXY__; await r.selectCharacter(r.characters.length - 1, false, { silent: true }); });
         await page.reload({ waitUntil: 'domcontentloaded' }); await boot();
         check('刷新后原图、编辑用途、道路、角色绑定都从IndexedDB恢复', await page.evaluate(id => { const r = window.__APP_PROXY__, record = r.mapRecords.find(m => m.world.id === id); return r.mapRecords.length === 3 && record.imageData.startsWith('data:image/jpeg') && record.world.edges[0].points.length === 1 && r.characters.at(-1).geography.worldId === id && r.mapRecords[1].world.places.find(p => p.id === 'canteen-3').function === '测试食堂用途'; }, id));
+        check('关键词编辑、服务和使用说明保存刷新后仍可检索', await page.evaluate(() => { const w = window.__APP_PROXY__.mapRecords[1].world, p = w.places.find(p => p.id === 'canteen-3'); return p.keywords.includes('夜宵补给') && p.services.includes('测试餐饮') && p.usage.includes('测试营业说明') && window.RPHubGeography.search(w, '夜宵补给').results[0].id === p.id; }));
         check('编辑保存与刷新载入后仍保留生活需求和服务检索', await page.evaluate(() => { const w = window.__APP_PROXY__.mapRecords[1].world, G = window.RPHubGeography; return G.needs(w, '洗衣液用完了')[0].id === 'daily-supplies' && G.execute(w, {}, { operation: 'search', query: '洗衣液' }).results[0].id === 'youkang' && w.places.find(p => p.id === 'turf').usage.includes('日常跑步'); }));
         check('自建图的局部查询不含图片和完整世界数据', await page.evaluate(id => { const record = window.__APP_PROXY__.mapRecords.find(m => m.world.id === id); const text = JSON.stringify(window.RPHubGeography.execute(record.world, {}, { operation: 'place', query: '测试食堂' })); return text.includes('供应夜宵') && !/base64|edges|metersPerUnit/.test(text); }, id));
         await page.evaluate(async () => {
@@ -137,6 +151,10 @@ const check = (label, ok) => { assert.ok(ok, label); console.log('PASS ' + label
         await page.evaluate(() => window.__APP_PROXY__.closeWechat());
         await page.getByTestId('map-import').setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ format: 'rp-hub-map', version: 1, world: pack.world, image: { dataUrl: 'data:image/png;base64,ZmFrZQ==' } })) });
         await page.waitForFunction(() => !window.__APP_PROXY__.mapLibraryBusy); check('损坏图片导入不写入存储', await page.locator('.map-view article').count() === 3);
+        const beforeCopy = await page.evaluate(() => ({ binding: window.__APP_PROXY__.characters.at(-1).geography.worldId, ids: window.__APP_PROXY__.mapRecords.map(r => r.world.id) }));
+        await page.getByRole('button', { name: '创建内置新版副本', exact: true }).click();
+        await page.waitForFunction(() => window.__APP_PROXY__.mapRecords.length === 4);
+        check('旧地图可创建内置新版副本，保留原图修改和角色绑定', await page.evaluate(before => { const r = window.__APP_PROXY__, newest = r.mapRecords.at(-1).world; return before.ids.every(id => r.mapRecords.some(m => m.world.id === id)) && r.characters.at(-1).geography.worldId === before.binding && newest.id.includes('-updated-') && newest.places.some(p => p.id === 'parcel-canteen-1') && r.mapRecords[1].world.places.find(p => p.id === 'canteen-3').function === '测试食堂用途'; }, beforeCopy));
         check('管理页和角色绑定无Vue解析/组件错误', errors.length === 0 && warnings.length === 0);
         // file:// original image export: no fetch/CORS dependency.
         const filePage = await context.newPage(); await filePage.goto('file:///' + path.join(root, 'index.html').replaceAll('\\', '/'), { waitUntil: 'domcontentloaded' });

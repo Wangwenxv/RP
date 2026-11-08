@@ -285,7 +285,7 @@ const app = createApp({
             mapRecords: __s.mapRecords, mapLibraryBusy: __s.mapLibraryBusy, geographyMapOptions: __s.geographyMapOptions,
             hasOpenedMapManager: __s.hasOpenedMapManager, mapReturnToCharacter: __s.mapReturnToCharacter,
             openMapManagerForCharacter: __s.openMapManagerForCharacter, returnToCharacterFromMaps: __s.returnToCharacterFromMaps,
-            saveMapRecord: __s.saveMapRecord, getMapImage: __s.getMapImage, importMapPackage: __s.importMapPackage,
+            saveMapRecord: __s.saveMapRecord, getMapImage: __s.getMapImage, importMapPackage: __s.importMapPackage, copyLatestBuiltinMap: __s.copyLatestBuiltinMap,
             exportMapPackage: __s.exportMapPackage, deleteMapRecord: __s.deleteMapRecord,
             switchProfile: __s.switchProfile, createNewProfile: __s.createNewProfile, deleteProfile: __s.deleteProfile, userProfiles: __s.userProfiles, activeProfileId: __s.activeProfileId, showProfileDropdown: __s.showProfileDropdown,
             processMainContent: __s.processMainContent, replaceUserNamePlaceholder: __s.replaceUserNamePlaceholder,

@@ -1,5 +1,11 @@
 # RP-Hub 架构交接文档
 
+> 2026-11-08 地点用途检索：全部内置场景补keywords，原图快递聚集区及生活服务独立建点；RP/微信请求前本地召回，tool_geo search返回候选简介与匹配原因。地图编辑、包往返和内置新版副本接线见 [地点检索交接](./geography-place-search.md)。
+
+> 2026-11-08 NPC镜头选择：配对Qwen返回暴露玩家生活流程代写与RP台词冒充微信。本体/COT/准备对话区分玩家线更新、直接互动和明确代写；分线默认转NPC，personality/世界书保留。见 [NPC镜头交接](./rp-scene-routing.md)。
+
+> 2026-11-08 请求规则去重：文风不再重复进入最新user；本体/工具规则集中system，输出开关改为短协议；角色背景独立且全文保留，相同system预设仅发送副本去重。见 [请求去重交接](./request-prompt-dedup.md)。
+
 > 2026-11-08 实际请求审计：前情提要与混合原文不再默认冠玩家 name，程序资料保持独立来源；提示词解析双方姓名占位符。体积证据、修复和精简建议见 [messages 审计交接](./request-context-audit.md)。
 
 > 2026-11-08 微信发送者归属：system、实际工具 schema 与最终玩家提醒使用具名「本体角色 → 玩家」方向，区分玩家草稿/玩家已发/指定角色发送；卡片资料注明来源，工具回执由程序标注双方身份。见 [发送归属交接](./wechat-sender-ownership.md)。
@@ -505,6 +511,10 @@ sticker；它继续负责把模型「把 emoji 当成 text 发」的情况升格
 **重生成表情清单**：抓 `https://api.github.com/repos/getActivity/EmojiPackage/git/trees/master?recursive=1`，
 取一级目录下的图片 blob（`分类/文件名`，排除嵌套与 `.zip/.rar`），按 `name` 排序后写成
 `window.RPHubEmojiCatalog` 的字面量即可（去掉 `size` 字段可把清单压到 ~35 KB）。
+
+## 真实模型验证与请求来源（2026-11-08）
+
+`built-in-content.js` 提供历史渠道边界、真实玩家时标及紧邻本轮输入的短任务；`15-generate.js` 接入，`26-recap.js / data-services.js` 保留临时档案类别并在 API 映射时剔除。原角色资料与 UI 保留。真实 Qwen 的失败及局限不与假API回归混计，见 [真实验证交接](./rp-live-evaluation.md)。
 
 ## 10. 已知遗留
 

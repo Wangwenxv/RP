@@ -9,7 +9,7 @@
         const w = pick(source, ['version', 'id', 'name', 'imageSize', 'coordinateSystem', 'culture', 'districts', 'landmarks', 'everyday', 'metersPerUnit', 'calibration']);
         if (typeof w.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(w.id) || typeof w.name !== 'string' || !w.name.trim()) throw new Error('地图需要名称，以及字母/数字/横线组成的ID');
         if (!Array.isArray(w.imageSize) || w.imageSize.length !== 2 || !w.imageSize.every(n => Number.isFinite(n) && n > 0 && n <= 50000)) throw new Error('地图需要有效的imageSize坐标尺寸');
-        w.places = (source.places || []).map(p => pick(p, ['id', 'name', 'point', 'kind', 'district', 'aliases', 'function', 'scene', 'access', 'services', 'usage']));
+        w.places = (source.places || []).map(p => pick(p, ['id', 'name', 'point', 'kind', 'district', 'aliases', 'keywords', 'function', 'scene', 'access', 'services', 'usage']));
         if (w.everyday && typeof w.everyday === 'object' && !Array.isArray(w.everyday)) {
             w.everyday = pick(w.everyday, ['knowledge', 'needs']);
             if (Array.isArray(w.everyday.needs)) w.everyday.needs = w.everyday.needs.map(n => pick(n, ['id', 'label', 'terms', 'places']));

@@ -24,6 +24,7 @@
         if (world.calibration?.uncertainty !== undefined && (!Number.isFinite(world.calibration.uncertainty) || world.calibration.uncertainty < 0 || world.calibration.uncertainty > 1)) throw new Error('地图估算误差应为0至1');
         const strings = (value, count, length) => Array.isArray(value) && value.length <= count && value.every(s => typeof s === 'string' && s.trim() && s.length <= length);
         for (const p of world.places) {
+            if (p.keywords !== undefined && !strings(p.keywords, 32, 40)) throw new Error('地点关键词需要最多32个、不超过40字符的短词');
             if (p.services !== undefined && !strings(p.services, 24, 40)) throw new Error('地点服务需要最多24个短名称');
             if (p.usage !== undefined && (typeof p.usage !== 'string' || p.usage.length > 180)) throw new Error('地点使用惯例应为不超过180字符的文本');
         }
@@ -106,7 +107,7 @@
         const result = {
             status: 'ok', worldId: world.id, from: a.place.name, to: b.place.name, mode,
             distance: { estimatedMeters: Math.round(meters / 10) * 10, source: measured ? 'measured_edges' : world.calibration?.autoScale ? 'RP路线时间标定推算；不是实测米数' : '按地图比例/非实测道路估算；不是实测米数' },
-            duration: { typicalMinutes: typical, rangeMinutes: minutes, includes: mode === 'bike' ? `低速骑行及找车/停车2—4分钟${pushMeters ? '，隧道/台阶路段下车推行' : ''}；没有保证有车` : '楼外步行；不含楼内上下楼和排队' },
+            duration: { typicalMinutes: typical, rangeMinutes: minutes, includes: mode === 'bike' ? `低速骑行及找车/停车2—4分钟${pushMeters ? '，需下车推行的路段按步行计算' : ''}；没有保证有车` : '楼外步行；不含楼内上下楼和排队' },
             confidence: measured ? 'measured' : 'estimated', calibration: world.calibration?.source || '未提供来源',
             via: found.nodes.map(id => world.places.find(p => p.id === id).name),
             warnings: [...new Set(found.edges.map(e => e.note).filter(Boolean))]
@@ -133,13 +134,15 @@
         const p = hit.place;
         return { status: 'ok', worldId: world.id, id: p.id, name: p.name, zone: world.districts?.[p.district]?.label || p.district || '',
             function: p.function || '', access: p.access || {}, ...(hit.subLocation ? { subLocation: hit.subLocation } : {}),
+            ...(p.keywords?.length ? { keywords: p.keywords } : {}),
             ...(p.services?.length ? { services: p.services } : {}), ...(p.usage ? { usage: p.usage } : {}),
             scene: String(p.scene || '').slice(0, 1200), district: String(world.districts?.[p.district]?.scene || '').slice(0, 1500),
             culture: (world.culture || []).slice(0, 6), provenance: '建筑位置来自示意图；功能、文化与开放规则来自RP设定，不是现实校园调查' };
     };
     const textLimit = (value, max) => String(value || '').slice(0, max);
     const briefPlace = result => result.status !== 'ok' ? result : ({
-        status: 'ok', id: result.id, name: result.name, function: textLimit(result.function, 120),
+        status: 'ok', id: result.id, name: result.name, ...(result.zone ? { zone: result.zone } : {}), function: textLimit(result.function, 120),
+        ...(result.services?.length ? { services: result.services.slice(0, 12) } : {}),
         ...(result.usage ? { usage: textLimit(result.usage, 180) } : {}),
         ...(result.subLocation ? { subLocation: result.subLocation } : {}),
         ...(result.access && Object.keys(result.access).length ? { access: result.access } : {}),
@@ -244,6 +247,47 @@
         const source = norm(text);
         return (world.everyday?.needs || []).filter(n => n.terms.some(term => source.includes(norm(term)))).slice(0, limit);
     };
+    // Names locate a place; use keywords discover candidates without establishing location.
+    // Only explicit local tags/needs trigger automatic recall. Long scene prose is searched on demand.
+    const search = (world, query, options = {}) => {
+        const q = norm(query);
+        if (!q) return { status: 'needs_query', results: [], note: '请提供地点名称或用途关键词。' };
+        const matchedNeeds = needs(world, q, 8);
+        const preferred = [...new Set(matchedNeeds.flatMap(n => n.places))];
+        const hits = [];
+        for (const p of world.places) {
+            if (p.kind === 'junction' && !options.includeNodes) continue;
+            const matches = []; let score = 0;
+            const add = (field, term, weight) => {
+                const value = norm(term);
+                if (!value) return;
+                const exact = value === q, contains = value.includes(q), embedded = value.length >= 2 && q.includes(value);
+                if (!exact && !contains && !embedded) return;
+                // Descriptions support literal query search, not reverse matching of whole paragraphs.
+                if (weight < 40 && !contains) return;
+                score = Math.max(score, weight + (exact ? 40 : contains ? 20 : 10) + Math.min(exact || embedded ? value.length : q.length, 20));
+                matches.push({ field, term: textLimit(exact || embedded ? term : query, 40) });
+            };
+            names(p).forEach(term => add('name', term, 100));
+            (p.keywords || []).forEach(term => add('keyword', term, 80));
+            (p.services || []).forEach(term => add('service', term, 70));
+            const priority = preferred.indexOf(p.id);
+            if (priority >= 0) {
+                score = Math.max(score, 95);
+                for (const n of matchedNeeds.filter(n => n.places.includes(p.id))) for (const term of n.terms.filter(t => q.includes(norm(t)))) matches.push({ field: 'need', term });
+            }
+            if (!options.metadataOnly) for (const field of ['function', 'usage', 'scene']) add(field, p[field], 15);
+            if (!score) continue;
+            const match = { fields: [...new Set(matches.map(m => m.field))], terms: [...new Set(matches.map(m => m.term))].slice(0, 4) };
+            hits.push({ place: p, score, priority: priority < 0 ? preferred.length : priority, match });
+        }
+        hits.sort((a, b) => b.score - a.score || a.priority - b.priority);
+        const limit = Math.max(1, Math.min(2000, options.limit || 8));
+        return { status: hits.length ? 'ok' : 'not_found', worldId: world.id, query: textLimit(query, 200), total: hits.length,
+            results: hits.slice(0, limit).map(hit => ({ ...(options.detail === 'full' ? placeInfo(world, hit.place.id) : briefPlace(placeInfo(world, hit.place.id))), match: hit.match })),
+            note: hits.length ? '按地点名、用途关键词及本图资料匹配的候选，不是唯一目的地，也不是当前位置；选择后按需用context查路程。'
+                : '本图没有匹配地点；应澄清或说明资料缺失，不得用超市、活动中心等不相关地点代替。' };
+    };
     const everydayContext = (world, state, text) => {
         const matches = needs(world, text);
         if (!matches.length) return null;
@@ -263,6 +307,7 @@
             unit: '分钟', candidates: ids.map(id => {
                 const p = briefPlace(placeInfo(world, id));
                 return { id: p.id, name: p.name, function: p.function, ...(p.usage ? { usage: p.usage } : {}),
+                    ...(p.scene ? { scene: p.scene } : {}), ...(p.zone ? { zone: p.zone } : {}),
                     ...(p.access ? { access: p.access } : {}), forNeeds: matches.filter(n => n.places.includes(id)).map(n => n.id),
                     ...(origin ? { costs: { walk: cost(id, 'walk'), bike: cost(id, 'bike') } } : {}) };
             }), note: '只是可能相关的地点，不代表请求代办、已经出发或到达。往返只含通行，不含活动、楼内时间和排队；库存与临时占用未知，营业按剧情时间核对。' };
@@ -320,14 +365,14 @@
         return state;
     };
     const properties = {
-        operation: { type: 'string', enum: ['context', 'search', 'place', 'route', 'status'], description: '优先context一次查地点用途/环境、双方位置、步行与骑车耗时；其他操作仅用于补充细节' },
-        query: { type: 'string', description: '例如风采园；context中作为目的地，省略使用user最近位置' },
+        operation: { type: 'string', enum: ['context', 'search', 'place', 'route', 'status'], description: '不知道目的地时先search用途（如取快递、吃饭、打印）；已知地点用context一次查用途/环境、位置与交通耗时' },
+        query: { type: 'string', description: '地点名称或用途，如快递、取包裹、吃饭、买日用品；search返回多个候选及简介，context中作为目的地，省略使用user最近位置' },
         from: { type: 'string', description: '地点名/ID或user、character；context默认character' }, to: { type: 'string' },
         mode: { type: 'string', enum: ['walk', 'bike', 'compare'], description: 'context默认同时比较walk和bike' },
         weather: { type: 'string', enum: ['normal', 'rain'] }, time: { type: 'string', description: '剧情出发时间HH:MM，不能用系统时间' },
         detail: { type: 'string', enum: ['brief', 'full'], description: '默认brief只取行动需要的短结果；要丰富场景描写才选full' }
     };
-    const definition = { type: 'function', function: { name: 'tool_geo', description: '地理问题优先context一查取齐地点功能/环境、双方位置与片区、两种交通路程，并给出从已确认一方到常去地点的分钟表；已提供本轮地理速查时不重复查。坐标只表明谁在哪一侧。同次需要多地点用batch。只读，不改变位置，未知会澄清。', parameters: { type: 'object', properties: {
+    const definition = { type: 'function', function: { name: 'tool_geo', description: '本地地图检索：不知道去哪就search用途关键词（快递、吃饭、打印等），返回候选地点、简介、开放规则与匹配原因；名称歧义或无结果应澄清，不用缺少对应业务资料的地点代替。已知地点用context一查取齐环境、双方位置、步行/骑车路程。已有本轮速查不重复查，多地点可batch。只读，不改变位置，不提供取件码、库存等未知事实。', parameters: { type: 'object', properties: {
         ...properties, operation: { ...properties.operation, enum: [...properties.operation.enum, 'batch'] },
         requests: { type: 'array', minItems: 1, maxItems: 4, description: 'batch最多4个独立查询，一次返回；不许嵌套batch', items: { type: 'object', properties, required: ['operation'], additionalProperties: false } }
     }, required: ['operation'], additionalProperties: false } } };
@@ -355,11 +400,7 @@
             return args.detail === 'full' ? result : briefPlace(result);
         }
         if (args.operation === 'search') {
-            const query = norm(args.query);
-            const preferred = [...new Set(needs(world, query).flatMap(n => n.places))];
-            const hits = world.places.filter(p => p.kind !== 'junction' && (preferred.includes(p.id) || [...names(p), p.function, ...(p.services || [])].some(n => norm(n).includes(query))));
-            hits.sort((a, b) => (preferred.includes(a.id) ? preferred.indexOf(a.id) : preferred.length) - (preferred.includes(b.id) ? preferred.indexOf(b.id) : preferred.length));
-            return { status: 'ok', results: hits.slice(0, 8).map(p => ({ id: p.id, name: p.name, function: p.function, ...(p.usage ? { usage: p.usage } : {}) })) };
+            return boundResult(search(world, args.query, { detail: args.detail }), args.detail);
         }
         if (args.operation === 'route') {
             const result = route(world, endpoint(state, args.from), endpoint(state, args.to), args);
@@ -367,5 +408,5 @@
         }
         throw new Error('需要 operation: search/place/route/status');
     };
-    window.RPHubGeography = { validate, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, needs, everydayContext, project, definition, execute, compass, relation, reachability };
+    window.RPHubGeography = { validate, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, needs, search, everydayContext, project, definition, execute, compass, relation, reachability };
 })();

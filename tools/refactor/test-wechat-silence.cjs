@@ -519,8 +519,9 @@ test('只开主动微信时，强制策略不会强迫调用；其他工具的�
   assert.ok(prompt.includes('没有条件或意愿时直接继续 RP 正文'));
   assert.ok(prompt.includes('限制尚未解除时，不调用主动微信工具'));
   const messages = [{ role: 'user', content: '她尚未被救出' }];
-  state.appendActiveToolReminderToLatestUserMessage(messages);
-  assert.ok(!messages[0].content.includes('必须先调用'));
+  const withRules = context.BUILTIN_PROMPTS.appendSystemPrompt(messages, prompt);
+  assert.equal(withRules[1].content, '她尚未被救出');
+  assert.ok(!withRules[0].content.includes('必须先调用'));
   const web = { type: 'web_search', callName: 'tool_web' };
   tools = [...tools, web];
   assert.equal(state.shouldRequireActiveToolCall(tools), true);

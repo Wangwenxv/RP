@@ -12,6 +12,8 @@ test('自包含地图包原图字节、坐标/用途/道路/文化/开放规则�
     assert.deepEqual(value.world.districts, world.districts); assert.deepEqual(value.world.culture, world.culture);
     assert.deepEqual(value.world.landmarks, world.landmarks);
     assert.deepEqual(value.world.everyday, world.everyday);
+    for (const source of world.places) assert.deepEqual(value.world.places.find(p => p.id === source.id).keywords, source.keywords);
+    assert.ok(G.search(value.world, '取快递').results.slice(0, 3).every(p => p.id.startsWith('parcel-')));
     for (const id of ['youkang', 'turf', 'stadium']) {
         const p = value.world.places.find(p => p.id === id), source = world.places.find(p => p.id === id);
         assert.deepEqual(p.services, source.services); assert.equal(p.usage, source.usage);

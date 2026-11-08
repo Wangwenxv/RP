@@ -37,6 +37,9 @@ for district_id, district in world['districts'].items():
         lines += ['来源：' + district['source'], '']
     for p in places:
         lines += [f"### {p['name']}", '', '**别名**：' + ('、'.join(p.get('aliases', [])) or '未设置'), '',
+                  '**用途关键词**：' + ('、'.join(p.get('keywords', [])) or '未设置'), '',
+                  '**服务**：' + ('、'.join(p.get('services', [])) or '未单列'), '',
+                  '**使用说明**：' + (p.get('usage') or '未单列'), '',
                   '**用途 / 功能**：' + (p.get('function') or '尚未填写'), '', '**地点完整介绍**', '',
                   p.get('scene') or '尚无独立介绍；继承本节顶部片区背景。', '']
         if p.get('access'):

@@ -3,7 +3,7 @@
     const MapsView = {
         components: { SettingsPageHeader: window.RPHubComponents.SettingsPageHeader, MapAtlas: window.RPHubMapAtlas },
         props: { records: Array, busy: Boolean, save: Function, getImage: Function, returnToCharacter: Boolean },
-        emits: ['menu', 'import', 'export', 'delete', 'return-character'],
+        emits: ['menu', 'import', 'export', 'delete', 'return-character', 'builtin-copy'],
         setup(props) {
             const { ref, computed } = Vue, P = window.RPHubMapPackages;
             const draft = ref(null), originalId = ref(''), image = ref(''), tab = ref('places'), selected = ref(''), action = ref('select'), zoom = ref(1), filter = ref(''), error = ref(''), dirty = ref(false);
@@ -12,7 +12,11 @@
             const routeFrom = ref(''), routeTo = ref(''), routeResult = ref(''), jsonText = ref(''), showJson = ref(false), scaleSelection = ref(null);
             const place = computed(() => draft.value?.places.find(p => p.id === selected.value));
             const edge = computed(() => draft.value?.edges.find(e => e.id === selected.value));
-            const places = computed(() => (draft.value?.places || []).filter(p => !filter.value || [p.name, p.id, ...(p.aliases || [])].some(v => v.includes(filter.value))));
+            const places = computed(() => {
+                if (!draft.value || !filter.value.trim()) return draft.value?.places || [];
+                const ids = new Set(window.RPHubGeography.search(draft.value, filter.value, { includeNodes: true, limit: 2000 }).results.map(p => p.id));
+                return draft.value.places.filter(p => ids.has(p.id));
+            });
             const edges = computed(() => (draft.value?.edges || []).filter(e => !filter.value || [e.id, name(e.from), name(e.to)].some(v => v.includes(filter.value))));
             const name = id => draft.value?.places.find(p => p.id === id)?.name || id;
             const allowLeave = () => !dirty.value || window.confirm('有未保存的地图修改，放弃修改并继续？');
@@ -40,7 +44,7 @@
             };
             const newPlace = () => {
                 const id = 'place-' + crypto.randomUUID().slice(0, 8);
-                draft.value.places.push({ id, name: '新地点', point: draft.value.imageSize.map(n => Math.round(n / 2)), kind: 'place', aliases: [], function: '', scene: '', access: {} });
+                draft.value.places.push({ id, name: '新地点', point: draft.value.imageSize.map(n => Math.round(n / 2)), kind: 'place', aliases: [], keywords: [], services: [], function: '', scene: '', usage: '', access: {} });
                 selected.value = id; tab.value = 'places'; action.value = 'move'; dirty.value = true;
             };
             const newEdge = () => {
@@ -107,7 +111,7 @@
                     <img v-if="record.imageData || record.world.image" :src="record.imageData || record.world.image" class="w-full h-40 object-contain bg-gray-50" :alt="record.world.name + '底图'">
                     <div class="p-4"><h3 class="font-bold text-gray-800">{{ record.world.name }}</h3>
                     <p class="text-xs text-gray-500 mt-1">{{ record.builtin ? '内置试点 · ' : '本地地图 · ' }}{{ record.world.places.length }} 个地点 / {{ record.world.edges.length }} 条道路</p>
-                    <div class="flex flex-wrap gap-2 mt-4"><button class="settings-create-button" @click="browse(record)">浏览地点</button><button class="settings-icon-button" :disabled="busy" @click="edit(record)">查看 / 编辑</button><button class="settings-icon-button" :disabled="busy" @click="$emit('export', record.world.id)">导出地图包</button><button v-if="!record.builtin" class="settings-icon-button text-gray-500" :disabled="busy" @click="$emit('delete', record.world.id)">删除</button></div></div>
+                    <div class="flex flex-wrap gap-2 mt-4"><button class="settings-create-button" @click="browse(record)">浏览地点</button><button class="settings-icon-button" :disabled="busy" @click="edit(record)">查看 / 编辑</button><button class="settings-icon-button" :disabled="busy" @click="$emit('export', record.world.id)">导出地图包</button><button v-if="record.builtinSourceId" class="settings-icon-button" :disabled="busy" @click="$emit('builtin-copy', record.world.id)">创建内置新版副本</button><button v-if="!record.builtin" class="settings-icon-button text-gray-500" :disabled="busy" @click="$emit('delete', record.world.id)">删除</button></div></div>
                 </article>
             </div>
             <p v-if="!draft && !browsing" class="text-xs text-gray-500 mt-5">地图包为自包含的 .rpmap.json，携带原图、地点坐标与用途、道路、文化及标定。单独的角色卡只携带地图绑定；分享自建世界时，请同时分享地图包。图片不会自动识别地点或推算真实尺度。</p>
@@ -130,11 +134,15 @@
                     <section class="bg-white rounded-2xl border border-gray-200 p-4 min-w-0">
                         <div class="flex gap-2 mb-3"><button v-for="t in [{id:'places',name:'地点'},{id:'roads',name:'道路'},{id:'world',name:'文化 / 标定'}]" :key="t.id" @click="tab = t.id; action = 'select'" :class="['px-3 py-2 rounded-xl text-sm', tab === t.id ? 'bg-primary-50 text-primary-700 font-bold' : 'text-gray-500 bg-gray-50']">{{ t.name }}</button></div>
                         <template v-if="tab !== 'world'">
-                            <div class="map-toolbar"><input aria-label="搜索地点道路" v-model="filter" class="map-input flex-1" placeholder="搜索名称、别名"><button class="settings-create-button" @click="tab === 'places' ? newPlace() : newEdge()">{{ tab === 'places' ? '添加地点' : '添加道路' }}</button></div>
+                            <div class="map-toolbar"><input aria-label="搜索地点道路" v-model="filter" class="map-input flex-1" placeholder="搜索名称、别名、用途关键词"><button class="settings-create-button" @click="tab === 'places' ? newPlace() : newEdge()">{{ tab === 'places' ? '添加地点' : '添加道路' }}</button></div>
                             <select aria-label="选择地点道路" v-model="selected" class="map-input w-full my-3" @change="action = 'select'"><option value="">选择一个{{ tab === 'places' ? '地点' : '道路' }}</option><template v-if="tab === 'places'"><option v-for="p in places" :value="p.id">{{ p.name }}{{ p.kind === 'junction' ? '（路网节点）' : '' }}</option></template><template v-else><option v-for="e in edges" :value="e.id">{{ name(e.from) }} → {{ name(e.to) }} · {{ e.id }}</option></template></select>
                         </template>
                         <div v-if="tab === 'places' && place" class="map-form">
                             <label>地点名称<input v-model="place.name" class="map-input"></label><label>别名（逗号分隔）<input :value="(place.aliases || []).join('，')" @input="place.aliases = $event.target.value.split(/[,，]/).map(v => v.trim()).filter(Boolean)" class="map-input"></label>
+                            <label>用途关键词（逗号分隔）<input aria-label="地点用途关键词" :value="(place.keywords || []).join('，')" @input="place.keywords = $event.target.value.split(/[,，]/).map(v => v.trim()).filter(Boolean)" class="map-input" placeholder="取快递、拿包裹、寄件…" maxlength="1311"></label>
+                            <p class="text-xs text-gray-500">别名填写地名；关键词填写在这里能做的事。关键词用于搜索，不会把提及用途当成已经到达。</p>
+                            <label>提供的服务（逗号分隔）<input aria-label="地点服务" :value="(place.services || []).join('，')" @input="place.services = $event.target.value.split(/[,，]/).map(v => v.trim()).filter(Boolean)" class="map-input" placeholder="按已有资料填写，不确定的服务留空"></label>
+                            <label>使用说明<textarea aria-label="地点使用说明" v-model="place.usage" class="map-input" rows="2" maxlength="180" placeholder="取件入口、使用习惯、需要确认的事项…"></textarea></label>
                             <label>用途 / 功能<textarea v-model="place.function" class="map-input" rows="2"></textarea></label><label>局部环境 / 文化<textarea v-model="place.scene" class="map-input" rows="3"></textarea></label>
                             <div class="grid grid-cols-2 gap-2"><label>类别<select v-model="place.kind" class="map-input"><option v-for="k in [{id:'place',name:'一般地点'},{id:'junction',name:'路网节点'},{id:'dorm',name:'宿舍'},{id:'canteen',name:'食堂'},{id:'teaching',name:'教学楼'},{id:'lab',name:'实验楼'},{id:'library',name:'图书馆'},{id:'sports',name:'体育场地'},{id:'gate',name:'校门'},{id:'landmark',name:'地标'}]" :value="k.id">{{ k.name }}</option><option v-if="place.kind && !['place','junction','dorm','canteen','teaching','lab','library','sports','gate','landmark'].includes(place.kind)" :value="place.kind">{{ place.kind }}</option></select></label><label>片区ID<input v-model="place.district" class="map-input" placeholder="living / academic"></label></div>
                             <div class="grid grid-cols-2 gap-2"><label>关闭时间<input v-model="place.access.close" class="map-input" placeholder="23:00"></label><label>进入限制<input v-model="place.access.restriction" class="map-input" placeholder="刷卡 / 访客限制"></label></div>

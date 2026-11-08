@@ -11,9 +11,9 @@
             const visible = computed(() => props.world.places.filter(p => {
                 if (!showNodes.value && p.kind === 'junction') return false;
                 if (district.value && p.district !== district.value) return false;
-                const text = [p.name, ...(p.aliases || []), p.function || '', p.scene || ''].join('\n').toLowerCase();
-                return !search.value.trim() || text.includes(search.value.trim().toLowerCase());
+                return !search.value.trim() || searchIds.value.has(p.id);
             }));
+            const searchIds = computed(() => new Set(window.RPHubGeography.search(props.world, search.value, { includeNodes: showNodes.value, limit: 2000 }).results.map(p => p.id)));
             const grouped = computed(() => Object.entries(props.world.districts || {}).map(([id, d]) => ({ id, name: d.label || id, places: visible.value.filter(p => p.district === id) })).concat([{ id: '', name: '未分片区', places: visible.value.filter(p => !props.world.districts?.[p.district]) }]).filter(g => g.places.length));
             const clusters = computed(() => {
                 const groups = new Map();
@@ -52,7 +52,7 @@
                 </section>
                 <section class="min-w-0">
                     <div class="bg-white rounded-2xl border border-gray-200 p-4 map-form">
-                        <label>搜索地点或介绍<input aria-label="浏览搜索地点" v-model="search" class="map-input" placeholder="B栋、图书馆、声控灯…"></label>
+                        <label>搜索地点、用途或介绍<input aria-label="浏览搜索地点" v-model="search" class="map-input" placeholder="快递、吃饭、B栋、声控灯…"></label>
                         <label>片区<select aria-label="浏览片区" v-model="district" class="map-input"><option value="">全部片区</option><option v-for="(d, id) in world.districts" :key="id" :value="id">{{ d.label || id }}</option></select></label>
                         <label>地点目录（{{ visible.length }} 项）<select aria-label="浏览地点目录" v-model="selectedId" class="map-input"><option v-if="!visible.length" value="">没有匹配地点</option><optgroup v-for="g in grouped" :key="g.id" :label="g.name"><option v-for="p in g.places" :key="p.id" :value="p.id">{{ p.name }}{{ p.kind === 'junction' ? '（路网节点）' : '' }}</option></optgroup></select></label>
                         <div class="atlas-place-list" aria-label="匹配地点列表"><div v-for="g in grouped" :key="g.id" class="mb-3"><h3 class="text-xs font-bold text-gray-500 mb-1">{{ g.name }}</h3><div class="flex flex-wrap gap-1"><button v-for="p in g.places" :key="p.id" :aria-pressed="p.id === selectedId" @click="select(p.id)" :class="['atlas-place-button', p.id === selectedId ? 'bg-primary-50 text-primary-700 font-bold' : 'text-gray-600 hover:bg-gray-50']">{{ p.name }}</button></div></div></div>
@@ -60,6 +60,9 @@
                     <article v-if="selected" class="bg-white rounded-2xl border border-gray-200 p-4 mt-3 map-form" aria-live="polite">
                         <div><h3 class="font-bold text-lg text-gray-800">{{ selected.name }}</h3><p class="text-xs text-gray-500">{{ districtName(selected.district) }}{{ selected.kind === 'junction' ? ' · 路网连接节点' : '' }}</p></div>
                         <p v-if="selected.aliases?.length" class="text-sm text-gray-500">别名：{{ selected.aliases.join('、') }}</p>
+                        <p v-if="selected.keywords?.length" class="text-sm text-gray-500">用途关键词：{{ selected.keywords.join('、') }}</p>
+                        <p v-if="selected.services?.length" class="text-sm text-gray-500">服务：{{ selected.services.join('、') }}</p>
+                        <p v-if="selected.usage" class="text-sm text-gray-700 whitespace-pre-wrap">使用说明：{{ selected.usage }}</p>
                         <section><h4 class="text-sm font-bold text-gray-700 mb-1">用途 / 功能</h4><p class="text-sm text-gray-700 whitespace-pre-wrap">{{ selected.function || (selected.kind === 'junction' ? '连接道路，用于寻路；没有独立场景功能。' : '尚未填写') }}</p></section>
                         <section><h4 class="text-sm font-bold text-gray-700 mb-1">地点完整介绍</h4><p data-testid="atlas-local-scene" class="text-sm text-gray-700 whitespace-pre-wrap">{{ selected.scene || '尚无独立介绍；可查看下方所属片区背景。' }}</p></section>
                         <section v-if="accessEntries.length"><h4 class="text-sm font-bold text-gray-700 mb-1">开放 / 通行规则</h4><p v-for="entry in accessEntries" :key="entry.label" class="text-sm text-gray-700">{{ entry.label }}：{{ entry.text }}</p></section>

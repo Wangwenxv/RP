@@ -60,7 +60,7 @@ test('缺少system的请求也有本体边界；微信明确你是AI角色、对
   assert.equal((wx.match(/<player_agency>/g) || []).length, 1);
 });
 
-test('RP在最后玩家输入后具名提醒，不改写原输入或插断原生工具续写', () => {
+test('RP具名规则集中到system，玩家输入和原生工具续写保持原样', () => {
   const { p } = harness();
   const source = [{ role: 'system', content: '人设与剧情' }, { role: 'user', name: '陈璃', content: '我暂时留在实验室。继续。', _sourceIndexes: [3] },
     { role: 'assistant', content: '', tool_calls: [{ id: 'native-call' }], extra_content: { signature: 'signed' } },
@@ -68,21 +68,20 @@ test('RP在最后玩家输入后具名提醒，不改写原输入或插断原生
   const before = plain(source), result = p.appendPlayerAgencyPrompt(source, { userName: '陈璃', characterName: '苏祈雪', includeTurnReminder: true });
   assert.deepEqual(plain(source), before);
   assert.deepEqual(plain(result.slice(2)), before.slice(2));
-  assert.ok(result[1].content.startsWith(before[1].content));
-  assert.match(result[1].content, /本轮玩家是「陈璃」，你扮演「苏祈雪」/);
-  assert.match(result[1].content, /短回复和保持现状有效/);
-  assert.ok(result[1].content.endsWith('</player_turn_boundary>'));
+  assert.deepEqual(plain(result[1]), before[1]);
+  assert.match(result[0].content, /玩家是「陈璃」，AI扮演「苏祈雪」/);
   assert.deepEqual(plain(result[1]._sourceIndexes), [3]);
   assert.match(result[0].content, /不得输出以「陈璃」为发送者的新微信/);
+  const repeated = p.appendPlayerAgencyPrompt(result, { userName: '陈璃', characterName: '苏祈雪', includeTurnReminder: true });
+  assert.deepEqual(plain(repeated), plain(result), '重复装配同一规则不重复注入');
+  assert.equal((JSON.stringify(result).match(/<player_agency>/g) || []).length, 1);
 });
 
 test('提醒保留玩家图片等多模态原件；无玩家消息时不伪造新用户回合', () => {
   const { p } = harness();
   const content = [{ type: 'text', text: '这是我现在的位置' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,fixture' } }];
   const result = p.appendPlayerAgencyPrompt([{ role: 'user', content }], { includeTurnReminder: true });
-  assert.deepEqual(plain(result[1].content.slice(0, 2)), content);
-  assert.equal(result[1].content.at(-1).type, 'text');
-  assert.match(result[1].content.at(-1).text, /<player_turn_boundary>/);
+  assert.deepEqual(plain(result[1].content), content);
   const noUser = p.appendPlayerAgencyPrompt([{ role: 'assistant', content: '旧剧情' }], { includeTurnReminder: true });
   assert.deepEqual(plain(noUser.map(message => message.role)), ['system', 'assistant']);
 });
@@ -223,7 +222,8 @@ test('剧情规划不再要求推断玩家真实需求，变量更新同样要�
   for (const memoryEnabled of [false, true]) {
     const cot = c.window.RPHubBuiltinPresets.buildCotPresetContent({ memoryEnabled, uiTemplateAnalysisEnabled: true });
     assert.ok(!cot.includes('最新输入里的潜台词、情绪和真实需求'));
-    assert.match(cot, /不转成玩家决定或行动/);
+    assert.match(cot, /明确言行、意向、假设、问题与拒绝分开/);
+    assert.match(cot, /未表达的意图保持未知/);
     assert.match(cot, /只设计回应点，不提前写出结果/);
   }
   const variables = p.buildUiTemplateAnalysisSystemPrompt({ userName: '阿伟' });
@@ -238,7 +238,8 @@ test('RP可叙述分开的NPC生活和主动联系，但读者视角不向人物
   assert.match(rp[0].content, /可以连贯写她与朋友相处/);
   assert.match(rp[0].content, /这只让读者看见，不会自动让玩家或别的NPC知道/);
   assert.match(rp[0].content, /不预设玩家答应、出发、援助或成功/);
-  assert.match(rp[1].content, /无须玩家介入的NPC事务可以连贯展开/);
+  assert.match(rp[0].content, /独立NPC片段可以有完整过程/);
+  assert.equal(rp[1].content, '我在实验室继续训练，我们各自忙自己的事。');
   for (const summary of [
     p.buildClassicSummarySystemPrompt({ userName: '陈璃', characterName: '苏祈雪' }),
     p.buildClassicSecondarySummaryPrompt({ userName: '陈璃', characterName: '苏祈雪', startTurn: 1, endTurn: 3 }),
@@ -260,5 +261,153 @@ test('COT与人称预设允许NPC场景切换，去用户中心化不把主角�
   assert.match(presets.deUserCentric.content, /\{\{char\}\} 也不是固定叙事中心/);
   assert.match(presets.secondPerson.content, /不把镜头限制在玩家视野内/);
   assert.match(presets.thirdPerson.content, /可切换NPC场景/);
-  assert.match(p.buildNextResponsePrompt(), /可以切到角色或其他NPC的独立事务/);
+  assert.match(p.buildPlayerAgencyPrompt(), /可以连贯写她与朋友相处/);
+});
+
+test('分线更新默认转NPC镜头，保留直接互动和明确代写的边界；历史RP台词不冒充微信', () => {
+  const { p } = harness();
+  const source = [{ role: 'user', content: '历史：林晚当面说“明晚再说”。', _contextOrigin: 'story_archive', _preventContextMerge: true },
+    { role: 'user', name: '阿伟', content: '我和同伴走到街口，正在考虑找住处，也许以后带她来看看。', _sourceIndexes: [3] }];
+  const before = plain(source), result = p.appendPlayerAgencyPrompt(source, { userName: '阿伟', characterName: '林晚' });
+  assert.deepEqual(plain(source), before);
+  assert.deepEqual(plain(result.slice(1)), before);
+  const system = result[0].content;
+  assert.match(system, /若「阿伟」只更新自己的经历、地点或想法/);
+  assert.match(system, /默认转入「林晚」或其他NPC的独立场景/);
+  assert.match(system, /无需玩家另行要求“切视角”/);
+  assert.match(system, /玩家正在与NPC直接互动时，写NPC当轮回应与客观结果/);
+  assert.match(system, /只有玩家明确委托代写时，才在指定范围内续写玩家/);
+  assert.match(system, /不能自动续写玩家办理入住、递身份证、洗澡、躺下、打字又删除/);
+  assert.match(system, /RP当面台词不能改成历史微信/);
+  assert.match(system, /旧微信、与玩家的共同经历和已确认约定须有来源/);
+  assert.match(system, /日常事务和事件/);
+  assert.match(system, /角色卡定义人物，不要求所有NPC围绕该人物/);
+});
+
+test('COT和固定准备对话都选择非玩家场景，不再把最近玩家事件当成自动续写流程', () => {
+  const { c } = harness(), builtin = c.window.RPHubBuiltinPresets;
+  for (const memoryEnabled of [false, true]) {
+    const cot = builtin.buildCotPresetContent({ memoryEnabled, uiTemplateAnalysisEnabled: true, storyPanelsEnabled: true });
+    assert.match(cot, /“玩家独立线更新”“与NPC直接互动”还是“明确委托代写”/);
+    assert.match(cot, /默认选择 \{\{char\}\} 或其他NPC的独立场景/);
+    assert.match(cot, /除明确委托代写的范围外/);
+    assert.match(cot, /区分RP当面台词与真实微信记录/);
+  }
+  const ready = builtin.corePresets.find(preset => preset.name === '破限预注入 · AI 2').content;
+  for (const prefillEnabled of [false, true]) {
+    const prompt = builtin.buildCotPresetContent({ prefillPhase: 2, prefillEnabled, prefillBaseContent: ready });
+    assert.match(prompt, /分开时自行选择非玩家场景/);
+    assert.doesNotMatch(prompt, /从最后一个真实事件接着写|先找出最近一个有效事件，再用对白或行动让局面产生变化/);
+    if (prefillEnabled) assert.match(prompt, /无须玩家要求切视角/);
+  }
+});
+
+test('当前时段取真实玩家原文的最后独立时标，不从背景或代码补造时间', () => {
+  const { p } = harness();
+  const options = { userName: '阿伟', characterName: '林晚' };
+  const current = '已完成此前的事。\n【2025年03月11日 22时35分】\n我留在食堂。\n【2025年03月12日 02时11分】\n我走到街口。';
+  const source = [{ role: 'system', content: '原系统' }, { role: 'user', name: '阿伟', content: current },
+    { role: 'user', _contextOrigin: 'story_archive', content: '【2030年03月12日 23时11分】' }];
+  const result = p.appendPlayerAgencyPrompt(source, options);
+  assert.match(result[0].content, /最后明确的剧情时标：2025-03-12 02:11/);
+  assert.deepEqual(plain(result.slice(1)), plain(source.slice(1)));
+  assert.deepEqual(plain(p.appendPlayerAgencyPrompt(result, options)), plain(result));
+  for (const content of ['日期尚未确定。', '> 【2025年03月12日 02时11分】',
+    '“【2025年03月12日 02时11分】”', '【2025年02月29日 02时11分】',
+    '```text\n【2025年03月12日 02时11分】\n```', '~~~text\n【2025年03月12日 02时11分】']) {
+    const messages = p.appendPlayerAgencyPrompt([{ role: 'user', content }], options);
+    assert.ok(!messages[0].content.includes('<current_turn_frame>'), content);
+  }
+  const media = [{ type: 'text', text: current }, { type: 'image_url', image_url: { url: 'data:image/png;base64,fixture' } }];
+  const withMedia = p.appendPlayerAgencyPrompt([{ role: 'user', content: media }], options);
+  assert.match(withMedia[0].content, /2025-03-12 02:11/);
+  assert.deepEqual(plain(withMedia[1].content), media);
+  const injected = p.appendPlayerAgencyPrompt([{ role: 'user', content: '【2030年03月12日 23时11分】', _worldInfoEntries: [{}] }], {
+    ...options, currentPlayerContent: current });
+  assert.match(injected[0].content, /2025-03-12 02:11/);
+  assert.doesNotMatch(injected[0].content, /2030-03-12/);
+});
+
+test('短任务紧邻真实当前玩家输入且只注入一次，原生工具调用与签名保持顺序', () => {
+  const { p } = harness();
+  const source = [{ role: 'system', content: '原系统' },
+    { role: 'user', content: '历史', _contextOrigin: 'story_archive' },
+    { role: 'user', name: '阿伟', content: '我还在街口，想她。', _worldInfoEntries: [{}] },
+    { role: 'assistant', content: '', tool_calls: [{ id: 'native' }], extra_content: { signature: 'signed' } },
+    { role: 'tool', tool_call_id: 'native', content: '实际结果' }];
+  const before = plain(source), options = { userName: '阿伟', characterName: '林晚' };
+  const result = p.appendRpTurnTaskPrompt(source, options);
+  assert.equal(result[2].role, 'system');
+  assert.match(result[2].content, /已经完整报告的NPC对白或同行经历/);
+  assert.match(result[2].content, /若结尾明确向NPC提问/);
+  assert.deepEqual(plain(result.filter(m => !String(m.content).includes('<rp_turn_task>'))), before);
+  assert.deepEqual(plain(source), before);
+  assert.deepEqual(plain(p.appendRpTurnTaskPrompt(result, options)), plain(result));
+  assert.match(result[2].content, /初始上下文没有单列的历史微信原文/);
+  const wxSource = [{ role: 'user', _contextOrigin: 'story_archive', _storyArchiveKind: 'wechat_originals', content: '已发送原话' }, ...source];
+  const withOriginals = p.appendRpTurnTaskPrompt(wxSource, options);
+  assert.match(withOriginals[3].content, /历史微信原文已单列/);
+  assert.doesNotMatch(withOriginals[3].content, /初始上下文没有单列/);
+});
+
+test('历史来源类别经过标准化仍独立，模型请求不能把摘要误标成微信原文', () => {
+  const { c, p } = harness();
+  vm.runInContext(read('data-services.js'), c);
+  const originals = [{ role: 'user', content: '摘要', _contextOrigin: 'story_archive', _storyArchiveKind: 'summary' },
+    { role: 'user', content: '当面对话', _contextOrigin: 'story_archive', _storyArchiveKind: 'rp_originals' },
+    { role: 'user', content: '真正微信', _contextOrigin: 'story_archive', _storyArchiveKind: 'wechat_originals' }];
+  const result = c.window.RPHubContextUtils.getPostprocessedChatMessages(originals);
+  assert.equal(result.length, 3);
+  assert.deepEqual(plain(result.map(message => message._storyArchiveKind)), ['summary', 'rp_originals', 'wechat_originals']);
+  const request = p.appendRpTurnTaskPrompt([...result, { role: 'user', name: '阿伟', content: '继续' }], { userName: '阿伟' });
+  assert.match(request.find(message => message.role === 'system').content, /历史微信原文已单列/);
+  const summaryOnly = p.appendRpTurnTaskPrompt([...result.slice(0, 2), { role: 'user', content: '微信二字不构成历史证据。继续。' }]);
+  assert.match(summaryOnly.find(message => message.role === 'system').content, /初始上下文没有单列的历史微信原文/);
+});
+
+test('输出开关只生成短协议，不复制文风或玩家规则，关闭全部开关时不注入空块', () => {
+  const { p } = harness();
+  assert.equal(p.buildResponseProtocolPrompt(), '');
+  const protocol = p.buildResponseProtocolPrompt({ cotEnabled: true, useThinkingTag: true,
+    autoImageGenEnabled: true, imageGenCount: 3, uiTemplateEnabled: true, storyPanelsEnabled: true,
+    replyInTool: true, writingStylePrompt: '不应复制的文风正文' });
+  assert.match(protocol, /<thinking><\/thinking>/);
+  assert.match(protocol, /插入3张图片/);
+  assert.match(protocol, /当前变量JSON/);
+  assert.match(protocol, /剧情面板/);
+  assert.match(protocol, /output_reply/);
+  assert.doesNotMatch(protocol, /不应复制|<next_response>|<player_turn_boundary>|<player_agency>/);
+  const original = [{ role: 'user', name: '阿伟', content: '我还在房间', _sourceIndexes: [0] },
+    { role: 'assistant', content: '', tool_calls: [{ id: 'signed' }], extra_content: { signature: 'native' } },
+    { role: 'tool', tool_call_id: 'signed', content: '真实工具结果' }];
+  const before = plain(original), once = p.appendSystemPrompt(original, protocol);
+  assert.deepEqual(plain(original), before);
+  assert.deepEqual(plain(once.slice(1)), before);
+  assert.deepEqual(plain(p.appendSystemPrompt(once, protocol)), plain(once));
+  const systems = [{ role: 'system', content: '地理资料' }, { role: 'system', content: '主系统预设', _worldInfoEntries: ['main'] }, ...original];
+  const centralized = p.appendSystemPrompt(systems, protocol);
+  assert.deepEqual(plain(centralized[0]), plain(systems[0]));
+  assert.ok(centralized[1].content.startsWith('主系统预设'));
+  assert.match(centralized[1].content, /<response_protocol>/);
+  assert.deepEqual(plain(centralized[1]._worldInfoEntries), ['main']);
+  assert.deepEqual(plain(centralized.slice(2)), plain(original));
+});
+
+test('实际工具运行时把输出协议追加到system，保留玩家图文、历史档案和工具签名', () => {
+  const { s, c } = harness();
+  Object.assign(s, { isAutoImageGenEnabled: { value: true }, isTruncationEnabled: { value: true },
+    isStoryPanelsEnabled: { value: true }, isUiTemplateAnalysisEnabled: () => true });
+  s.settings.imageGenCount = 4;
+  vm.runInContext(read('app/14-tools-runtime.js'), c); c.window.RPHubAppSections.toolsRuntime(s);
+  const source = [{ role: 'system', content: '唯一文风规则', _worldInfoEntries: ['fixture'] },
+    { role: 'user', content: '档案资料', _contextOrigin: 'story_archive', _preventContextMerge: true },
+    { role: 'user', content: [{ type: 'text', text: '玩家原话' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,fixture' } }] },
+    { role: 'assistant', tool_calls: [{ id: 'native' }], extra_content: { signature: 'signed' }, content: '' }];
+  const before = plain(source), result = s.appendResponseProtocolPrompt(source, { cotEnabled: true, useThinkingTag: false });
+  assert.deepEqual(plain(source), before);
+  assert.deepEqual(plain(result.slice(1)), before.slice(1));
+  assert.match(result[0].content, /<cot><\/cot>/);
+  assert.match(result[0].content, /output_reply/);
+  assert.equal((result[0].content.match(/唯一文风规则/g) || []).length, 1);
+  assert.deepEqual(plain(s.appendResponseProtocolPrompt(result, { cotEnabled: true })), plain(result));
 });

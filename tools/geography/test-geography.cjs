@@ -83,13 +83,96 @@ test('实际工具查询只返回局部资料；公共世界无角色住址/旧�
     assert.equal(G.execute(W, { user: {}, character: {} }, { operation: 'route', from: 'user', to: 'character' }).status, 'needs_location');
     assert.throws(() => G.execute(W, {}, { operation: 'status', mutate: '13栋' }));
 });
-test('角色卡迁出7个地理条目，17个条目；导入导出保留世界绑定', () => {
-    assert.equal(card.data.character_book.entries.length, 17);
+test('角色卡不重复地理世界书；导入导出保留世界绑定和现有条目', () => {
     assert.ok(!card.data.character_book.entries.some(e => e.comment.startsWith('地理·')));
     const U = ctx.window.RPHubCardUtils;
     const imported = U.parseImportedCharacterCard(card);
+    assert.equal(imported.worldInfoEntries.length, card.data.character_book.entries.length);
     assert.equal(imported.geography.worldId, W.id);
     assert.equal(U.buildCharacterCardData({ ...imported, worldInfo: imported.worldInfoEntries }).data.extensions.rp_hub_geography.worldId, W.id);
+});
+
+test('所有内置场景都有用途关键词；旧地图无关键词仍兼容，非法关键词拒绝', () => {
+    assert.ok(W.places.filter(p => p.kind !== 'junction').every(p => p.keywords?.length));
+    const old = json(W); old.places.forEach(p => delete p.keywords); G.validate(old);
+    assert.equal(G.search(old, '图书馆').results[0].id, 'library');
+    for (const value of [false, ['x'.repeat(41)], Array(33).fill('词'), ['']]) {
+        const invalid = json(W); invalid.places[0].keywords = value; assert.throws(() => G.validate(invalid), /关键词/);
+    }
+});
+
+test('用途和自然说法搜索返回三处独立快递点、介绍与匹配原因，不拿又康替代', () => {
+    const parcelIds = ['parcel-canteen-1', 'parcel-canteen-2', 'parcel-shiyuan'];
+    for (const query of ['快递', '取快递', '拿包裹', '你知道哪里取快递吗']) {
+        const r = G.execute(W, {}, { operation: 'search', query });
+        assert.equal(r.status, 'ok'); assert.deepEqual(json(r.results.slice(0, 3).map(p => p.id)), parcelIds);
+        assert.ok(!r.results.some(p => ['youkang', 'student-center'].includes(p.id)));
+        assert.ok(r.results.slice(0, 3).every(p => p.scene && p.match.terms.length && p.access.note && !p.access.close));
+    }
+    assert.equal(G.resolve(W, '快递站').status, 'ambiguous_place');
+    assert.equal(G.resolve(W, '一饭后快递站').place.id, parcelIds[0]);
+    assert.equal(G.resolve(W, '洗衣液').status, 'unknown_place');
+    for (const query of ['中通', '菜鸟', '中通的衣服到了在哪拿']) {
+        const r = G.search(W, query);
+        assert.deepEqual(json(r.results.slice(0, 2).map(p => p.id)), parcelIds.slice(0, 2));
+        assert.ok(r.results.slice(0, 2).every(p => /摊位|小棚子/.test(p.scene) && /取件码|通知/.test(p.usage)));
+    }
+    assert.equal(G.project(W, [message('user', '我要去快递站')]).user.status, 'unknown');
+    assert.equal(G.project(W, [message('user', '我在快递站')]).user.status, 'ambiguous_place');
+});
+
+test('关键词优先于背景提及，空查询和无结果明确返回；full按需补完整介绍', () => {
+    const w = json(W); w.places.push({ id: 'background', name: '背景建筑', point: [0, 0], scene: '从窗户能看见快递点，但不办理取件。' });
+    assert.ok(G.search(w, '快递').results.slice(0, 3).every(p => p.id.startsWith('parcel-')));
+    assert.ok(!G.search(w, '快递', { metadataOnly: true }).results.some(p => p.id === 'background'));
+    assert.equal(G.execute(W, {}, { operation: 'search' }).status, 'needs_query');
+    const missing = G.execute(W, {}, { operation: 'search', query: '校园唱片店' });
+    assert.equal(missing.status, 'not_found'); assert.equal(missing.results.length, 0); assert.match(missing.note, /不得.*代替/);
+    const full = G.execute(W, {}, { operation: 'search', query: '取快递', detail: 'full' });
+    assert.equal(full.results[0].scene, W.places.find(p => p.id === 'parcel-canteen-1').scene);
+});
+
+test('吃饭、文具、维修、打印、充值等用途能发现对应地点；场景服务不被合并成超市', () => {
+    for (const [query, id] of [['吃饭', 'canteen-1'], ['买本子', 'stationery-dorm-4'], ['修手机', 'repair-shiyuan'], ['剪头发', 'haircut-dorm-6'], ['空调充值', 'utilities-recharge']]) {
+        assert.equal(G.search(W, query).results[0].id, id);
+    }
+    assert.ok(G.search(W, '打印').results.some(p => p.id === 'print-dorm-2'));
+    assert.equal(G.route(W, '3栋', '一饭后快递点').status, 'ok');
+    const bike = G.route(W, '3栋', '一饭后快递点', { mode: 'bike' });
+    assert.equal(bike.status, 'ok'); assert.match(bike.duration.includes, /推行/);
+    assert.equal(G.route(W, '13栋', '实验楼A区').duration.typicalMinutes, 35);
+});
+
+test('截图微信连发取件问题与RP都自动提供真实候选；不冒充当前位置或读取别人的记忆', () => {
+    for (const channel of ['rp', 'wechat']) {
+        const h = adapter();
+        const contents = ['对啦，上次的衣服到啦', '填的你的名字，你去快递站找一下', '知道哪里取快递吗'];
+        if (channel === 'wechat') h.s.wechatTimeline.value = contents.map((content, i) => ({ channel, ...message('user', content, 'p' + i) }));
+        else h.s.chatHistory.value = [message('user', contents.join('\n'))];
+        const before = json(h.status()), r = preparedPrompt(h.s.buildGeographyPrompt());
+        assert.deepEqual(json(r.everyday.candidates.map(p => p.id)), ['parcel-canteen-1', 'parcel-canteen-2', 'parcel-shiyuan']);
+        assert.ok(r.everyday.candidates.every(p => p.scene && !p.costs));
+        assert.equal(r.everyday.origin.status, 'needs_location'); h.s.resetGeographyBudget(); assert.deepEqual(json(h.status()), before);
+        assert.ok(!r.everyday.candidates.some(p => p.id === 'youkang'));
+    }
+    const h = adapter(); h.s.currentCharacter.value.geography.placeMemories['parcel-canteen-1'] = '她曾在这里取过一本书。';
+    const r = h.s.executeGeographyTool({ id: 'search', function: { name: 'tool_geo', arguments: '{"operation":"search","query":"取快递"}' } });
+    assert.equal(r.results[0].characterContext, '她曾在这里取过一本书。'); assert.ok(!r.results[1].characterContext);
+});
+
+test('动态关键词自动预取覆盖本图新地点；下一批普通回复不重放，别的世界不借江大资料', () => {
+    const h = adapter(), custom = json(W);
+    custom.places.find(p => p.id === 'stationery-dorm-4').keywords.push('装订论文');
+    h.s.getGeographyWorld = () => custom;
+    h.s.wechatTimeline.value = [{ channel: 'wechat', ...message('user', '你知道哪里装订论文吗') }];
+    const r = preparedPrompt(h.s.buildGeographyPrompt());
+    assert.equal(r.placeSearch.results[0].id, 'stationery-dorm-4'); assert.ok(r.placeSearch.results[0].match.terms.includes('装订论文'));
+    h.s.wechatTimeline.value.push({ channel: 'wechat', ...message('assistant', '先问一下店家') }, { channel: 'wechat', ...message('user', '谢谢啦') });
+    assert.ok(!h.s.buildGeographyPrompt().includes('本轮地理速查'));
+    const other = { version: 1, id: 'other', places: [{ id: 'home', name: '家', point: [0, 0] }], edges: [] };
+    assert.equal(G.search(other, '取快递').status, 'not_found');
+    const generic = adapter(); generic.s.chatHistory.value = [message('user', '谢谢啦')];
+    assert.ok(!generic.s.buildGeographyPrompt().includes('又康'));
 });
 function adapter() {
     let scope = 'a', loaded = 'a';
@@ -157,7 +240,7 @@ test('跑步默认候选假草；实际往返成本与当前角色的短记忆�
     assert.equal(p.costs.walk.oneWay, 36); assert.equal(p.costs.walk.roundTrip, 72);
     assert.equal(p.costs.bike.oneWay, 16); assert.equal(p.costs.bike.roundTrip, 32);
     assert.equal(p.costs.walk.confidence, 'estimated'); assert.ok(p.characterContext.length <= 140);
-    assert.match(r.everyday.candidates[1].usage, /校运会.*田径队/); assert.ok(prompt.length < 3200);
+    assert.match(r.everyday.candidates[1].usage, /校运会.*田径队/); assert.ok(prompt.length < 3600);
     h.s.chatHistory.value.push(message('user', '陪我去真草场跑步'));
     assert.equal(preparedPrompt(h.s.buildGeographyPrompt()).places.to.id, 'stadium');
     assert.match(h.s.buildGeographyPrompt(), /明确指定的地点优先/);

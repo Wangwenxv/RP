@@ -2711,7 +2711,7 @@
             <maps-view v-if="hasOpenedMapManager" v-show="currentView === 'maps'" :records="mapRecords" :busy="mapLibraryBusy"
                 :return-to-character="mapReturnToCharacter" @return-character="returnToCharacterFromMaps"
                 :save="saveMapRecord" :get-image="getMapImage" @menu="toggleNavigation"
-                @import="importMapPackage" @export="exportMapPackage" @delete="deleteMapRecord"></maps-view>
+                @import="importMapPackage" @export="exportMapPackage" @delete="deleteMapRecord" @builtin-copy="copyLatestBuiltinMap"></maps-view>
 
             <div v-if="currentView === 'worldinfo'" class="management-view">
                 <settings-page-header title="世界书" @menu="toggleNavigation">

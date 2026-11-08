@@ -1,5 +1,11 @@
 # App 模块地图（assets/js/app/）
 
+> 2026-11-08 `30`新增本轮用途关键词召回和search地点记忆，`31`新增创建内置新版副本；地理引擎与地图编辑/浏览共用search，字段校验及包往返保留keywords。见 [地点用途检索与快递聚集区](./geography-place-search.md)。
+
+> 2026-11-08 `built-in-content` 明确NPC默认镜头、玩家终点与RP/微信来源；`23` 原动态预设入口接入新COT/准备文案。56项专项与Qwen参数假API回归通过。见 [NPC镜头交接](./rp-scene-routing.md)。
+
+> 2026-11-08 `built-in-content/14/15` 集中system规则，移除最新user重复提醒，发送副本精确去重；personality/世界书及固定示例保留。见 [请求去重交接](./request-prompt-dedup.md)。
+
 > 2026-11-08 `26/15/data-services` 区分程序历史资料与玩家发言，`25` 剔除档案内部字段；`02/10` 解析提示词双方姓名。见 [实际 messages 审计交接](./request-context-audit.md)。
 
 > 2026-11-08 `built-in-content/14/15` 补齐发送者归属和卡片资料来源，`25` 回执具名 sender/recipient，压缩与检索保留玩家草稿方向。见 [发送归属交接](./wechat-sender-ownership.md)。
@@ -109,6 +115,10 @@
 `30-geography.js`（`geography`）接入RP/微信共享地图与工具；`geography.js`负责别名、道路寻路与位置证据重放；`worlds/*.json`是共享资料源，`world-data.js`是生成的浏览器注册表。RP挂点`15/18`，微信挂点`25`，卡扩展往返`core-utils/22`。使用、地图替换及待校准限制见[地理交接](./geography-pilot.md)。
 
 v2（同日）在引擎侧增加`compass`/`relation`/`reachability`，`briefState`改为`(state, world)`并输出`zone`/`point`/`relation`，`contextInfo`带`reach`；适配层据`world.landmarks`现算"从这里出发到各处"的分钟表。角色卡只管能力声明与"她对距离的反应"，不再存分钟数。详见[位置、距离表与卡片剥离](./geography-v2-positions.md)。
+
+## RP 真实验证与来源（2026-11-08）
+
+`15-generate.js` 在真实玩家输入前插短任务，并把玩家原文交给剧情时标解析。`26-recap.js` 的临时 `_storyArchiveKind` 经过 `data-services.js` 标准化及 `15` 内部映射保留，到 API 字段白名单时剔除。`tools/refactor/live-rp-eval.mjs` 提供隔离真实请求复跑，不落真实微信记录。详见 [真实验证交接](./rp-live-evaluation.md)。
 
 ## 新增功能的落点建议
 

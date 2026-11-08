@@ -19,9 +19,10 @@
             __s.currentView.value = returnView;
             __s.showCharacterEditor.value = true;
         };
+        const builtinSource = id => Object.keys(window.RPHubWorlds || {}).sort((a, b) => b.length - a.length).find(key => id === key || id.startsWith(key + '-')) || '';
         __s.mapRecords = computed(() => [
             ...Object.values(window.RPHubWorlds || {}).filter(w => !saved.value.some(r => r.world.id === w.id)).map(world => ({ world, builtin: true })),
-            ...saved.value
+            ...saved.value.map(record => ({ ...record, builtinSourceId: builtinSource(record.world.id) }))
         ]);
         __s.geographyMapOptions = computed(() => __s.mapRecords.value.map(r => ({ id: r.world.id, name: r.world.name, places: r.world.places.filter(p => p.kind !== 'junction').map(p => ({ id: p.id, name: p.name })) })));
         __s.getGeographyWorld = id => __s.mapRecords.value.find(r => r.world.id === id)?.world || null;
@@ -56,6 +57,23 @@
         const persist = async records => {
             await window.RPHubStorage.setStoredValue('geographyMaps', P.clone(records));
             saved.value = records;
+        };
+        __s.copyLatestBuiltinMap = async id => {
+            if (busy.value) return false;
+            busy.value = true;
+            try {
+                const sourceId = builtinSource(id), source = window.RPHubWorlds?.[sourceId];
+                if (!source || !__s.mapRecords.value.some(record => record.world.id === id)) throw new Error('没有对应的内置地图资料');
+                const data = P.prepareWorld(source);
+                data.id = sourceId.slice(0, 60) + '-updated-' + generateUUID().slice(0, 8);
+                data.name += '（内置新版）';
+                const imageData = P.checkImage((await builtinImages())[sourceId]);
+                await P.imageSize(imageData);
+                await persist([...saved.value, { world: data, imageData }]);
+                __s.showToast('内置新版副本已创建，请在角色的地理环境中选择它', 'success');
+                return true;
+            } catch (e) { __s.showToast('创建新版副本失败：' + e.message, 'error'); return false; }
+            finally { busy.value = false; }
         };
         __s.saveMapRecord = async ({ world, imageData, originalId }) => {
             if (busy.value) return false;

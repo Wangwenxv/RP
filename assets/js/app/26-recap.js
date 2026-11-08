@@ -347,6 +347,7 @@
                 role: 'user',
                 content: `【前情提要｜程序整理的历史摘要，非玩家本轮发言；人物是否知情按实际来源区分】\n${text}`,
                 _contextOrigin: 'story_archive',
+                _storyArchiveKind: 'summary',
                 _sourceIndexes: [],
                 _preventContextMerge: true
             }];
@@ -356,6 +357,7 @@
                     role: 'user',
                     content: `【最近 RP 原文｜程序提供的历史资料，非玩家本轮发言；保留各段原说话人，已包含在以上摘要中】\n${rpTail}`,
                     _contextOrigin: 'story_archive',
+                    _storyArchiveKind: 'rp_originals',
                     _sourceIndexes: [],
                     _preventContextMerge: true
                 });
@@ -366,6 +368,7 @@
                     role: 'user',
                     content: `【最近微信原文｜程序提供的历史资料，非玩家本轮发言；保留原发送方向，已包含在以上摘要中】\n${wxTail}`,
                     _contextOrigin: 'story_archive',
+                    _storyArchiveKind: 'wechat_originals',
                     _sourceIndexes: [],
                     _preventContextMerge: true
                 });
