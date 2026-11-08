@@ -34,9 +34,14 @@
         const shouldRequireActiveToolCall = (tools) => __s.getActiveToolAggressiveness() === 'force'
             && tools.some(tool => !isWechatActiveTool(tool));
         __s.shouldRequireActiveToolCall = shouldRequireActiveToolCall;
-        const getActiveToolInvocationReminder = (tools) => tools.every(isWechatActiveTool)
-            ? '主动微信由人物处境和意愿决定：只有能安全通信且想发送时才调用；没有条件或意愿时直接继续 RP 正文，不必调用工具。'
-            : __s.getActiveToolLatestUserReminder();
+        const getActiveToolInvocationReminder = (tools) => [
+            tools.every(isWechatActiveTool)
+                ? '主动微信由人物处境和意愿决定：只有能安全通信且想发送时才调用；没有条件或意愿时直接继续 RP 正文，不必调用工具。'
+                : __s.getActiveToolLatestUserReminder(),
+            tools.some(isWechatActiveTool)
+                ? `微信工具只执行「${__s.currentCharacter.value?.name || '角色'}」→「${__s.user?.name || '用户'}」的角色消息；玩家自己的草稿、想说的话或发送意图不触发角色代发。`
+                : ''
+        ].filter(Boolean).join('\n');
         __s.getActiveToolInvocationReminder = getActiveToolInvocationReminder;
         const appendActiveToolReminderToLatestUserMessage = (msgArray) => {
             const tools = getEnabledActiveTools();
@@ -63,14 +68,31 @@
             type: 'function',
             function: {
                 name: tool.callName,
-                description: tool.resultCount ? `${tool.description} 每次最多返回 ${tool.resultCount} 条。` : tool.description,
+                description: isWechatActiveTool(tool)
+                    ? `只发送本体角色「${__s.currentCharacter.value?.name || '角色'}」给玩家「${__s.user?.name || '用户'}」的一条新微信。玩家“我想给她发”的草稿属于玩家，不得搬作角色发送；不是玩家代发器或其他NPC发送工具。${tool.description || ''}`
+                    : tool.resultCount ? `${tool.description} 每次最多返回 ${tool.resultCount} 条。` : tool.description,
                 parameters: tool.type === ACTIVE_TOOL_WECHAT_TYPE ? {
                     type: 'object',
                     properties: {
-                        content: { type: 'string', description: '当前角色本人发给玩家的一条纯文本微信，不能代玩家发送，不接受JSON消息列表或发送者字段。本RP回合只可调用一次；调用即交给玩家回应，不再自动续写。需要叙述时先在正文写到准备联系的位置，再调用工具，不补造玩家的新消息或约定。' },
+                        content: { type: 'string', description: `「${__s.currentCharacter.value?.name || '角色'}」本人发给「${__s.user?.name || '用户'}」的一条纯文本消息，表达角色自己的话；不能复制玩家准备发给角色的草稿、属于玩家的引语或其他NPC台词。玩家明确指定由本体角色说的台词按该归属处理。与 image 二选一，不接受JSON消息列表或发送者字段。本RP回合只可调用一次，成功即交给玩家回应。` },
+                        image: {
+                            type: 'object', description: '发送一张图片，与 content 二选一。复杂画面或没有匹配素材时用 describe；description 是画面，不是角色的文字配文。',
+                            properties: {
+                                mode: { type: 'string', enum: ['describe', 'album', 'draw'] },
+                                description: { type: 'string', maxLength: 240, description: '描述模式必填；其它模式可填作资源不可用时的画面兜底。' },
+                                assetId: { type: 'string', description: '相册模式使用本轮目录里的真实 ID。' },
+                                usage: { type: 'string', enum: ['scene_photo', 'album_photo', 'reference', 'drawing'] },
+                                template: { type: 'string', enum: ['note', 'doodle'] },
+                                text: { type: 'string', maxLength: 100 },
+                                subject: { type: 'string', enum: ['heart', 'cat', 'flower', 'meal'] },
+                                tone: { type: 'string', enum: ['warm', 'cool', 'plain'] },
+                                decorations: { type: 'array', items: { type: 'string', enum: ['heart', 'star'] }, maxItems: 3 }
+                            }, required: ['mode'], additionalProperties: false
+                        },
+                        sendAt: { type: 'string', description: '可选，实际新发消息的剧情日期时间；不要用它补造过去未记录的联系。' },
                         reason: { type: 'string', description: '可选，一句话说明为什么现在发这条微信。' }
                     },
-                    required: ['content'],
+                    anyOf: [{ required: ['content'] }, { required: ['image'] }],
                     additionalProperties: false
                 } : tool.type === ACTIVE_TOOL_RANDOM_TYPE ? {
                     type: 'object',
@@ -99,7 +121,9 @@
                 tools,
                 reminder: getActiveToolInvocationReminder(tools),
                 aggressivenessLabel: tools.every(isWechatActiveTool) ? '按人物处境自主决定' : __s.getActiveToolAggressivenessLabel(),
-                maxRounds: ACTIVE_TOOL_MAX_AUTO_CONTINUE
+                maxRounds: ACTIVE_TOOL_MAX_AUTO_CONTINUE,
+                userName: __s.user?.name,
+                characterName: __s.currentCharacter.value?.name
             });
         };
         __s.buildActiveToolSystemPrompt = buildActiveToolSystemPrompt;

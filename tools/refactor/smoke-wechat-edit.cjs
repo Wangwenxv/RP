@@ -389,9 +389,8 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   const clear = await page.evaluate(async () => {
     const root = window.__APP_PROXY__;
     await root.startWechatEdit(root.wechatTimeline.find(i => i.channel === 'wechat')?.id || '');
-    root.clearWechatTimeline();
-    root.handleConfirm();
-    await new Promise(r => setTimeout(r, 200));
+    await root.clearWechatTimeline();
+    await root.clearConversationContent('all');
     return {
       editingId: root.wechatEditingId,
       menuOpen: root.wechatMenu.open,

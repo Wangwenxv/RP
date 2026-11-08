@@ -24,6 +24,8 @@
         __s.switchingCharacterIndex = switchingCharacterIndex;
         const chatHistory = ref([]);
         __s.chatHistory = chatHistory;
+        __s.conversationRevision = 0;
+        __s.isConversationClearing = ref(false);
         const CHAT_RENDER_INITIAL_LIMIT = 20;
         __s.CHAT_RENDER_INITIAL_LIMIT = CHAT_RENDER_INITIAL_LIMIT;
         const CHAT_RENDER_BATCH_SIZE = 10;

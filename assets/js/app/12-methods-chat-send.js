@@ -148,6 +148,7 @@
         };
         __s.handleChatImageSelection = handleChatImageSelection;
         const sendMessage = async () => {
+            if (__s.isConversationClearing?.value) return;
             if ((!__s.userInput.value.trim() && __s.pendingChatImages.value.length === 0 && !__s.pendingCardInteraction.value) || __s.isConversationBusy.value || __s.isRecognizingImages.value) return;
             if (__s.pendingChatImages.value.some(image => image.status !== 'ready')) {
                 __s.showToast('请先移除识别失败的图片', 'warning');
@@ -200,29 +201,7 @@
         };
         __s.scrollChatToBottom = scrollChatToBottom;
         const clearChat = () => {
-            __s.confirmAction('确定要清空聊天记录吗？记忆也将一并清空，此操作无法撤销。', () => {
-                clearPendingChatImages();
-                clearPendingCardInteraction();
-                __s.abortConversationBackgroundWork();
-                __s.resetChatRenderWindow();
-                __s.chatHistory.value = [];
-                if (__s.currentCharacter.value && __s.currentCharacter.value.first_mes) {
-                    __s.chatHistory.value.push({
-                        role: 'assistant',
-                        name: __s.currentCharacter.value.name,
-                        content: __s.currentCharacter.value.first_mes
-                    });
-                }
-                __s.classicMemories.value = [];
-                // 前情提要是 chatHistory 之外的 scoped 状态，清空聊天时要一并清掉，
-                // 否则旧提要仍会作为对话首条进入上下文（用户看到的「清空没效果」）。
-                if (__s.clearStoryRecapSilently) {
-                    Promise.resolve(__s.clearStoryRecapSilently()).catch(() => {});
-                }
-                __s.resetUiTemplateRuntimeState();
-                __s.saveData();
-                __s.showToast('聊天记录、记忆和变量记录已清空', 'success');
-            });
+            return __s.openConversationClear('rp');
         };
         __s.clearChat = clearChat;
     };

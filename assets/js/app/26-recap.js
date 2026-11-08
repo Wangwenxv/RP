@@ -41,6 +41,19 @@
         const storyRecap = ref(null);
         __s.storyRecap = storyRecap;
         let loadedRecapScopeId = null;
+        let recapWorkEpoch = 0;
+        let recapController = null;
+        __s.cancelStoryRecapWork = () => {
+            recapWorkEpoch++;
+            recapController?.abort();
+            recapController = null;
+            isRecapGenerating.value = false;
+        };
+        __s.replaceStoryRecap = (value, scope = recapScopeId()) => {
+            __s.cancelStoryRecapWork();
+            loadedRecapScopeId = scope;
+            storyRecap.value = value;
+        };
         const isRecapGenerating = ref(false);
         __s.isRecapGenerating = isRecapGenerating;
 
@@ -106,13 +119,17 @@
         const ensureStoryRecapLoaded = async (force = false) => {
             const scope = recapScopeId();
             if (!force && loadedRecapScopeId === scope) return;
-            loadedRecapScopeId = scope;
+            const epoch = recapWorkEpoch;
             if (!scope) { storyRecap.value = null; return; }
             try {
                 if (!getMainDb()) await initDB();
-                storyRecap.value = normalizeRecap(await getScopedStoredValue(STORY_RECAP_KEY, scope));
+                const saved = await getScopedStoredValue(STORY_RECAP_KEY, scope);
+                if (scope !== recapScopeId() || epoch !== recapWorkEpoch) return;
+                storyRecap.value = normalizeRecap(saved);
+                loadedRecapScopeId = scope;
                 await ensureRecapKeepSettingsLoaded();
             } catch (error) {
+                if (scope !== recapScopeId() || epoch !== recapWorkEpoch) return;
                 console.error('读取前情提要失败:', error);
                 storyRecap.value = null;
             }
@@ -120,8 +137,10 @@
         __s.ensureStoryRecapLoaded = ensureStoryRecapLoaded;
 
         const saveStoryRecapNow = async (value = storyRecap.value, scope = recapScopeId()) => {
+            const epoch = recapWorkEpoch;
             if (!scope) return false;
             if (!getMainDb()) await initDB();
+            if (epoch !== recapWorkEpoch) return false;
             await setScopedStoredValue(STORY_RECAP_KEY, scope, value ? cloneForStorage(value) : null, { clone: false });
             return true;
         };
@@ -326,7 +345,8 @@
             if (!text) return [];
             const messages = [{
                 role: 'user',
-                content: `【前情提要｜此前剧情的压缩摘要，作为叙述背景；人物是否知情按实际来源区分】\n${text}`,
+                content: `【前情提要｜程序整理的历史摘要，非玩家本轮发言；人物是否知情按实际来源区分】\n${text}`,
+                _contextOrigin: 'story_archive',
                 _sourceIndexes: [],
                 _preventContextMerge: true
             }];
@@ -334,7 +354,8 @@
             if (rpTail) {
                 messages.push({
                     role: 'user',
-                    content: `【最近 RP 原文｜以上摘要已覆盖到这段，这里是最近的原文，接下文时保持连贯】\n${rpTail}`,
+                    content: `【最近 RP 原文｜程序提供的历史资料，非玩家本轮发言；保留各段原说话人，已包含在以上摘要中】\n${rpTail}`,
+                    _contextOrigin: 'story_archive',
                     _sourceIndexes: [],
                     _preventContextMerge: true
                 });
@@ -343,7 +364,8 @@
             if (wxTail) {
                 messages.push({
                     role: 'user',
-                    content: `【最近微信原文｜摘要覆盖到的最近微信对话原文，作为背景】\n${wxTail}`,
+                    content: `【最近微信原文｜程序提供的历史资料，非玩家本轮发言；保留原发送方向，已包含在以上摘要中】\n${wxTail}`,
+                    _contextOrigin: 'story_archive',
                     _sourceIndexes: [],
                     _preventContextMerge: true
                 });
@@ -354,12 +376,16 @@
 
         /** 手动压缩：生成并落盘前情提要。 */
         const runStoryRecap = async () => {
-            if (isRecapGenerating.value) return;
+            if (isRecapGenerating.value || __s.isConversationClearing?.value) return;
+            const scope = recapScopeId();
+            const epoch = recapWorkEpoch;
+            const isCurrent = () => scope === recapScopeId() && epoch === recapWorkEpoch && !__s.isConversationClearing?.value;
             await ensureStoryRecapLoaded();
             await ensureRecapKeepSettingsLoaded();
             // 微信时间线只在打开微信面板时载入；在记忆页直接点压缩时它可能还是空的，
             // 那样素材里就没有微信对话（用户看到的「压缩没带微信记忆」）。先确保载入。
             if (__s.ensureWechatTimelineLoaded) await __s.ensureWechatTimelineLoaded();
+            if (!isCurrent()) return;
             // 交错顺序靠时间线里的 RP 镜像，先和 chatHistory 对一次账（同进微信前的同步），
             // 否则编辑/重新生成后镜像位置错位，微信段会插回错误的时间点。
             if (__s.currentCharacter.value?.wechatEnabled && __s.reconcileRpTimeline) {
@@ -381,6 +407,8 @@
                 return;
             }
             isRecapGenerating.value = true;
+            const controller = new AbortController();
+            recapController = controller;
             try {
                 const requestMessages = [{
                     role: 'system',
@@ -393,7 +421,8 @@
                 if (prevText) requestMessages.push({ role: 'user', content: `【已有前情提要】\n${prevText}` });
                 requestMessages.push({ role: 'user', content: material.join('\n') });
                 requestMessages.push({ role: 'user', content: '把以上内容压缩成一份完整的前情提要正文。' });
-                const text = await __s.requestClassicMemoryCompletion(requestMessages);
+                const text = await __s.requestClassicMemoryCompletion(requestMessages, controller.signal, 'RP/微信前情提要');
+                if (!isCurrent() || controller.signal.aborted) return;
                 const next = normalizeRecap({
                     text,
                     coversThroughTurn: coverage.coversThroughTurn,
@@ -403,24 +432,28 @@
                     createdAt: Date.now()
                 });
                 storyRecap.value = next;
-                await saveStoryRecapNow(next);
+                await saveStoryRecapNow(next, scope);
+                if (!isCurrent()) return;
                 const keepNote = next.keepRPTurns || next.keepWechatCount
                     ? `，保留最近 ${next.keepRPTurns} 轮 RP + ${next.keepWechatCount} 条微信原文`
                     : '';
                 __s.showToast(`已压缩 ${coverage.coversThroughTurn} 轮 RP + ${coverage.coversWechatCount} 条微信为前情提要${keepNote}`, 'success');
             } catch (error) {
+                if (!isCurrent() || controller.signal.aborted) return;
                 console.error('生成前情提要失败:', error);
                 __s.showToast(`压缩失败：${error.message}`, 'error');
             } finally {
-                isRecapGenerating.value = false;
+                if (recapController === controller) {
+                    recapController = null;
+                    isRecapGenerating.value = false;
+                }
             }
         };
         __s.runStoryRecap = runStoryRecap;
 
         const clearStoryRecap = () => {
             __s.confirmAction('确定要删除前情提要吗？被它覆盖的旧剧情会重新以原文进入上下文。', async () => {
-                storyRecap.value = null;
-                try { await saveStoryRecapNow(null); } catch (error) { console.error('清除前情提要失败:', error); }
+                await clearStoryRecapSilently();
                 __s.showToast('前情提要已删除', 'success');
             });
         };
@@ -428,9 +461,8 @@
 
         /** 静默清除（供「清空聊天记录」联动，不再弹确认框）。 */
         const clearStoryRecapSilently = async () => {
-            if (!storyRecap.value) return;
-            storyRecap.value = null;
-            try { await saveStoryRecapNow(null); } catch (error) { console.error('清除前情提要失败:', error); }
+            __s.replaceStoryRecap(null);
+            await saveStoryRecapNow(null);
         };
         __s.clearStoryRecapSilently = clearStoryRecapSilently;
 

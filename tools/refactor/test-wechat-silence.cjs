@@ -132,6 +132,26 @@ test('RP主动微信同轮四个并行调用只接收第一条，成功后不自
   assert.equal(h.state.activeToolQueueRunning.value, false);
 });
 
+test('真实工具schema/system/提醒明确双方姓名，回执来自固定角色且不把排队当送达', async () => {
+  const h = harness(); h.state.user.name = '陈璃'; h.state.currentCharacter.value.name = '苏祈雪';
+  const runtime = h.loadRpTools([rpWechatTool]);
+  const definition = h.state.buildActiveToolDefinitions([rpWechatTool])[0].function;
+  assert.match(definition.description, /只发送本体角色「苏祈雪」给玩家「陈璃」/);
+  assert.match(definition.parameters.properties.content.description, /不能复制玩家准备发给角色的草稿/);
+  assert.equal(definition.parameters.additionalProperties, false);
+  const system = h.state.buildActiveToolSystemPrompt([rpWechatTool]);
+  assert.match(system, /发送者固定是本体角色「苏祈雪」，收件人固定是玩家「陈璃」/);
+  assert.match(h.state.getActiveToolInvocationReminder([rpWechatTool]), /「苏祈雪」→「陈璃」/);
+  const run = await runtime.execute([nativeCall('role-fixed', '我在宿舍 你慢慢忙')]);
+  assert.equal(run.continued, false);
+  const receipt = runtime.toolResults[0].payload.results[0];
+  assert.deepEqual(plain(receipt.sender), { role: 'assistant', characterId: 'character-a', name: '苏祈雪' });
+  assert.deepEqual(plain(receipt.recipient), { role: 'user', name: '陈璃' });
+  assert.equal(receipt.delivered, false);
+  h.state.user.name = '新玩家'; h.state.currentCharacter.value.name = '新角色';
+  assert.match(h.state.buildActiveToolDefinitions([rpWechatTool])[0].function.description, /「新角色」给玩家「新玩家」/);
+});
+
 test('主动微信不把嵌套发送者或多消息JSON解析成角色气泡，错误仍可由模型修正', async () => {
   const h = harness(), runtime = h.loadRpTools([rpWechatTool]);
   const run = await runtime.execute([nativeCall('bad-envelope', JSON.stringify({ messages: [

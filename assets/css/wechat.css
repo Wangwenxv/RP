@@ -1214,6 +1214,16 @@
 
 /* Media uses the existing WeChat palette and controls. */
 .wx-photo-button { display: block; border: 0; padding: 0; background: transparent; color: var(--wx-muted); cursor: pointer; min-width: 120px; min-height: 80px; }
+.wx-described-photo { display: flex; flex-direction: column; gap: 12px; width: min(280px, 65vw); padding: 16px; border: 1px solid var(--wx-line); border-radius: 8px; text-align: left; background: var(--wx-bubble-peer); color: var(--wx-text); cursor: pointer; }
+.wx-described-photo-head { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.wx-described-photo-head .wx-icon { width: 18px; height: 18px; color: var(--wx-muted); }
+.wx-described-photo-head small { margin-left: auto; font-size: 10px; color: var(--wx-muted); font-weight: normal; }
+.wx-described-photo-text { font-size: 13px; line-height: 1.75; white-space: normal; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.wx-described-photo-open { font-size: 11px; color: var(--wx-muted); display: flex; justify-content: space-between; }
+.wx-description-preview { padding: 20px; max-width: 540px; }
+.wx-description-label { display: inline-block; color: var(--wx-muted); font-size: 11px; border-bottom: 1px solid var(--wx-line); padding-bottom: 6px; }
+.wx-media-preview .wx-description-preview p { margin: 14px 0; line-height: 1.9; color: var(--wx-text); text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wx-description-preview small { display: block; font-size: 11px; line-height: 1.6; color: var(--wx-muted); }
 .wx-more-images { display: block; margin: 0 auto 20px; padding: 6px 12px; background: transparent; border: 0; color: var(--wx-muted); cursor: pointer; }
 .wx-media-task { margin: 10px auto; padding: 10px; max-width: 90%; background: var(--wx-bar); border: 1px solid var(--wx-line); border-radius: 8px; color: var(--wx-muted); font-size: 13px; }
 .wx-media-task button { margin-left: 8px; border: 0; background: transparent; color: var(--wx-accent); cursor: pointer; }

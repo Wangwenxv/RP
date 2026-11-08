@@ -359,7 +359,7 @@
                             </button>
                             <button @click="clearChat"
                                 class="p-1.5 text-white/70 hover:text-red-400 rounded-full hover:bg-white/10 transition-colors"
-                                title="清空聊天">
+                                title="清空 RP / 微信内容" aria-label="清空 RP / 微信内容" :disabled="isConversationClearing">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor"><use href="#icon-delete"></use></svg>
                             </button>
                         </div>
@@ -1054,6 +1054,13 @@
                                                         <span>流式输出</span>
                                                         <span class="relative inline-flex flex-none items-center">
                                                             <input v-model="settings.stream" type="checkbox" class="settings-toggle-input sr-only">
+                                                            <span class="settings-toggle settings-toggle--compact settings-toggle--solid"></span>
+                                                        </span>
+                                                    </label>
+                                                    <label class="flex cursor-pointer items-center justify-between gap-1.5 rounded-xl bg-gray-50 px-2.5 py-2.5 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-100" title="每次模型请求前输出实际 messages 快照；包含 RP、微信、总结与工具续写，不输出请求密钥。">
+                                                        <span>请求调试（Console）</span>
+                                                        <span class="relative inline-flex flex-none items-center">
+                                                            <input v-model="settings.debugModelRequests" type="checkbox" class="settings-toggle-input sr-only" aria-label="模型请求调试">
                                                             <span class="settings-toggle settings-toggle--compact settings-toggle--solid"></span>
                                                         </span>
                                                     </label>
@@ -2519,6 +2526,13 @@
                             </div>
                         </div>
                         <!-- Expandable Settings -->
+                        <div class="mb-3 rounded-xl border border-gray-100 bg-gray-50 p-3">
+                            <label class="flex cursor-pointer items-center justify-between gap-3 text-sm font-bold text-gray-700">
+                                <span>压缩后按需检索原文</span>
+                                <span class="relative inline-flex items-center"><input v-model="settings.historyRetrievalEnabled" type="checkbox" class="settings-toggle-input sr-only" aria-label="压缩后原文检索"><span class="settings-toggle settings-toggle--compact"></span></span>
+                            </label>
+                            <p class="mt-2 text-xs leading-relaxed text-gray-500">RP 和微信可按关键词找回当前分支的历史，再读命中附近原文。无需向量 API；查不到时保持不确定。总结仍提供背景，检索结果只用于本轮核实。</p>
+                        </div>
                         <div v-if="memorySettings.enabled"
                             class="settings-fields animate-fade-in">
                             <div class="settings-field">
@@ -2827,6 +2841,32 @@
 
         <!-- Modals -->
 
+        <modal-shell v-if="showConversationClear" overlay-class="z-[90] bg-black/50 backdrop-blur-sm p-4"
+            panel-class="bg-white rounded-xl border border-gray-200 w-full max-w-md shadow-2xl overflow-hidden"
+            :close-on-backdrop="!isConversationClearing" @close="showConversationClear = false">
+            <div class="bg-gradient-to-r from-primary-50 to-purple-50 p-4 border-b border-gray-100">
+                <h3 class="text-lg font-bold text-gray-900">清空聊天内容</h3>
+                <p class="text-xs text-gray-500 mt-1">仅当前角色、当前剧情分支。此操作无法撤销。</p>
+            </div>
+            <div class="p-4 space-y-3" role="dialog" aria-label="清空聊天内容" aria-modal="true" :aria-busy="isConversationClearing">
+                <button type="button" @click="clearConversationContent('segment')"
+                    :disabled="isConversationClearing || (!conversationClearPreview.rp && !conversationClearPreview.wechat)"
+                    class="w-full text-left rounded-lg border border-gray-200 p-3 hover:bg-primary-50 transition-colors disabled:opacity-50">
+                    <span class="block text-sm font-bold text-gray-800">清空本段{{ conversationClearChannel === 'wechat' ? '微信' : ' RP' }}</span>
+                    <span class="block mt-1 text-xs leading-relaxed text-gray-500">{{ conversationClearChannel === 'wechat' ? '清掉上次 RP 之后的微信，保留那轮 RP 和更早剧情。' : '清掉上次微信之后的 RP，保留微信和更早剧情。' }}</span>
+                    <span class="block mt-1 text-xs text-primary-600">将移除 {{ conversationClearPreview.rp }} 条 RP、{{ conversationClearPreview.wechat }} 条微信，并作废涉及它们的总结。</span>
+                </button>
+                <button type="button" @click="clearConversationContent('all')" :disabled="isConversationClearing"
+                    class="w-full text-left rounded-lg border border-red-200 p-3 hover:bg-red-50 transition-colors disabled:opacity-50">
+                    <span class="block text-sm font-bold text-red-600">清空全部 RP + 微信</span>
+                    <span class="block mt-1 text-xs leading-relaxed text-gray-500">同步清掉聊天、记忆、前情提要、变量进度和待发送任务，回到角色卡开场。</span>
+                </button>
+                <p v-if="isConversationClearing" class="text-xs text-gray-500" role="status">正在停止生成并保存清空结果…</p>
+                <button type="button" class="w-full py-2 text-sm text-gray-500 hover:text-gray-800 disabled:opacity-50"
+                    :disabled="isConversationClearing" @click="showConversationClear = false">取消</button>
+            </div>
+        </modal-shell>
+
         <memory-backfill-modal :show="showMemoryBackfillModal" :progress="memoryBackfillProgress"
             @close="showMemoryBackfillModal = false" @stop="abortBatchExtraction"
             @retry="startBatchMemoryExtraction"></memory-backfill-modal>
@@ -2992,7 +3032,7 @@
                 <div class="wx-bar-right">
                     <button class="wx-icon-btn" @click="openWechatMediaGallery" title="相册" aria-label="相册"><svg class="wx-icon"><use href="#wx-i-album"/></svg></button>
                     <button class="wx-icon-btn" @click="openWechatSettings" title="设置" aria-label="微信设置"><svg class="wx-icon"><use href="#wx-i-settings"/></svg></button>
-                    <button class="wx-icon-btn wx-clear" @click="clearWechatTimeline" title="清空记录" aria-label="清空微信记录"><svg class="wx-icon"><use href="#wx-i-trash"/></svg></button>
+                    <button class="wx-icon-btn wx-clear" @click="clearWechatTimeline" title="清空本段 / 全部 RP + 微信" aria-label="清空微信记录" :disabled="isConversationClearing"><svg class="wx-icon"><use href="#wx-i-trash"/></svg></button>
                 </div>
             </header>
 
@@ -3057,6 +3097,11 @@
                                         @click="wechatVoiceExpanded[item.id] = !wechatVoiceExpanded[item.id]">{{ wechatVoiceExpanded[item.id] ? '收起文字' : '转文字' }}</button>
                                     <div v-if="wechatVoiceExpanded[item.id]" class="wx-voice-transcript">{{ item.content }}</div>
                                 </div>
+                                <button v-else-if="item.type === 'image' && item.media?.descriptionOnly" class="wx-described-photo" @click="viewWechatImage(item)" aria-label="查看图片画面描述">
+                                    <span class="wx-described-photo-head"><svg class="wx-icon" aria-hidden="true"><use href="#wx-i-album"/></svg><strong>图片</strong><small>画面描述</small></span>
+                                    <span class="wx-described-photo-text">{{ item.media.caption }}</span>
+                                    <span class="wx-described-photo-open">查看画面 <span aria-hidden="true">›</span></span>
+                                </button>
                                 <button v-else-if="item.type === 'image'" class="wx-photo-button" @click="viewWechatImage(item)" title="查看完整图片">
                                     <img v-if="item.imageUrl" :src="item.imageUrl" :alt="item.media?.caption || '图片'" loading="lazy">
                                     <span v-else>图片加载中…</span>
@@ -3454,7 +3499,8 @@
             </div>
             <div v-if="wechatImagePreview" class="wx-drawer-mask wx-drawer-mask--center wx-media-preview" @click.self="wechatImagePreview = null">
                 <section class="wx-modal"><header class="wx-media-header"><strong>图片</strong><button class="wx-icon-btn" @click="wechatImagePreview = null" aria-label="关闭图片">×</button></header>
-                    <img :src="wechatImagePreview.url" :alt="wechatImagePreview.caption"><p>{{ wechatImagePreview.caption }}</p>
+                    <div v-if="wechatImagePreview.descriptionOnly" class="wx-description-preview"><span class="wx-description-label">画面描述</span><p>{{ wechatImagePreview.caption }}</p><small>这段描述用于呈现图片画面，不是对方发送的文字配文。</small></div>
+                    <template v-else><img :src="wechatImagePreview.url" :alt="wechatImagePreview.caption"><p>{{ wechatImagePreview.caption }}</p></template>
                 </section>
             </div>
         </div>
@@ -3469,6 +3515,7 @@
         document.write('<script src="assets/js/world-data.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/map-packages.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/history-retrieval.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-document-search.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-documents.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-voice.js?v=' + new Date().getTime() + '"><\/script>');
@@ -3514,6 +3561,8 @@
         document.write('<script src="assets/js/app/31-map-library.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/32-full-backup.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/26-recap.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/33-conversation-clear.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/34-history-retrieval.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app.js?v=' + new Date().getTime() + '"><\/script>');
     </script>
 </body>

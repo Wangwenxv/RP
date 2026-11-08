@@ -43,6 +43,7 @@
         };
         __s.notifyChatSaveFailure = notifyChatSaveFailure;
         const saveChatHistoryNow = (storyScopeId = getCurrentStoryBranchScopeId(), history = __s.chatHistory.value) => {
+            const revision = __s.conversationRevision;
             if (__s.chatHistorySaveTimer) {
                 clearTimeout(__s.chatHistorySaveTimer);
                 __s.chatHistorySaveTimer = null;
@@ -56,6 +57,7 @@
                     for (let attempt = 1; attempt <= 3; attempt++) {
                         try {
                             if (!getMainDb()) await initDB();
+                            if (revision !== __s.conversationRevision) return false;
                             await setScopedStoredValue('chat', storyScopeId, historyToSave, { clone: false });
                             return true;
                         } catch (error) {
@@ -77,6 +79,7 @@
         };
         __s.saveChatHistoryNow = saveChatHistoryNow;
         const scheduleChatHistorySave = () => {
+            if (__s.isConversationClearing?.value) return;
             if (__s.chatHistorySaveTimer) clearTimeout(__s.chatHistorySaveTimer);
             const delay = (__s.isGenerating.value || __s.isRemoteGenerating.value) ? 1500 : 300;
             __s.chatHistorySaveTimer = setTimeout(() => {
@@ -103,8 +106,11 @@
             storyScopeId = getCurrentStoryBranchScopeId(),
             memorySource = __s.classicMemories.value
         ) => {
+            const revision = __s.conversationRevision;
+            if (__s.isConversationClearing?.value) return;
             if (!storyScopeId || (!__s._classicMemoriesLoaded && memorySource === __s.classicMemories.value)) return;
             if (!getMainDb()) await initDB();
+            if (revision !== __s.conversationRevision) return;
             await setScopedStoredValue('classic_memories', storyScopeId, cloneForStorage(memorySource), { clone: false });
         };
         __s.saveClassicMemoriesNow = saveClassicMemoriesNow;

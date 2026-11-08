@@ -276,10 +276,12 @@
                         toolUi.status = 'running';
                         const isRandom = toolCall.tool.type === ACTIVE_TOOL_RANDOM_TYPE;
                         const isWechat = toolCall.tool.type === ACTIVE_TOOL_WECHAT_TYPE;
-                        const results = toolCall.tool.type === 'geography'
+                        const results = toolCall.tool.type === 'history_retrieval'
+                            ? [await __s.executeHistoryRetrievalTool(call, toolAbort.signal)]
+                            : toolCall.tool.type === 'geography'
                             ? [__s.executeGeographyTool(call)]
                             : isWechat
-                            ? [__s.deliverActiveWechatMessage(toolCall.content)]
+                            ? [__s.deliverActiveWechatMessage(toolCall.content, toolCall.image, toolCall.sendAt)]
                             : isRandom
                                 ? [__s.generateRandomNumberForTool(toolCall.min, toolCall.max)]
                                 : __s.isWebActiveTool(toolCall.tool)

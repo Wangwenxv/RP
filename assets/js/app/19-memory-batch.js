@@ -49,6 +49,7 @@
         };
         __s.abortConversationBackgroundWork = abortConversationBackgroundWork;
         const startClassicBatchMemoryExtraction = async (options = {}) => {
+            if (__s.isConversationClearing?.value) return;
             const { manual = true } = options;
             if (__s.isClassicBatchExtracting.value) return;
             __s.memoryBackfillProgress.value = { status: 'running', message: '正在检查待补录记忆…', phase: '', stages: [] };

@@ -74,6 +74,18 @@
         else options.signal?.addEventListener('abort', abort, { once: true });
         touch();
         try {
+            // Log the serialized wire messages, not a reactive object that changes after sending.
+            if (options.logRequest && Array.isArray(options.body?.messages)) {
+                const messagesJson = JSON.stringify(options.body.messages, null, 2);
+                const title = `[模型请求] ${options.requestType || 'chat'} / ${options.body.model} / 尝试 ${options.requestAttempt || 1}`;
+                try {
+                    console.groupCollapsed?.(title);
+                    console.info(title, { messages: JSON.parse(messagesJson), messagesJSON: messagesJson,
+                        tools: (options.body.tools || []).map(tool => tool.function?.name),
+                        stream: options.body.stream, messageCount: options.body.messages.length });
+                    console.groupEnd?.();
+                } catch (_) { /* Console hooks must never prevent a request. */ }
+            }
             const response = await fetch(options.url, {
                 method: options.body === undefined ? 'GET' : 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiKey}` },
@@ -274,7 +286,7 @@
         };
         try {
             const tools = [...(options.tools || []), ...(options.replyInTool && !options.requireTool ? [replyTool] : [])];
-            return await withApiResponse({ ...options, onErrorResponse: text => {
+            return await withApiResponse({ ...options, requestAttempt: attempt, onErrorResponse: text => {
                 if (logResponse) rawResponse = text;
             }, body: {
                 model: options.model, messages: options.messages, temperature: options.temperature,

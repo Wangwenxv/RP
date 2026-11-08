@@ -13,7 +13,7 @@
             else if (previousFocus?.isConnected) previousFocus.focus();
         });
         const fullBackupBlocked = computed(() => fullBackupBusy.value || !!(
-            __s.isConversationBusy.value || __s.isClassicBatchExtracting.value || __s.retryingClassicMemoryId.value
+            __s.isConversationClearing?.value || __s.isConversationBusy.value || __s.isClassicBatchExtracting.value || __s.retryingClassicMemoryId.value
             || __s.isUiTemplateUpdating?.value || __s.uiTemplateUpdateStatus?.state === 'running' || __s.isRecapGenerating?.value || __s.isWechatGenerating?.value
             || __s.isWechatMediaPreparing?.value || __s.isWechatDocumentPreparing?.value || __s.wechatTimeTagsSaving?.value
             || __s.stickerStoreImporting?.value || __s.mapLibraryBusy?.value || __s.storyBranchSwitching.value

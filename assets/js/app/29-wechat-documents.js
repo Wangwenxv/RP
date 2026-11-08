@@ -60,6 +60,9 @@
         __s.wechatDocumentRecordText = D.recordText;
         __s.deleteWechatDocumentOwner = id => library.purgeOwner(id);
         __s.deleteWechatDocumentScope = id => library.purgeScope(id);
+        __s.deleteWechatDocumentsForMessages = async items => {
+            for (const id of new Set(items.map(item => item.document?.id).filter(Boolean))) await library.remove(id);
+        };
         const guard = signal => {
             const target = scope(), epoch = __s.wechatMediaEpoch;
             return () => { D.active(signal); if (scope() !== target || epoch !== __s.wechatMediaEpoch) throw new DOMException('会话已变化', 'AbortError'); };

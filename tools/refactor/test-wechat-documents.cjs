@@ -189,8 +189,8 @@ test('移除文件消息回收资源并调整摘要边界；清空仅回收当�
   await h.s.removeWechatDocument(msg);
   assert.equal(h.s.wechatTimeline.value.length, 0); assert.equal(await h.lib.get(msg.document.id), null); assert.deepEqual(adjusted, [0]);
   await h.upload('当前分支'); await h.lib.save(file('另一分支'), { ownerId: 'char-a', scopeId: 'branch-b' });
-  let action; h.s.confirmAction = (_, fn) => { action = fn; };
-  h.s.clearWechatTimeline(); await action();
+  // 聚合清空入口的调用链由 test-conversation-clear / 浏览器测试覆盖；这里检查资源层作用域。
+  await h.s.deleteWechatDocumentScope(h.s.getCurrentStoryBranchScopeId());
   assert.equal((await h.lib.list()).length, 1); assert.equal((await h.lib.list())[0].scopeId, 'branch-b');
 });
 test('章节目录通过工具可用；scope 在读者请求中变化时不存笔记', async () => {

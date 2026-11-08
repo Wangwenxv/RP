@@ -98,7 +98,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
       contents: msgs.map(m => typeof m.content === 'string' ? m.content.slice(0, 400) : '[parts]')
     });
     // RP 主动发起微信探针：本轮首次请求（还没有 tool 结果回传）且用户输入带标记时，
-    // 让模型先调用 tool_wechat，再在续写请求里正常出正文。
+    // 让模型叙述到联系位置后调用 tool_wechat，成功后交给玩家，不再自动续写。
     const probeSent = msgs.some(m => typeof m.content === 'string' && m.content.includes('触发微信'));
     if (!isWechat && !isRecap && !hasToolResult && probeSent) {
       await route.fulfill({
@@ -107,7 +107,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
         body: JSON.stringify({
           choices: [{
             message: {
-              role: 'assistant', content: '',
+              role: 'assistant', content: '她拿起手机，准备联系你。',
               tool_calls: [{
                 id: 'call_wx_1', type: 'function',
                 function: { name: 'tool_wechat', arguments: JSON.stringify({ content: '在吗，睡了吗', reason: '想私下找你' }) }
@@ -752,14 +752,14 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     await new Promise(r => setTimeout(r, 400));
     const countMsgs = () => root.wechatDisplayItems.filter(i => i.kind === 'message').length;
     const before = countMsgs();
-    root.clearWechatTimeline();
+    await root.clearWechatTimeline();
     await new Promise(r => setTimeout(r, 300));
-    const confirmBtn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '确认');
+    const confirmBtn = [...document.querySelectorAll('button')].find(b => b.textContent.includes('清空全部 RP + 微信'));
     const overlay = confirmBtn ? confirmBtn.closest('.fixed') : null;
     const wxRoot = document.querySelector('.wx-root');
     return {
       before,
-      modalShown: root.showConfirmModal === true,
+      modalShown: root.showConversationClear === true,
       hasConfirmButton: !!confirmBtn,
       modalZ: overlay ? Number(getComputedStyle(overlay).zIndex) : NaN,
       wxZ: wxRoot ? Number(getComputedStyle(wxRoot).zIndex) : NaN
@@ -772,7 +772,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
 
   const cleared = await page.evaluate(async () => {
     const root = window.__APP_PROXY__;
-    const confirmBtn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '确认');
+    const confirmBtn = [...document.querySelectorAll('button')].find(b => b.textContent.includes('清空全部 RP + 微信'));
     confirmBtn.click();
     await new Promise(r => setTimeout(r, 600));
     const afterClear = root.wechatDisplayItems.filter(i => i.kind === 'message').length;
@@ -783,7 +783,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
     return {
       afterClear,
       afterReopen: root.wechatDisplayItems.filter(i => i.kind === 'message').length,
-      modalClosed: root.showConfirmModal === false
+      modalClosed: root.showConversationClear === false
     };
   });
   check('确认后记录被清空', cleared.afterClear === 0, 'n=' + cleared.afterClear);
@@ -1084,7 +1084,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('微信面板在本轮 RP 结束后自动弹出', activeWx.panelOpened === true);
   check('角色的那句话发进了微信时间线', activeWx.delivered === true, JSON.stringify(activeWx.wechatContents));
   check('RP 正文照常生成（未被工具吞掉）',
-    activeWx.lastRole === 'assistant' && activeWx.lastContent.includes('那你歇会儿'),
+    activeWx.lastRole === 'assistant' && activeWx.lastContent.includes('她拿起手机'),
     activeWx.lastContent.slice(0, 30));
   check('工具调用记为 tool_wechat', activeWx.toolIds.includes('tool_wechat'), JSON.stringify(activeWx.toolIds));
   check('消息发完后不再处于「正在输入」', activeWx.generating === false);
@@ -1092,8 +1092,8 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   const wxRounds = captured.filter(c => !c.isWechat && !c.isRecap && c.toolNames.includes('tool_wechat'));
   const wxFirstCall = wxRounds.find(c => !c.hasToolResult);
   check('开启后模型工具表暴露 tool_wechat', wxRounds.length >= 1, 'rounds=' + wxRounds.length);
-  check('工具结果以 tool 消息回传后才续写正文',
-    wxRounds.some(c => !c.hasToolResult) && wxRounds.some(c => c.hasToolResult),
+  check('主动微信成功后交给玩家，不自动请求下一轮正文',
+    wxRounds.length === 1 && !wxRounds[0].hasToolResult,
     wxRounds.map(c => (c.hasToolResult ? 'tool' : 'first')).join(','));
   check('切角色后不把上个角色的微信记录带进 RP 上下文',
     !!wxFirstCall && !wxFirstCall.contents.some(c => c.includes('微信甲段') || c.includes('微信乙段')),
@@ -1108,7 +1108,7 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   check('RP system prompt 列出 tool_wechat 及其描述',
     !!wxFirstCall
     && wxFirstCall.sysContent.includes('tool_wechat（主动发微信）')
-    && wxFirstCall.sysContent.includes('content 写成真人微信口吻的短消息'),
+    && wxFirstCall.sysContent.includes('content 写成真人微信口吻'),
     '');
   check('未开微信的角色：system prompt 不含 tool_wechat 说明',
     !!noWxCall && !noWxCall.sysContent.includes('tool_wechat'));
@@ -1187,11 +1187,8 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   console.log('\n== 清空聊天记录联动清除前情提要 ==');
   const afterClear = await page.evaluate(async () => {
     const root = window.__APP_PROXY__;
-    // 直接走清空逻辑（confirmAction 在无头下不可点，改调底层清理等价路径）
-    root.chatHistory = [];
-    root.classicMemories = [];
-    root.clearStoryRecapSilently?.();
-    await new Promise(r => setTimeout(r, 200));
+    await root.clearChat();
+    await root.clearConversationContent('all');
     return { recap: root.storyRecap };
   });
   check('清空后前情提要被清除（不再作为对话首条）', !afterClear.recap,
@@ -1247,8 +1244,8 @@ const check = (name, ok, extra = '') => { results.push({ name, ok, extra }); con
   const resumeCall = [...captured].reverse().find(c => c.isWechat);
   check('空回后的新消息正常回复，并携带收尾与新话题原文',
     resumed.last === 'assistant' && resumed.pending === 0
-    && resumeCall.contents.some(c => c === '空回探针：好的')
-    && resumeCall.contents.some(c => c === '新话题探针：在吗'));
+    && resumeCall.contents.some(c => c.includes('空回探针：好的'))
+    && resumeCall.contents.some(c => c.includes('新话题探针：在吗')));
   check('真实请求恢复用户→未发送行为→用户的轮次，包含连续次数和原因',
     resumeCall.contents.some(c => c.includes('连续 1 轮'))
     && resumeCall.contents.some(c => c.includes('未发送消息的行为记录') && c.includes('已确认，没有别的话')));

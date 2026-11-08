@@ -84,7 +84,7 @@
             if (!text) return '';
             // options: { isDisplay, isPrompt, role, depth }
             const { isDisplay = false, isPrompt = false, role = null, depth = 0 } = options;
-            let result = __s.replaceUserNamePlaceholder(text);
+            let result = isPrompt ? __s.replacePromptNamePlaceholders(text) : __s.replaceUserNamePlaceholder(text);
             if (role === 'system') return result;
             const orderedScripts = [...__s.regexScripts.value].sort((a, b) => {
                 const aIsImageGen = (a.name || a.scriptName) === 'NAI画图正则';

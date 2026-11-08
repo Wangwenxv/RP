@@ -140,7 +140,8 @@
         const requestTrackedChatCompletion = (options, type) => {
             const apiUrl = __s.settings.apiUrl;
             const request = { url: buildApiEndpoint(apiUrl, 'chat/completions'), apiKey: __s.settings.apiKey, ...options };
-            return requestChatCompletion({ ...request, onUsage: (usage, metrics) => recordApiUsage(usage, {
+            return requestChatCompletion({ ...request, logRequest: __s.settings.debugModelRequests === true,
+                requestType: request.requestLabel || type || 'chat', onUsage: (usage, metrics) => recordApiUsage(usage, {
                 type, model: request.model, apiUrl, apiKey: request.apiKey, ...metrics
             }) });
         };

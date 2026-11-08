@@ -1,5 +1,15 @@
 # RP-Hub 架构交接文档
 
+> 2026-11-08 实际请求审计：前情提要与混合原文不再默认冠玩家 name，程序资料保持独立来源；提示词解析双方姓名占位符。体积证据、修复和精简建议见 [messages 审计交接](./request-context-audit.md)。
+
+> 2026-11-08 微信发送者归属：system、实际工具 schema 与最终玩家提醒使用具名「本体角色 → 玩家」方向，区分玩家草稿/玩家已发/指定角色发送；卡片资料注明来源，工具回执由程序标注双方身份。见 [发送归属交接](./wechat-sender-ownership.md)。
+
+> 2026-11-08 请求调试与原文检索：每次聊天模型发送前可输出实际 messages；RP/微信按需关键词搜索并读取压缩前原文。增强记忆排除提要覆盖旧轮次，两个渠道先等待本作用域提要加载。见 [调试与原文检索交接](./history-retrieval-and-debug.md)。
+
+> 2026-11-08 离线图片分享：RP 主动工具新增 `image`，微信图片新增 `describe` 模式；准确素材展示真实图片，复杂或缺图画面用描述卡片。消息历史、RP 回灌与提要保留画面及配文/像素边界，仍每轮一次主动交接。见 [离线图片与描述交接](./wechat-described-images.md)。
+
+> 2026-11-08 统一清空：RP/微信垃圾桶共用「清空本段」与「清空全部 RP + 微信」，同步重置正文、镜像、记忆、提要和待发送任务，增加事务写入与晚到请求防护。沿用原 UI。见 [清空功能交接](./conversation-clear.md)。
+
 > 2026-11-07 主动微信增加程序交接：`25` 同轮只接收一次纯文本角色消息，`18` 成功后结束自动工具续写，`15` 保留已完成回合的总结调度；四调用与下一轮回复场景通过。见 [微信玩家交接](./wechat-player-handoff.md)。
 
 > 2026-11-07 世界自主叙事：RP 允许分开后的 NPC 完整独立活动、有限叙述者视角与自然主动联系；玩家选择仍留给玩家。微信回灌区分玩家原输入与多场景旁白，三类压缩保留人物知情来源。见 [世界自主叙事交接](./rp-world-narrative.md)。
@@ -54,6 +64,7 @@
 | 2 | `assets/js/core-utils.js` | `RPHubUtils` / `RPHubCardUtils` / `RPHubConfig` | 通用工具、角色卡处理、基础配置（API 提供商、主动工具常量、UI 选项） |
 | 3 | `assets/js/api-utils.js` | `RPHubApiUtils` / `RPHubApiClient` | API 端点拼接、OpenAI 兼容请求（流式） |
 | 3.4 | `assets/js/wechat-media.js` | `RPHubWeChatMedia` | 图片意图、独立 Blob 资源、缩略图、本地素材与程序绘图 |
+| 3.41 | `assets/js/history-retrieval.js` | `RPHubHistoryRetrieval` | 压缩后历史原文的本地关键词检索、字符范围与来源规则 |
 | 3.45 | `assets/js/wechat-document-search.js` | `RPHubWeChatSearch` | grep 式查询解析与跨块扫描打分、摘录生成（纯函数，无存储依赖） |
 | 3.46 | `assets/js/wechat-documents.js` | `RPHubWeChatDocuments` | 文本附件分块、编码检测、资源库读写、按字符定位；`search` 转调检索引擎 |
 | 3.5 | `assets/js/wechat-protocol.js` | `RPHubWeChatProtocol` | 微信分段/空回/图片意图协议与容错解析（见 §7） |

@@ -271,6 +271,8 @@ const app = createApp({
         __sections.mapLibrary(__s);
         __sections.recap(__s);
         __sections.fullBackup(__s);
+        __sections.conversationClear(__s);
+        __sections.historyRetrieval(__s);
 
         return {
             fullBackupBusy: __s.fullBackupBusy, fullBackupProgress: __s.fullBackupProgress, fullBackupError: __s.fullBackupError,
@@ -733,6 +735,11 @@ const app = createApp({
             openWechat: __s.openWechat, closeWechat: __s.closeWechat,
             openWechatSettings: __s.openWechatSettings, saveWechatSettings: __s.saveWechatSettings,
             clearWechatTimeline: __s.clearWechatTimeline,
+            showConversationClear: __s.showConversationClear,
+            conversationClearChannel: __s.conversationClearChannel,
+            conversationClearPreview: __s.conversationClearPreview,
+            isConversationClearing: __s.isConversationClearing,
+            clearConversationContent: __s.clearConversationContent,
             reconcileRpTimeline: __s.reconcileRpTimeline,
             handleWechatImageSelection: __s.handleWechatImageSelection,
             removeWechatPendingImage: __s.removeWechatPendingImage,

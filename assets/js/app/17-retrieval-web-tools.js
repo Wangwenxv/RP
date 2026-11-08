@@ -301,12 +301,16 @@
                     getRandomToolRangeSize(args.min, args.max);
                     Object.assign(parsed, { min: args.min, max: args.max, query: `${args.min} ～ ${args.max}`, reason: (args.reason || '').trim() });
                 } else if (tool.type === ACTIVE_TOOL_WECHAT_TYPE) {
-                    if (Object.keys(args).some(key => !['content', 'reason'].includes(key))
-                        || typeof args.content !== 'string' || !args.content.trim()) {
-                        throw new Error('微信工具仅接受非空 content 字符串和可选的 reason');
+                    if (Object.keys(args).some(key => !['content', 'image', 'sendAt', 'reason'].includes(key))
+                        || (args.sendAt !== undefined && !window.RPHubWeChatTime?.valid(window.RPHubWeChatTime.parse(args.sendAt)))) {
+                        throw new Error('微信工具仅接受 content 或 image，以及可选的 sendAt、reason；不能指定发送者或消息列表');
                     }
-                    const content = args.content.trim();
-                    Object.assign(parsed, { content, query: content, reason: (args.reason || '').trim() });
+                    const image = args.image === undefined ? null : __s.normalizeActiveWechatImage(args.image);
+                    if (image ? args.content !== undefined && args.content !== '' : typeof args.content !== 'string' || !args.content.trim()) {
+                        throw new Error('微信工具的非空 content 与 image 必须二选一；一轮只发一个气泡');
+                    }
+                    const content = image ? '' : args.content.trim();
+                    Object.assign(parsed, { content, image, sendAt: args.sendAt, query: image ? `[图片] ${image.description || image.assetId || image.text || image.subject}` : content, reason: (args.reason || '').trim() });
                 } else {
                     if (Object.keys(args).some(key => !['query', 'reason'].includes(key))
                         || typeof args.query !== 'string' || !args.query.trim()) {

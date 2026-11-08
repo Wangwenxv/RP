@@ -379,6 +379,7 @@
         };
         __s.createStoryBranch = createStoryBranch;
         const switchStoryBranch = async (branchId, options = {}) => {
+            if (__s.isConversationClearing?.value) return false;
             const { closeModal = true, notify = true } = options;
             const char = __s.currentCharacter.value;
             const target = __s.storyBranches.value.find(branch => branch.id === branchId);
@@ -457,6 +458,7 @@
         };
         __s.loadCharacterMemories = loadCharacterMemories;
         const selectCharacter = async (index, isNewImport = false, { silent = false } = {}) => {
+            if (__s.isConversationClearing?.value) return false;
             const char = __s.characters.value[index];
             if (!char) {
                 __s.showToast('角色不存在，无法读取聊天记录', 'error');

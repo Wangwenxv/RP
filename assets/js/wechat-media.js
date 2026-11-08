@@ -3,7 +3,7 @@
     const MAX_FILE_BYTES = 12 * 1024 * 1024;
     const MAX_PIXELS = 24 * 1024 * 1024;
     const INDEX_KEY = 'wechat_media_index';
-    const MODES = ['album', 'draw', 'search', 'generate'];
+    const MODES = ['album', 'draw', 'search', 'generate', 'describe'];
     const USAGES = ['scene_photo', 'album_photo', 'reference', 'drawing'];
     const shortText = (value, max = 120) => typeof value === 'string'
         ? value.replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, '').replace(/\s+/g, ' ').trim().slice(0, max) : '';
@@ -16,10 +16,16 @@
 
     function normalizeIntent(value) {
         if (!value || typeof value !== 'object' || Array.isArray(value) || !MODES.includes(value.mode)) throw new Error('图片来源无效');
-        const usage = value.usage === undefined ? (value.mode === 'draw' ? 'drawing' : 'reference') : value.usage;
+        const usage = value.usage === undefined ? (value.mode === 'draw' ? 'drawing' : value.mode === 'describe' ? 'scene_photo' : 'reference') : value.usage;
         if (!USAGES.includes(usage)) throw new Error('图片用途无效');
         const result = { mode: value.mode, usage };
-        if (value.mode === 'album') {
+        if (value.description !== undefined) {
+            if (typeof value.description !== 'string' || value.description.trim().length > 240) throw new Error('图片画面描述须为 240 字以内的文字');
+            result.description = shortText(value.description, 240);
+        }
+        if (value.mode === 'describe') {
+            if (!result.description) throw new Error('描述型图片需要非空画面描述');
+        } else if (value.mode === 'album') {
             result.assetId = shortText(value.assetId, 100);
             if (!/^[\w-]+$/.test(result.assetId)) throw new Error('相册图片 ID 无效');
         } else if (value.mode === 'draw') {
@@ -40,7 +46,8 @@
     }
 
     function imageRecordText(item) {
-        const caption = shortText(item?.media?.caption || item?.caption);
+        const caption = shortText(item?.media?.caption || item?.caption, item?.media?.descriptionOnly ? 240 : 120);
+        if (item?.media?.descriptionOnly) return `[图片${item?.id ? ` #${item.id}` : ''}｜画面描述：${caption}｜叙述画面，无实际像素；不是发送者的文字配文]`;
         return `[图片${item?.id ? ` #${item.id}` : ''}｜${caption || '画面尚未识别，可用查看图片工具核对'}]`;
     }
 

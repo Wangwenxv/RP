@@ -25,6 +25,10 @@
         const replaceUserNamePlaceholder = (value) => String(value ?? '')
             .replace(/\{\{\s*user\s*\}\}/gi, () => String(user.name || '').trim());
         __s.replaceUserNamePlaceholder = replaceUserNamePlaceholder;
+        // 提示词中同时解析双方身份；按本轮角色读取，不缓存上一个角色的名字。
+        const replacePromptNamePlaceholders = (value) => replaceUserNamePlaceholder(value)
+            .replace(/\{\{\s*char\s*\}\}/gi, (placeholder) => String(__s.currentCharacter?.value?.name || '').trim() || placeholder);
+        __s.replacePromptNamePlaceholders = replacePromptNamePlaceholders;
         const buildUserInfoPrompt = () => BUILTIN_PROMPTS.buildUserInfoPrompt(user);
         __s.buildUserInfoPrompt = buildUserInfoPrompt;
         const getCurrentCharacterPrompt = () => BUILTIN_PROMPTS.buildCharacterPrompt(__s.currentCharacter.value);
@@ -64,6 +68,8 @@
             temperature: 1.0,
             reasoningEffort: '',
             stream: true,
+            debugModelRequests: true,
+            historyRetrievalEnabled: true,
             activeToolAggressiveness: 'adaptive',
 
             useCharacterBackground: true,

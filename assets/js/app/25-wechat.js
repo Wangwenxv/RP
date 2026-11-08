@@ -396,19 +396,23 @@
 
         // ---- 持久化（角色作用域 / 剧情分支）----
         const saveWechatTimelineNow = async (scopeId = wechatScopeId(), timeline = wechatTimeline.value) => {
+            if (__s.isConversationClearing?.value) return false;
+            const revision = __s.conversationRevision;
             if (!scopeId) return false;
             if (!getMainDb()) await initDB();
+            if (revision !== __s.conversationRevision) return false;
             await setScopedStoredValue(WECHAT_TIMELINE_KEY, scopeId, cloneForStorage(timeline), { clone: false });
             return true;
         };
         __s.saveWechatTimelineNow = saveWechatTimelineNow;
 
-        const loadWechatTimeline = async (scopeId = wechatScopeId()) => {
+        const loadWechatTimeline = async (scopeId = wechatScopeId(), strict = false) => {
             if (!scopeId) return [];
             try {
                 const saved = await getScopedStoredValue(WECHAT_TIMELINE_KEY, scopeId);
                 return Array.isArray(saved) ? saved.filter(item => item && typeof item === 'object') : [];
             } catch (error) {
+                if (strict) throw error;
                 console.error('读取微信时间线失败:', error);
                 return [];
             }
@@ -417,6 +421,7 @@
 
         let wechatSaveTimer = null;
         const scheduleWechatSave = () => {
+            if (__s.isConversationClearing?.value) return;
             clearTimeout(wechatSaveTimer);
             const scopeId = wechatScopeId();
             const timeline = wechatTimeline.value;
@@ -434,6 +439,7 @@
         };
 
         // ---- 表情包库持久化（全局，不随角色/分支）----
+        __s.cancelPendingWechatSave = () => { clearTimeout(wechatSaveTimer); wechatSaveTimer = null; };
         const loadWechatStickers = async () => {
             try {
                 const saved = await getStoredValue(WECHAT_STICKERS_KEY);
@@ -491,24 +497,36 @@
         __s.resetRpRecordCursor = resetRpRecordCursor;
 
         /** 确保内存里的时间线对应当前角色/分支；切换后首次调用会从 DB 重新载入。 */
-        const ensureWechatTimelineLoaded = async (force = false) => {
+        const ensureWechatTimelineLoaded = async (force = false, strict = false) => {
             const scope = wechatScopeId();
             if (!force && loadedWechatScopeId === scope) return;
-            wechatTimeline.value = await loadWechatTimeline(scope);
+            const revision = __s.conversationRevision;
+            const timeline = await loadWechatTimeline(scope, strict);
+            if (scope !== wechatScopeId() || revision !== __s.conversationRevision) return;
+            wechatTimeline.value = timeline;
             loadedWechatScopeId = scope;
             resetRpRecordCursor();
         };
         __s.ensureWechatTimelineLoaded = ensureWechatTimelineLoaded;
+        __s.replaceWechatTimeline = (timeline, scope = wechatScopeId()) => {
+            __s.cancelPendingWechatSave();
+            wechatTimeline.value = timeline;
+            loadedWechatScopeId = scope;
+            resetRpRecordCursor();
+        };
 
         /**
          * 把 RP 侧新产生的消息镜像进统一时间线（channel='rp'）。
          * 在 RP 生成结束时调用；只追加 rpIndex >= 上次记录位的新消息，保证时间顺序。
          * 历史回退/分支切换导致游标越界时自动重建，避免漏记。
          */
-        const recordRpMessages = async () => {
+        const recordRpMessages = async (force = false) => {
             const char = __s.currentCharacter.value;
-            if (!char?.wechatEnabled) return;
+            if (!char || (!force && !char.wechatEnabled)) return;
+            const scope = wechatScopeId();
+            const revision = __s.conversationRevision;
             await ensureWechatTimelineLoaded();
+            if (scope !== wechatScopeId() || revision !== __s.conversationRevision) return;
             const history = __s.chatHistory.value;
             if (recordedRpCount > history.length) resetRpRecordCursor();
             for (let index = recordedRpCount; index < history.length; index++) {
@@ -553,7 +571,12 @@
                 if (!message.id) message.id = generateUUID(); // 无 id 的就地补一个，免得对账时被当成已删
                 active.push({ message, index });
             });
-            if (!active.length) return false;
+            if (!active.length) {
+                const retained = wechatTimeline.value.filter(item => item.channel !== 'rp');
+                const changed = retained.length !== wechatTimeline.value.length;
+                if (changed) wechatTimeline.value = retained;
+                return changed;
+            }
 
             const original = wechatTimeline.value;
             const wechatItems = original.filter((item) => item.channel === 'wechat');
@@ -876,7 +899,7 @@
                 storyClock: `【当前剧情钟】${wechatClockLabel.value}。本轮回复以此为基准；连续消息沿用同一时刻，只有明确选择发送时间才推进。`,
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
                 stickerCatalog: buildWechatStickerCatalog(),
-                mediaPrompt: [mediaPrompt, __s.buildWechatDocumentPrompt?.(), __s.buildGeographyPrompt?.()].filter(Boolean).join('\n'),
+                mediaPrompt: [mediaPrompt, __s.buildWechatDocumentPrompt?.(), __s.buildGeographyPrompt?.(), __s.buildHistoryRetrievalPrompt?.()].filter(Boolean).join('\n'),
                 voicePrompt: __s.buildWechatVoicePrompt?.(),
                 extraRules: `【跨场景连续性】微信是同一段 roleplay 剧情中人物的通信渠道。`
                     + `继承已建立的称呼、关系、默契，也继承最新已发生剧情中的处境、行动、身体状态、手机/通信条件和情绪。`
@@ -1060,7 +1083,8 @@
             // 排在被覆盖的老内容之前（老内容已剔除），夹在 system 与聊天记录之间。
             const recapMessages = __s.buildStoryRecapMessages ? __s.buildStoryRecapMessages() : [];
             if (recapMessages.length) {
-                head.unshift(...recapMessages);
+                // 微信链路直接提交这些背景，内部来源/合并标记不属于 API 消息字段。
+                head.unshift(...recapMessages.map(({ role, content }) => ({ role, content })));
             }
             return head;
         };
@@ -1184,6 +1208,7 @@
 
         // ---- 打开 / 关闭 ----
         const openWechat = async () => {
+            if (__s.isConversationClearing?.value) return;
             const char = __s.currentCharacter.value;
             if (!char) {
                 __s.showToast('请先选择一个角色', 'warning');
@@ -1228,6 +1253,7 @@
         __s.openWechat = openWechat;
 
         const closeWechat = async () => {
+            if (__s.isConversationClearing?.value) return;
             clearWechatActivity();
             if (isWechatGenerating.value) {
                 __s.wechatAbortController?.abort();
@@ -1492,24 +1518,7 @@
         __s.deleteWechatMessage = deleteWechatMessage;
 
         const clearWechatTimeline = () => {
-            __s.confirmAction('确定要清空与该角色的全部微信聊天记录吗？此操作无法撤销。', async () => {
-                const scopeId = wechatScopeId();
-                stopWechatGeneration();
-                __s.invalidateWechatMedia?.();
-                cancelWechatEdit();
-                closeWechatMessageMenu();
-                wechatTimeline.value = wechatTimeline.value.filter((item) => item.channel !== 'wechat');
-                resetWechatSendTime();
-                resetRpRecordCursor();
-                try {
-                    await saveWechatTimelineNow(scopeId);
-                    await setScopedStoredValue('wechat_media_tasks', scopeId, []);
-                    await __s.deleteWechatDocumentScope?.(scopeId);
-                } catch (error) {
-                    console.error('清空微信记录失败:', error);
-                }
-                __s.showToast('微信聊天记录已清空', 'success');
-            });
+            return __s.openConversationClear('wechat');
         };
         __s.clearWechatTimeline = clearWechatTimeline;
 
@@ -1894,7 +1903,14 @@
         const requestWechatReply = async (signal, report) => {
             const model = __s.settings.model;
             const epoch = __s.wechatMediaEpoch;
-            const assertRequest = () => { if (signal.aborted || epoch !== __s.wechatMediaEpoch) throw new DOMException('请求已取消', 'AbortError'); };
+            const scope = __s.getCurrentStoryBranchScopeId();
+            const characterId = __s.currentCharacter.value?.uuid;
+            const revision = __s.conversationRevision;
+            const assertRequest = () => { if (signal.aborted || epoch !== __s.wechatMediaEpoch
+                || scope !== __s.getCurrentStoryBranchScopeId() || characterId !== __s.currentCharacter.value?.uuid
+                || revision !== __s.conversationRevision) throw new DOMException('请求已取消', 'AbortError'); };
+            await __s.ensureStoryRecapLoaded?.();
+            assertRequest();
             const descriptionIds = new Set((__s.getWechatFreshImages?.() || []).filter(item => !item.media?.caption).map(item => item.id));
             const mediaContext = __s.resolveWechatMediaContext?.();
             const mediaPrompt = __s.buildWechatMediaPrompt ? await __s.buildWechatMediaPrompt(mediaContext) : '';
@@ -1906,7 +1922,9 @@
             if (__s.buildWechatVisualMessages) messages = await __s.buildWechatVisualMessages(messages, signal);
             assertRequest();
             const documentTools = __s.wechatDocumentTools?.() || [];
-            let tools = [...(__s.wechatImageTools?.(mediaContext) || []), ...documentTools, ...(__s.geographyTools?.() || [])];
+            const historyTools = __s.historyRetrievalTools?.() || [];
+            const historyBudget = __s.createHistoryRetrievalBudget?.();
+            let tools = [...(__s.wechatImageTools?.(mediaContext) || []), ...documentTools, ...(__s.geographyTools?.() || []), ...historyTools];
             let result;
             let viewCalls = 0;
             let loadCalls = 0;
@@ -1915,11 +1933,11 @@
             const documentBudget = { used: 0 };
             const geographyBudget = __s.createGeographyBudget?.();
             // Existing image-only turns retain their limit; attachments add four bounded tools.
-            const maxRounds = documentTools.length || __s.geographyTools?.().length ? 8 : 4;
+            const maxRounds = documentTools.length || __s.geographyTools?.().length || historyTools.length ? 8 : 4;
             for (let round = 0; round < maxRounds; round++) {
                 report({ title: round ? '正在整理回复' : '正在等待模型回复',
                     detail: round ? '工具结果已返回，模型正在处理' : '模型正在处理本轮消息', completed: null, total: null, modelRequest: true });
-                result = await __s.requestTrackedChatCompletion({ model, messages, ...(tools.length ? { tools, parallelTools: true } : {}), temperature: 0.95, stream: true, signal }, 'chat');
+                result = await __s.requestTrackedChatCompletion({ model, messages, requestLabel: round > 0 ? '微信工具续写' : '微信回复', ...(tools.length ? { tools, parallelTools: true } : {}), temperature: 0.95, stream: true, signal }, 'chat');
                 assertRequest();
                 if (['length', 'content_filter'].includes(result?.finishReason)) break;
                 if (!result?.toolCalls?.length) break;
@@ -1942,12 +1960,14 @@
                     let viewed;
                     const loading = call.function.name === 'tool_load_image_sending';
                     const reading = documentTools.some(tool => tool.function.name === call.function.name);
+                    const recalling = historyTools.some(tool => tool.function.name === call.function.name);
                     const title = { tool_list_documents: '正在查找历史文件', tool_search_document: '正在搜索文档',
                         tool_read_document: '正在读取原文', tool_document_reader: '正在准备长文阅读',
-                        tool_load_image_sending: '正在加载图片素材', tool_view_image: '正在查看历史图片', tool_geo: '正在查询地点与路程' }[call.function.name];
+                        tool_load_image_sending: '正在加载图片素材', tool_view_image: '正在查看历史图片', tool_geo: '正在查询地点与路程',
+                        tool_search_history: '正在检索历史原文', tool_read_history: '正在核对历史原文' }[call.function.name];
                     report({ title, detail: '工具处理中', completed: null, total: null, toolCall: true });
-                    try { viewed = call.function.name === 'tool_geo' ? geographyResults.get(call.id) : reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget, report) : loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal, report); }
-                    catch (error) { assertRequest(); report({ notice: call.function.name === 'tool_geo' ? '地理查询失败，正在等待模型处理' : reading ? '本次文件处理失败；已保存的阅读进度保留' : '本次图片工具失败，正在等待模型处理' }); viewed = { content: call.function.name === 'tool_geo' ? `地理查询失败：${error.message}。未取得路程/地点资料，不得编造，应澄清。` : reading
+                    try { viewed = recalling ? { content: JSON.stringify(await __s.executeHistoryRetrievalTool(call, signal, historyBudget)) } : call.function.name === 'tool_geo' ? geographyResults.get(call.id) : reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget, report) : loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal, report); }
+                    catch (error) { if (error.name === 'AbortError') throw error; assertRequest(); report({ notice: recalling ? '本次原文核实失败，正在等待模型处理' : call.function.name === 'tool_geo' ? '地理查询失败，正在等待模型处理' : reading ? '本次文件处理失败；已保存的阅读进度保留' : '本次图片工具失败，正在等待模型处理' }); viewed = { content: recalling ? `原文核实失败：${error.message}。本次没有取得依据，保持不确定，不虚构旧事细节。` : call.function.name === 'tool_geo' ? `地理查询失败：${error.message}。未取得路程/地点资料，不得编造，应澄清。` : reading
                         ? `文件阅读失败：${error.message}。没有取得此次资料，不得假装读过；已成功的阅读进度保留，可以重试。`
                         : loading
                         ? `发图能力加载失败：${error.message}。没有取得可用素材目录，不得编造资源 ID。可以只发文字或按原决策空回。`
@@ -2010,6 +2030,7 @@
          * 发文字/发图/发表情包共用：调用方先把触发的消息 push 进时间线，再调这里。
          */
         const runWechatGeneration = async () => {
+            if (__s.isConversationClearing?.value) return;
             if (isWechatGenerating.value) return;
             if (!__s.currentCharacter.value) {
                 __s.showToast('请先选择一个角色', 'warning');
@@ -2077,6 +2098,7 @@
         __s.runWechatGeneration = runWechatGeneration;
 
         const sendWechatMessage = async () => {
+            if (__s.isConversationClearing?.value) return;
             const text = String(wechatInput.value || '').trim();
             const image = wechatPendingImage.value;
             const pendingDocument = __s.wechatPendingDocument?.value;
@@ -2132,15 +2154,32 @@
         // 时序：模型在 RP 回合里调用 tool_wechat（工具执行阶段）→ 这里先把消息攒进队列，
         // 因为此时 RP 正文还没生成完，面板不能提前弹；整轮 RP 结束后由 15-generate 调用
         // flushActiveWechatMessages：复用 openWechat 对齐时间线并弹出面板，再按打字节奏发出。
-        const deliverActiveWechatMessage = (content) => {
+        __s.normalizeActiveWechatImage = raw => {
+            if (!window.RPHubWeChatMedia) throw new Error('微信图片模块尚未加载');
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations'].includes(key))) {
+                throw new Error('图片参数不能包含发送者、消息列表或未知字段');
+            }
+            const image = window.RPHubWeChatMedia.normalizeIntent(raw);
+            if (!['describe', 'album', 'draw'].includes(image.mode)) throw new Error('RP 主动图片仅支持描述、本地相册或绘图');
+            return image;
+        };
+        const deliverActiveWechatMessage = (content, rawImage = null, sendAt) => {
+            const image = rawImage ? __s.normalizeActiveWechatImage(rawImage) : null;
             const text = String(content || '').trim();
-            if (!text) throw new Error('微信消息内容为空');
+            if (image ? text : !text) throw new Error('微信文字与图片必须二选一，消息内容不能空');
             if (__s.pendingActiveWechatMessages.length) throw new Error('本轮已发起微信联系，等待玩家回应；不能继续自问自答或补发下一轮消息');
             // 主动联系不是被动微信的多气泡回复：不接受嵌套消息列表或发送者字段。
-            if (wxProtocol.extractJSON(text) !== null || /^\s*```/.test(text)) throw new Error('RP 主动微信工具目前只发送文字或表情：content 必须是角色的一条纯文本消息，不接受 JSON 消息列表、发送者或媒体意图');
+            if (wxProtocol.extractJSON(text) !== null || /^\s*```/.test(text)) throw new Error('content 必须是角色的一条纯文本消息，不接受 JSON 消息列表或发送者；图片请使用独立的 image 参数');
             if (text.length > wxProtocol.MAX_CONTENT_LEN) throw new Error(`主动微信消息不得超过 ${wxProtocol.MAX_CONTENT_LEN} 字符`);
-            __s.pendingActiveWechatMessages.push(text);
-            return { queued: true, delivered: false, awaitingPlayer: true, content: text };
+            if (sendAt !== undefined && !wxTime.valid(wxTime.parse(sendAt))) throw new Error('微信发送时间无效');
+            const message = image ? { type: 'image_request', media: image, ...(sendAt ? { sendAt } : {}) }
+                : sendAt ? { type: 'text', content: text, sendAt } : text;
+            __s.pendingActiveWechatMessages.push(message);
+            return { queued: true, delivered: false, awaitingPlayer: true,
+                sender: { role: 'assistant', characterId: __s.currentCharacter.value?.uuid, name: __s.currentCharacter.value?.name },
+                recipient: { role: 'user', name: __s.user.name },
+                content: text, ...(image ? { image } : {}) };
         };
         __s.deliverActiveWechatMessage = deliverActiveWechatMessage;
 
@@ -2151,11 +2190,12 @@
             // 一次主动联系只发送一个气泡，换行仍属于同一条；emoji 归一化为表情。
             const parsed = [];
             for (const raw of contents) {
+                if (raw && typeof raw === 'object') { parsed.push(...wxProtocol.normalizeMessages([raw])); continue; }
                 const text = String(raw || '').trim();
                 if (text) parsed.push(...wxProtocol.normalizeMessages([{ type: 'text', content: text }]));
             }
             const messages = wxProtocol.applyStickerPolicy(parsed, tier);
-            if (messages.some(message => ['image_request', 'voice_request'].includes(message.type))) throw new Error('RP 主动微信不支持图片或语音意图');
+            if (messages.length > 1 || messages.some(message => message.type === 'voice_request')) throw new Error('RP 主动微信每轮只发送一条文字或图片');
             if (!messages.length) return;
             const controller = new AbortController();
             __s.wechatAbortController = controller;
@@ -2164,9 +2204,12 @@
             const timeline = wechatTimeline.value;
             isWechatGenerating.value = true;
             try {
+                const timed = resolveWechatReplyTimes(messages);
+                const prepared = __s.prepareWechatReplyMedia ? await __s.prepareWechatReplyMedia(timed, signal) : timed;
+                if (signal.aborted || wechatScopeId() !== scopeId) return;
                 wechatTyping.value = true;
                 wechatStatusText.value = '对方正在输入…';
-                await playWechatReply(messages, signal, scopeId);
+                await playWechatReply(prepared, signal, scopeId);
             } finally {
                 if (__s.wechatAbortController === controller) {
                     __s.wechatAbortController = null;

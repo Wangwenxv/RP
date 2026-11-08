@@ -342,12 +342,112 @@ test('并行查看调用先回复全部工具，再附像素，保留有效工�
   const i = messages.findIndex(item => item.tool_calls);
   assert.deepEqual(messages.slice(i + 1, i + 5).map(item => item.role), ['tool', 'tool', 'user', 'user']);
 });
-test('RP 主动微信拒绝图片意图，保留文字队列', () => {
+test('RP 主动微信仍拒绝 content 内的嵌套图片JSON，保留文字队列', () => {
   const h = harness(); h.s.pendingActiveWechatMessages = [];
-  assert.throws(() => h.s.deliverActiveWechatMessage('{"messages":[{"type":"image_request","media":{"mode":"album","assetId":"builtin-salad"}}]}'), /目前只发送文字/);
+  assert.throws(() => h.s.deliverActiveWechatMessage('{"messages":[{"type":"image_request","media":{"mode":"album","assetId":"builtin-salad"}}]}'), /content 必须是.*纯文本/);
   assert.equal(h.s.pendingActiveWechatMessages.length, 0);
   h.s.deliverActiveWechatMessage('下班了吗');
   assert.equal(h.s.pendingActiveWechatMessages[0], '下班了吗');
+});
+
+const described = description => ({ type: 'image_request', media: { mode: 'describe', description } });
+test('描述型图片不要求 content 或额外图片API，保存为无像素图片而不是配文', async () => {
+  const h = harness(async () => ({ content: JSON.stringify({ messages: [described('北苑宿舍楼下的路灯，灯下没有人物。')] }) }));
+  await h.send('拍张照片给我看看');
+  const item = h.s.wechatTimeline.value.at(-1);
+  assert.equal(item.type, 'image'); assert.equal(item.content, '');
+  assert.equal(item.media.descriptionOnly, true); assert.equal(item.media.assetId, undefined);
+  assert.equal(item.media.captionSource, 'narrative'); assert.equal(h.reads, 0);
+  assert.equal(h.requests.length, 1); assert.equal(h.s.wechatMediaTasks.value.length, 0);
+  assert.equal(h.stored.get('wechat_timeline/branch-a').at(-1).media.caption, item.media.caption);
+  assert.match(h.original.imageRecordText(item), /画面描述.*北苑.*无实际像素.*不是发送者的文字配文/);
+});
+test('相册资源不存在时有描述可兜底，描述不替代成功读取的实际照片', async () => {
+  const h = harness(), signal = new AbortController().signal;
+  const fallback = await h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'album', assetId: 'missing', description: '黑夜中一盏宿舍路灯。' } }], signal);
+  assert.equal(fallback[0].media.descriptionOnly, true);
+  const real = await h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'album', assetId: 'builtin-salad', description: '猜测画面' } }], signal);
+  assert.equal(real[0].media.assetId, 'builtin-salad'); assert.equal(real[0].media.descriptionOnly, undefined);
+  assert.equal(real[0].media.caption, '一碗沙拉');
+});
+test('未配置生图时描述兜底不联网；没有提供描述仍报告资源失败', async () => {
+  const h = harness(), signal = new AbortController().signal;
+  const result = await h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'generate', prompt: 'campus street lamp', description: '北苑楼下的路灯。' } }], signal);
+  assert.equal(result[0].media.descriptionOnly, true); assert.equal(h.requests.length, 0);
+  await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'album', assetId: 'missing' } }], signal), /不在可用相册/);
+});
+test('描述型图片不暴露识图工具、不附像素；后续历史与RP回灌保留画面边界', async () => {
+  const h = harness();
+  h.s.replaceWechatTimeline([{ id: 'd1', channel: 'wechat', role: 'assistant', type: 'image', content: '', media: { descriptionOnly: true, caption: '北苑宿舍路灯', source: 'description', captionSource: 'narrative' } }]);
+  assert.deepEqual(plain(h.s.wechatImageTools()).map(tool => tool.function.name), ['tool_load_image_sending']);
+  await h.send('灯下有人吗？');
+  assert.equal(h.reads, 0);
+  const text = JSON.stringify(h.requests[0].messages);
+  assert.match(text, /北苑宿舍路灯/); assert.match(text, /未描述的细节仍未知/); assert.doesNotMatch(text, /image_url|REAL_PIXELS/);
+  const rp = h.s.appendWechatDigestToMessages([]);
+  assert.match(JSON.stringify(rp), /画面描述.*北苑.*不是发送者的文字配文/);
+  await assert.rejects(h.s.executeWechatImageTool({ function: { name: 'tool_view_image', arguments: '{"messageId":"d1","question":"灯下有人吗"}' } }, new AbortController().signal), /没有可供识图的像素/);
+});
+test('点击描述型图片展示全文而不读资源；导入的描述型用户图片不送识图', async () => {
+  const h = harness(), item = { id: 'd1', channel: 'wechat', role: 'user', type: 'image', media: { descriptionOnly: true, caption: '完整画面说明' } };
+  h.s.wechatTimeline.value = [item];
+  await h.s.viewWechatImage(item);
+  assert.equal(h.s.wechatImagePreview.value.descriptionOnly, true); assert.equal(h.s.wechatImagePreview.value.caption, '完整画面说明');
+  assert.equal(h.s.getWechatFreshImages().length, 0); assert.equal(h.reads, 0);
+});
+test('描述型图片批次刷新后继续发送无需读取不存在的资源，仍按任务ID去重', async () => {
+  const h = harness(), task = { id: 'restore-description', scopeId: 'branch-a', status: 'failed', delivered: 0,
+    messages: [described('北苑的路灯')], media: { descriptionOnly: true, caption: '北苑的路灯', captionSource: 'narrative', source: 'description' } };
+  h.s.wechatMediaTasks.value = [task]; await h.s.retryWechatMediaTask(task);
+  assert.equal(h.reads, 0); assert.equal(h.s.wechatTimeline.value.filter(item => item.id === 'wx-restore-description-0').length, 1);
+  assert.equal(h.s.wechatMediaTasks.value.length, 0);
+});
+test('刷新后丢失的实际资源使用原请求描述兜底，不重新生成图片', async () => {
+  const h = harness(), task = { id: 'lost-photo', scopeId: 'branch-a', status: 'failed', delivered: 0,
+    messages: [{ type: 'image_request', media: { mode: 'album', assetId: 'missing', description: '北苑楼下的路灯。' } }],
+    media: { assetId: 'missing', caption: '旧资源说明', source: 'album' } };
+  h.s.wechatMediaTasks.value = [task]; await h.s.retryWechatMediaTask(task);
+  const item = h.s.wechatTimeline.value.at(-1);
+  assert.equal(item.media.descriptionOnly, true); assert.equal(item.media.caption, '北苑楼下的路灯。');
+  assert.equal(item.media.assetId, undefined); assert.equal(h.reads, 1); assert.equal(h.requests.length, 0);
+  assert.equal(h.s.wechatMediaTasks.value.length, 0);
+});
+test('资源存储错误仍报错，不用描述掩盖磁盘问题', async () => {
+  const h = harness();
+  h.library.save = async () => { throw new DOMException('空间不足', 'QuotaExceededError'); };
+  await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'draw', template: 'note', text: '晚安', description: '晚安纸条' } }], new AbortController().signal), error => error.name === 'QuotaExceededError');
+  assert.equal(h.s.wechatTimeline.value.length, 0);
+});
+test('资源读取中止和切scope不会被描述兜底吞掉', async () => {
+  const h = harness(), controller = new AbortController();
+  h.library.read = async () => { controller.abort(); throw new DOMException('取消', 'AbortError'); };
+  await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'album', assetId: 'builtin-salad', description: '兜底画面' } }], controller.signal), error => error.name === 'AbortError');
+  assert.equal(h.s.wechatTimeline.value.length, 0);
+});
+test('描述参数守卫拒绝空描述、超长描述和未知主动图片字段', () => {
+  const h = harness();
+  for (const description of ['', ' '.repeat(5), '字'.repeat(241), 123]) assert.throws(() => h.original.normalizeIntent({ mode: 'describe', description }));
+  assert.throws(() => h.s.normalizeActiveWechatImage({ mode: 'describe', description: '路灯', sender: '玩家' }), /发送者/);
+  assert.throws(() => h.s.deliverActiveWechatMessage('配文', { mode: 'describe', description: '路灯' }), /二选一/);
+});
+test('RP主动照片通过独立image参数发送并交给玩家，仍只接受一次主动联系', async () => {
+  const h = harness();
+  const queued = h.s.deliverActiveWechatMessage('', { mode: 'describe', description: '北苑宿舍楼下的路灯，没有配文字。' });
+  assert.equal(queued.awaitingPlayer, true); assert.equal(queued.delivered, false);
+  assert.throws(() => h.s.deliverActiveWechatMessage('再补一句'), /等待玩家回应/);
+  await h.s.flushActiveWechatMessages();
+  const item = h.s.wechatTimeline.value.at(-1);
+  assert.equal(item.type, 'image'); assert.equal(item.role, 'assistant'); assert.equal(item.content, '');
+  assert.equal(item.media.descriptionOnly, true); assert.equal(h.reads, 0); assert.equal(h.requests.length, 0);
+});
+test('RP主动图片也能选实际相册，目录按需提供且不能经主动工具调用生图', async () => {
+  const h = harness();
+  const prompt = await h.s.buildActiveWechatImagePrompt('吃饭');
+  assert.match(prompt, /builtin-salad/); assert.match(prompt, /新发生的分享必须通过工具/); assert.match(prompt, /不补造过去未记录/);
+  assert.throws(() => h.s.normalizeActiveWechatImage({ mode: 'generate', prompt: 'x' }), /仅支持描述|未知字段/);
+  h.s.deliverActiveWechatMessage('', { mode: 'album', assetId: 'builtin-salad', description: '沙拉' });
+  await h.s.flushActiveWechatMessages();
+  assert.equal(h.s.wechatTimeline.value.at(-1).media.assetId, 'builtin-salad');
 });
 
 test('图片资源准备与任务重试保留模型发送时间，不按请求耗时重算', async () => {

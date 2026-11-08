@@ -15,13 +15,13 @@
     window.RPHubAppSections = window.RPHubAppSections || {};
     window.RPHubAppSections.generate = function (__s) {
         const generateResponse = async (startTime = null, options = {}) => {
+            if (__s.isConversationClearing?.value) return;
             const reuseGeneratingState = options.reuseGeneratingState === true;
             if (__s.isGenerating.value && !reuseGeneratingState) return;
             const activeToolDepth = Number(options.activeToolDepth) || 0;
             const continueAssistantMessageId = options.continueAssistantMessageId || null;
             const continuationToolCallId = options.continuationToolCallId || null;
             const requestModel = __s.settings.model;
-            const requestTools = activeToolDepth < ACTIVE_TOOL_MAX_AUTO_CONTINUE ? __s.getEnabledActiveTools() : [];
 
             if (!__s.currentCharacter.value) {
                 __s.showToast('请先选择一个角色', 'error');
@@ -34,6 +34,7 @@
             if (!continuationTargetMessage && activeToolDepth === 0) {
                 __s.resetActiveToolResultContext();
                 __s.resetGeographyBudget?.();
+                __s.resetHistoryRetrievalBudget?.();
                 // 主动工具攒下的微信消息只属于本轮 RP，开新一轮前清干净。
                 __s.pendingActiveWechatMessages.length = 0;
             }
@@ -47,7 +48,12 @@
             __s.activeToolContinuationMessageId.value = isToolContinuation ? continuationTargetMessage.id : null;
             __s.activeToolContinuationToolCallId.value = isToolContinuation ? continuationToolCallId : null;
             __s.activeToolContinuationHasResponse.value = false;
-            __s.abortController.value = new AbortController();
+            const generationController = new AbortController();
+            __s.abortController.value = generationController;
+            const requestSignal = generationController.signal;
+            const requestScope = __s.getCurrentStoryBranchScopeId();
+            const requestCharacterId = __s.currentCharacter.value.uuid;
+            const requestRevision = __s.conversationRevision;
             let generationStartTime = startTime || Date.now();
 
             // Start Timer
@@ -61,6 +67,28 @@
             };
             startTimer(); // Start timer immediately upon request initiation
 
+            // 切角色/分支的 watcher 异步读提要；组装覆盖范围和工具前必须等本作用域加载完成。
+            try {
+                await __s.ensureStoryRecapLoaded?.();
+                if (requestSignal.aborted || requestScope !== __s.getCurrentStoryBranchScopeId()
+                    || requestCharacterId !== __s.currentCharacter.value?.uuid || requestRevision !== __s.conversationRevision
+                    || __s.isConversationClearing?.value) throw __s.createAbortReason();
+            } catch (error) {
+                if (__s.abortController.value === generationController) {
+                    __s.isGenerating.value = false;
+                    __s.isReceiving.value = false;
+                    __s.isThinking.value = false;
+                    __s.activeToolContinuationMessageId.value = null;
+                    __s.activeToolContinuationToolCallId.value = null;
+                    __s.activeToolContinuationHasResponse.value = false;
+                    __s.abortController.value = null;
+                    if (__s.waitTimer) clearInterval(__s.waitTimer);
+                    __s.waitTimer = null;
+                }
+                __s.showToast(error.name === 'AbortError' ? '生成已中止' : (error.message || '前情提要读取失败'), error.name === 'AbortError' ? 'info' : 'error');
+                return;
+            }
+            const requestTools = activeToolDepth < ACTIVE_TOOL_MAX_AUTO_CONTINUE ? __s.getEnabledActiveTools() : [];
 
             // --- Advanced World Info Processing ---
 
@@ -129,7 +157,7 @@
             if (wiGroups.before_char.length > 0) {
                 characterPreludeParts.push(joinContent(wiGroups.before_char));
             }
-            let charDefinitionParts = [`[Character]`, charPrompt];
+            let charDefinitionParts = [`[Character]`, `【角色卡资料｜人物：${__s.currentCharacter.value.name}】以下设定、第一人称与台词示例属于卡片资料，不是玩家本轮输入，也不是新的微信发送记录。`, charPrompt];
             if (mesExample && mesExample.trim()) {
                 charDefinitionParts.push(mesExample);
             }
@@ -145,6 +173,9 @@
             const activeToolPrompt = __s.buildActiveToolSystemPrompt(requestTools);
             if (activeToolPrompt) systemPromptParts.push(activeToolPrompt);
             else if (activeToolDepth > 0) systemPromptParts.push('本轮工具调用已结束，请依据已有结果完成回复，不再调用工具；无法确认的信息明确说明。');
+            if (requestTools.some(__s.isWechatActiveTool) && __s.buildActiveWechatImagePrompt) {
+                systemPromptParts.push(await __s.buildActiveWechatImagePrompt(postprocessedChatHistory.slice(-3).map(message => message.content || '').join('\n')));
+            }
 
             const uiTemplateContextPrompt = __s.buildUiTemplateContextSystemPrompt();
             if (uiTemplateContextPrompt) systemPromptParts.push(uiTemplateContextPrompt);
@@ -355,8 +386,11 @@
 
                     return {
                         role: m.role === 'user' ? 'user' : 'assistant',
-                        name: m.name || (m.role === 'user' ? __s.user.name : __s.currentCharacter.value.name),
+                        // user role 也用于背景资料；历史摘要/混合原文不能冒用玩家的发言身份。
+                        name: m._contextOrigin === 'story_archive' ? undefined
+                            : (m.name || (m.role === 'user' ? __s.user.name : __s.currentCharacter.value.name)),
                         content: cleanContent,
+                        ...(m._contextOrigin ? { _contextOrigin: m._contextOrigin } : {}),
                         _sourceIndexes: sourceIndexes,
                         _contextFloor: m._contextFloor,
                         _preventContextMerge: m._preventContextMerge === true
@@ -403,7 +437,6 @@
             let wasCancelled = false;
             let toolResponse = null;
             const requestToolUis = new Map();
-            const requestSignal = __s.abortController.value.signal;
 
             if (continuingAssistantMessage && continuationToolCallId && Array.isArray(continuingAssistantMessage.toolCalls)) {
                 continuationToolCall = continuingAssistantMessage.toolCalls.find(call => call && call.id === continuationToolCallId) || null;
@@ -497,6 +530,7 @@
                 messages = BUILTIN_PROMPTS.appendPlayerAgencyPrompt(messages, {
                     userName: __s.user.name,
                     characterName: __s.currentCharacter.value.name,
+                    wechatToolNames: requestTools.filter(__s.isWechatActiveTool).map(tool => tool.callName),
                     includeTurnReminder: true
                 });
                 const contextViewerState = buildContextViewerState({
@@ -522,6 +556,7 @@
                 }));
                 const responseResult = await __s.requestTrackedChatCompletion({
                     model: requestModel,
+                    requestLabel: activeToolDepth > 0 ? 'RP 工具续写' : 'RP 主回复',
                     messages: apiMessages,
                     logResponse: true,
                     replyInTool: __s.isTruncationEnabled.value,

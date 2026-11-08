@@ -1,5 +1,15 @@
 # App 模块地图（assets/js/app/）
 
+> 2026-11-08 `26/15/data-services` 区分程序历史资料与玩家发言，`25` 剔除档案内部字段；`02/10` 解析提示词双方姓名。见 [实际 messages 审计交接](./request-context-audit.md)。
+
+> 2026-11-08 `built-in-content/14/15` 补齐发送者归属和卡片资料来源，`25` 回执具名 sender/recipient，压缩与检索保留玩家草稿方向。见 [发送归属交接](./wechat-sender-ownership.md)。
+
+> 2026-11-08 新增 `34-history-retrieval.js`（`historyRetrieval`），setup 在 `conversationClear` 后包装 RP/微信工具。`api-utils/05` 提供请求前 messages 日志，`15/16` 协调提要加载与增强记忆覆盖；见 [调试与原文检索交接](./history-retrieval-and-debug.md)。
+
+> 2026-11-08 `wechat-media.js` / `27` 新增描述型图片与缺图兜底，`14/17/18/25` 接入 RP 主动图片，`15` 提供本地目录说明；卡片沿用微信 UI，历史共用图片记录格式。见 [离线图片与描述交接](./wechat-described-images.md)。
+
+> 2026-11-08 新增 `33-conversation-clear.js`（`conversationClear`），setup 在 `fullBackup` 后调用。RP/微信清空入口、本段边界与 scoped 批量事务由它统一负责；详见 [清空功能交接](./conversation-clear.md)。
+
 > 2026-11-07 `25` 限制主动微信同轮一次、不展开 JSON 列表；`18` 成功联系后结束自动续写，`15` 将交接视为完成回合。工具参数与共享提示同步，见 [微信玩家交接](./wechat-player-handoff.md)。
 
 > 2026-11-07 `built-in-content.js` 新增 RP 世界叙事共享规则；`25` 区分 RP 玩家输入与旁白，微信协议防止跨场景认知泄漏，`26` 提要改为叙述背景。逐轮总结、二次压缩及提要同步保留人物知情来源。见 [世界自主叙事交接](./rp-world-narrative.md)。
@@ -55,9 +65,11 @@
 | 24 | `24-late-helpers.js` | ~195 | 流式正文截断 `processMainContent`、用户人设切换、记忆展示与统计滑块 |
 | 25 | `25-wechat.js` | ~1900 | **微信子系统**：统一时间线、进出微信、上下文、空回、工具续写、回复播放、单条消息编辑/删除与作用域防护 |
 | 26 | `26-recap.js` | — | RP/微信交错前情提要、覆盖边界、保留原文及短图片描述 |
-| 27 | `27-wechat-media.js` | ~350 | 按本轮触发图片说明、相册、图片取得与显示、新图视觉输入、加载/查看工具、图片任务和可选来源适配 |
+| 27 | `27-wechat-media.js` | — | 按本轮触发图片说明、相册、实际图片/描述卡片与失败兜底、新图视觉输入、加载/查看工具、图片任务和可选来源适配 |
 | 28 | `28-wechat-voice.js` | — | BreezeBlue 设置/目录、语音合成、单一播放器与作用域校验；批次复用 `27`，详见 [语音交接](./wechat-voice.md) |
 | 29 | `29-wechat-documents.js` | — | 文本附件、scope 校验、list/search/read 工具、隔离读者续读、预览下载与资源回收；新增附件拖入/输入框适配，详见 [文档交接](./wechat-documents.md)、[grep 检索交接](./wechat-document-search.md) 与 [界面交接](./wechat-layout-and-drop.md) |
+| 33 | `33-conversation-clear.js` | — | RP/微信本段或全部清空、派生数据事务与晚到请求隔离 |
+| 34 | `34-history-retrieval.js` | — | RP/微信原文搜索/读取、当前分支来源、临时预算与原生工具包装 |
 
 > 注：行数为约数（含镜像赋值与文件头注释）。23 号模块没有顶层声明（只有 `watch` / `onMounted` / `onBeforeUnmount` 三条副作用语句），这是正常的。
 > 微信的当前协议和维护入口见 [实现交接](./wechat-and-RP.md)。`wechat-media.js` 是独立资源服务，不属于 app 模块；图片二进制不进入历史文本。
@@ -74,6 +86,7 @@
 - **自动生图**：`07`
 - **UI 模板（面板/变量）**：运行时 `08`、更新执行 `13`、工具函数 `data-services.js`（`RPHubUiTemplateUtils`）
 - **API 请求/密钥/提供商**：`02`（选择与归一化）+ `api-utils.js`（请求实现）
+- **请求前 messages 调试 / 压缩后原文核实**：`api-utils/05`（日志）+ `history-retrieval.js/34`（搜索与执行）+ `15/18/25`（续写）；见 [调试与原文检索交接](./history-retrieval-and-debug.md)。
 - **微信子系统**：状态/时间线/生成 `25` + 协议 `wechat-protocol.js` + UI/样式 `index.html` 的 `.wx-root` / `wechat.css`；
   角色开关字段在 `20`-crud 归一化、编辑器开关在 `ui-components.js`；RP 侧衔接注入在 `15`（`appendWechatDigestToMessages`）。
 - **微信单条消息编辑/删除**：`25`（`startWechatEdit` / `saveWechatEdit` / `deleteWechatMessage`）+ `26`（删除后修正提要覆盖计数）

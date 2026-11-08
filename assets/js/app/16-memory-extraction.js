@@ -144,13 +144,13 @@
             };
         };
         __s.buildClassicSummaryJob = buildClassicSummaryJob;
-        const requestClassicMemoryCompletion = async (requestMessages, signal) => {
+        const requestClassicMemoryCompletion = async (requestMessages, signal, requestLabel = '逐轮记忆总结') => {
             const model = String(__s.memorySettings.classicModel || '').trim();
             if (!__s.settings.apiUrl || !__s.settings.apiKey) throw new Error('请先配置 API 地址和 Key');
             if (!model) throw new Error('请先选择总结模型');
 
             const result = await __s.requestTrackedChatCompletion({
-                model, temperature: 0.2, stream: false, messages: requestMessages, signal
+                model, temperature: 0.2, stream: false, messages: requestMessages, signal, requestLabel
             }, 'summary');
             const summary = parseCot(result.content).main
                 .replace(/^```(?:text|markdown)?\s*/i, '')
@@ -205,7 +205,7 @@
                         : '【玩家原输入缺失｜来源不清的玩家决定保持未确认】'
                 ].join('\n')).join('\n\n')
             }];
-            return requestClassicMemoryCompletion(requestMessages, signal);
+            return requestClassicMemoryCompletion(requestMessages, signal, '二次记忆压缩');
         };
         __s.requestClassicSecondarySummary = requestClassicSecondarySummary;
         const getSecondaryClassicSourceMemories = (memory) => prepareClassicMemoriesForRuntime(
@@ -357,6 +357,7 @@
         };
         __s.restoreSecondaryClassicMemoriesForTurnCount = restoreSecondaryClassicMemoriesForTurnCount;
         const retryClassicMemory = async (memory) => {
+            if (__s.isConversationClearing?.value) return;
             if (!memory?.id || __s.retryingClassicMemoryId.value) return;
             if (__s.isClassicBatchExtracting.value) {
                 __s.showToast('请先等待补录完成', 'warning');
@@ -585,7 +586,12 @@
             if (signal?.aborted) throw __s.createAbortReason();
             if (!__s.memorySettings.enabled || __s.memorySettings.mode !== __s.MEMORY_MODE_ENHANCED
                 || !canRequestMemoryEmbeddings()) return [];
-            const sources = getSummarySources(__s.classicMemories.value).filter(memory => hasCurrentSummaryEmbedding(memory));
+            // 提要已代表覆盖的旧轮次；不再通过向量通道把同段旧总结重新注入。
+            // 具体细节由按需原文检索核实；未覆盖的新轮次仍沿用增强召回。
+            const coveredTurns = String(__s.storyRecap?.value?.text || '').trim()
+                ? Math.max(0, Number(__s.storyRecap.value.coversThroughTurn) || 0) : 0;
+            const sources = getSummarySources(__s.classicMemories.value).filter(memory => hasCurrentSummaryEmbedding(memory)
+                && !(Number(memory.turn) > 0 && Number(memory.turn) <= coveredTurns));
             if (!sources.length) return [];
             const latestUser = [...__s.chatHistory.value].reverse().find(message => message.role === 'user');
             const query = String(latestUser?.content || '').trim();

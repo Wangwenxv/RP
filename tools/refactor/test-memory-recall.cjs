@@ -78,6 +78,19 @@ test('成功召回使用独立向量接口与15秒预算，低相似度不算报
   assert.equal((await h.s.selectEnhancedMemories()).length, 0);
   assert.equal(h.s.memoryRecallState.value.status, 'ready'); assert.equal(h.toasts.length, 0);
 });
+test('前情提要覆盖的旧总结不再增强召回；未覆盖轮次和删除提要后保持可召回', async () => {
+  const h = harness(); h.seed(3); const original = plain(h.s.classicMemories.value);
+  h.s.storyRecap = { value: { text: '前两轮的提要', coversThroughTurn: 2 } };
+  // 二次压缩保留的源总结同样按原轮次过滤，而不是只看外层分组。
+  h.s.classicMemories.value = [{ secondaryCompressed: true, sourceMemories: h.s.classicMemories.value.slice(0, 2) }, h.s.classicMemories.value[2]];
+  assert.deepEqual(plain(await h.s.selectEnhancedMemories()).map(memory => memory.turn), [3]);
+  h.s.storyRecap.value.coversThroughTurn = 3; const before = h.requests.length;
+  assert.equal((await h.s.selectEnhancedMemories()).length, 0); assert.equal(h.requests.length, before);
+  h.s.storyRecap.value = null;
+  assert.deepEqual(plain(await h.s.selectEnhancedMemories()).map(memory => memory.turn), [1, 2, 3]);
+  assert.deepEqual(plain(h.c.getSummarySources(h.s.classicMemories.value)), original);
+});
+
 test('向量故障降级、冷却、去重提示和手动恢复，错误不泄露Key', async () => {
   const h = harness(); h.seed();
   h.respond(async () => { throw new Error('不支持模型 fixture-secret'); });

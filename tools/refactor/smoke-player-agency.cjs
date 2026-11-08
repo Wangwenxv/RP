@@ -53,6 +53,15 @@ function assertAgency(request, player = '测试玩家') {
       if (body.model === 'rp-world-life') message.content = '同一时段，苏祈雪和沈鹿从B栋走出来。沈鹿说起课堂上的趣事，她听着笑了一下，两人慢慢聊着。';
       if (body.model === 'rp-world-invitation') message.content = '苏祈雪拿出一根转接线：“文学社的投影连不上，你有空帮我看看吗？”她留在门口等陈璃回答。';
       if (body.model === 'rp-world-refusal') message.content = '“那我问问师姐。”苏祈雪收起转接线，准备去找林晚。';
+      if (body.model === 'rp-sender-draft') message.content = '同一时段，苏祈雪继续整理书桌，没有收到新的消息。';
+      if (['rp-sender-reported', 'rp-sender-request'].includes(body.model)) {
+        const tool = body.tools.find(tool => tool.function.name.startsWith('tool_wechat'));
+        assert.ok(tool, '本轮实际提供本体角色发送工具');
+        message = { role: 'assistant', content: '苏祈雪拿起手机，准备给陈璃发自己的消息。', tool_calls: [{
+          id: 'sender-call', type: 'function', function: { name: tool.function.name,
+            arguments: JSON.stringify({ content: body.model === 'rp-sender-reported' ? '我在宿舍 你忙完再说' : '到宿舍了吗' }) }
+        }] };
+      }
       if (['rp-world-contact', 'rp-world-contact-multi', 'rp-world-contact-next'].includes(body.model)) {
         if (body.messages.some(item => item.role === 'tool')) throw new Error('主动联系成功后不应继续请求模型');
         else {
@@ -111,8 +120,8 @@ function assertAgency(request, player = '测试玩家') {
           sourceUserText: '我想去图书馆，但还没决定', sourceUserIds: ['u1'], sourceAssistantIds: ['a1'],
           classicMemory: true, enabled: true, embeddingModel: 'vector-fixture', embeddingApiUrl: s.settings.apiUrl,
           ...window.RPHubMemoryUtils.quantizeEmbeddingForStorage([1, 0]) }];
-        s.storyRecap.value = model === 'rp-recap' ? { text: '历史摘要：测试玩家考虑出门，尚未决定',
-          coversThroughTurn: 1, coversWechatCount: 0, keepRPTurns: 1, keepWechatCount: 0 } : null;
+        s.replaceStoryRecap(model === 'rp-recap' ? { text: '历史摘要：测试玩家考虑出门，尚未决定',
+          coversThroughTurn: 1, coversWechatCount: 0, keepRPTurns: 1, keepWechatCount: 0 } : null);
         await Vue.nextTick(); // 配置变更守卫先完成；模拟用户改完设置后再发消息。
         // 模拟用户正则抹去所有先前的本体边界：末尾追加的规则仍必须到达API。
         const process = s.processRegex;
@@ -136,10 +145,19 @@ function assertAgency(request, player = '测试玩家') {
         assert.ok(!matching[0].messages[0].content.includes('<thinking_protocol>'));
       }
       if (model === 'rp-classic') assert.ok(matching[0].messages.some(message => String(message.content).includes('旧摘要：')));
-      if (model === 'rp-enhanced') assert.ok(matching[0].messages.some(message => String(message.content).includes('<enhanced_memory_recall>')),
-        JSON.stringify(await page.evaluate(() => { const s = window.__AGENCY_SCOPE__; return { state: s.memoryRecallState.value,
-          settings: s.memorySettings, memories: s.classicMemories.value, valid: s.hasCurrentSummaryEmbedding(s.classicMemories.value[0]) }; })));
-      if (model === 'rp-recap') assert.ok(matching[0].messages.some(message => String(message.content).includes('【RP玩家原输入｜测试玩家】')));
+      if (model === 'rp-enhanced') {
+        assert.ok(matching[0].messages.some(message => String(message.content).includes('旧摘要：测试玩家想去图书馆，是否出门未确认')));
+        assert.ok(!matching[0].messages.some(message => String(message.content).includes('<enhanced_memory_recall>')), '已在上下文的同一总结不重复召回');
+        assert.equal(await page.evaluate(() => window.__AGENCY_SCOPE__.memoryRecallState.value.status), 'ready');
+      }
+      if (model === 'rp-recap') {
+        const archives = matching[0].messages.filter(message => /【前情提要｜|【最近 RP 原文｜/.test(message.content));
+        assert.equal(archives.length, 2);
+        assert.ok(archives.every(message => message.role === 'user' && !Object.hasOwn(message, 'name')
+          && !Object.hasOwn(message, '_contextOrigin') && message.content.includes('非玩家本轮发言')));
+        assert.ok(archives.some(message => message.content.includes('【RP玩家原输入｜测试玩家】')));
+        assert.equal(matching[0].messages.findLast(message => message.role === 'user').name, '测试玩家');
+      }
       if (model === 'rp-tools') {
         assert.equal(matching.length, 2); assert.ok(matching[1].messages.some(message => message.tool_call_id === 'agency-call'));
         assert.ok(matching[1].messages.some(message => message.tool_calls?.some(call => call.id === 'agency-call')));
@@ -174,8 +192,12 @@ function assertAgency(request, player = '测试玩家') {
       assert.ok(!prompt.includes('正文最少700字。'));
       assert.match(prompt, /本轮玩家是「陈璃」，你扮演「苏祈雪」/);
       assert.match(prompt, /玩家未明确发送或授权的微信\/对白不能补写/);
-      if (legacy) assert.match(prompt, /每一到两轮对话至少落一条/);
-      else { assert.ok(!prompt.includes('每一到两轮对话至少落一条')); assert.match(prompt, /【玩家控制边界｜适用于本卡全部条目】/); }
+      assert.match(prompt, /【角色卡资料｜人物：苏祈雪】/);
+      assert.doesNotMatch(prompt, /\{\{\s*(?:user|char)\s*\}\}/i, '真实请求的双方姓名占位符已解析');
+      assert.match(prompt, /苏祈雪 的反应/);
+      assert.match(prompt, /即使其他预设要求最低字数、完整一幕、主动推进或每几轮完成互动/);
+      assert.match(prompt, /玩家自己的草稿和发话归属|台词、草稿、引语和发送意图始终归原说话人/);
+      // 当前磁盘卡是用户的素材；本体边界应对现有卡和旧卡都生效，不要求测试先改写它。
       const last = await page.evaluate(() => { const message = window.__AGENCY_SCOPE__.chatHistory.value.at(-1); return { content: message.content, error: message.responseError }; });
       assert.equal(last.content, '卿抬起头：“你现在去吃饭吗？”'); assert.ok(!last.error);
       console.log(`PASS ${model}：真实角色卡与陈璃身份进入API，无700字下限，短回复一次完成`);
@@ -212,6 +234,38 @@ function assertAgency(request, player = '测试玩家') {
         }
       } else assert.equal(matching.length, 1);
       console.log(`PASS ${model}：独立NPC片段/请求/拒绝可正常结束，主动联系由角色工具发入微信`);
+    }
+    for (const [model, input, expected] of [
+      ['rp-sender-draft', '我想给苏祈雪发：到宿舍了吗，但还没有发送。', null],
+      ['rp-sender-reported', '我给苏祈雪发：到宿舍了吗。现在我等她自己的回复。', '我在宿舍 你忙完再说'],
+      ['rp-sender-request', '让苏祈雪给我发：到宿舍了吗。', '到宿舍了吗']
+    ]) {
+      const before = await page.evaluate(() => window.__AGENCY_SCOPE__.wechatTimeline.value.filter(item => item.channel === 'wechat').length);
+      await page.evaluate(async ({ model, input }) => {
+        const s = window.__AGENCY_SCOPE__; s.settings.model = model;
+        s.settings.activeToolsEnabled = true; s.currentCharacter.value.wechatEnabled = true;
+        s.activeTools.value.forEach(tool => { tool.enabled = tool.type === 'wechat_message'; });
+        s.replaceStoryRecap(null); s.memorySettings.enabled = false;
+        s.chatHistory.value.push({ id: model, role: 'user', name: '陈璃', content: input });
+        await Vue.nextTick(); await s.generateResponse();
+      }, { model, input });
+      const matching = requests.filter(request => request.model === model); assert.equal(matching.length, 1);
+      assertAgency(matching[0], '陈璃');
+      const system = matching[0].messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
+      assert.equal((system.match(/<wechat_sender_boundary>/g) || []).length, 1);
+      assert.match(system, /tool_wechat 的方向固定为「苏祈雪」→「陈璃」/);
+      assert.match(system, /玩家想说某句话不构成角色主动联系的动机/);
+      const sendTool = matching[0].tools.find(tool => tool.function.name === 'tool_wechat');
+      assert.match(sendTool.function.description, /只发送本体角色「苏祈雪」给玩家「陈璃」/);
+      assert.equal(matching[0].tool_choice === 'required', false);
+      assert.ok(matching[0].messages.findLast(message => message.role === 'user').content.includes(input));
+      assert.equal(await page.evaluate(id => window.__AGENCY_SCOPE__.chatHistory.value.find(message => message.id === id).content, model), input);
+      if (expected) {
+        await page.waitForFunction(({ content, before }) => window.__AGENCY_SCOPE__.wechatTimeline.value.filter(item => item.channel === 'wechat').length === before + 1
+          && window.__AGENCY_SCOPE__.wechatTimeline.value.at(-1).content === content, { content: expected, before });
+        assert.equal(await page.evaluate(() => window.__AGENCY_SCOPE__.wechatTimeline.value.at(-1).role), 'assistant');
+      } else assert.equal(await page.evaluate(() => window.__AGENCY_SCOPE__.wechatTimeline.value.filter(item => item.channel === 'wechat').length), before);
+      console.log(`PASS ${model}：真实请求有发送归属规则，草稿/玩家发送/角色发送三类交接正常`);
     }
     await page.evaluate(async () => {
       const s = window.__AGENCY_SCOPE__; s.settings.model = 'wx-base'; s.settings.preventTruncation = false;

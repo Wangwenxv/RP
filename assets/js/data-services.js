@@ -104,6 +104,22 @@
     const scopedStorageKey = (name, id) => `${storageKey(name)}_${id}`;
     const legacyScopedStorageKey = (name, id) => `${legacyStorageKey(name)}_${id}`;
 
+    // 聊天清理必须同事务更新正文、镜像和派生摘要，避免刷新后只清掉一部分。
+    const setScopedStoredValues = async (id, values) => {
+        assertStorageWritable();
+        if (!mainDb) await initDB();
+        assertStorageWritable();
+        const entries = Object.entries(values).map(([name, value]) => [scopedStorageKey(name, id), cloneForStorage(value)]);
+        await new Promise((resolve, reject) => {
+            const transaction = mainDb.transaction(['store'], 'readwrite');
+            const store = transaction.objectStore('store');
+            entries.forEach(([key, value]) => store.put(value, key));
+            transaction.oncomplete = resolve;
+            transaction.onabort = () => reject(transaction.error || new Error('聊天清理已回滚'));
+            transaction.onerror = () => reject(transaction.error || new Error('聊天清理失败'));
+        });
+    };
+
     const dbSetTo = (targetDb, key, value, options = {}) => new Promise((resolve, reject) => {
         if (!targetDb) return reject('DB not initialized');
         const transaction = targetDb.transaction(['store'], 'readwrite');
@@ -286,6 +302,7 @@
         setStorageWriteLock: value => { writesLocked = !!value; },
         scanStorageEntries,
         setScopedStoredValue: (name, id, value, options = {}) => dbSet(scopedStorageKey(name, id), value, options),
+        setScopedStoredValues,
         setStoredValue: (name, value, options = {}) => dbSet(storageKey(name), value, options),
         unwrapForStorage
     });
@@ -470,6 +487,9 @@
     const isRoleMemoryContextContent = content => String(content || '').trimStart().startsWith('[角色记忆');
 
     const appendEnhancedMemoryRecall = (messages, memories) => {
+        // A recalled summary already present as a context message should not count as new evidence.
+        const present = new Set(messages.filter(message => typeof message?.content === 'string').map(message => message.content.trim()));
+        memories = memories.filter(memory => !present.has(String(memory.summary || '').trim()));
         if (!memories.length) return messages;
         let index = messages.length - 1;
         while (index >= 0 && (messages[index].role !== 'user' || messages[index].tool_calls)) index--;
@@ -503,6 +523,7 @@
             content: String(message.content || '')
         };
         if (message.id) nextMessage.id = message.id;
+        if (typeof message._contextOrigin === 'string') nextMessage._contextOrigin = message._contextOrigin;
         if (Number.isFinite(message._contextFloor)) nextMessage._contextFloor = message._contextFloor;
         if (message._preventContextMerge === true) nextMessage._preventContextMerge = true;
         if (trackSources) nextMessage._sourceIndexes = getMessageSourceIndexes(message, index, true);
@@ -527,6 +548,7 @@
             const previous = merged[merged.length - 1];
             if (previous
                 && previous.role === nextMessage.role
+                && previous._contextOrigin === nextMessage._contextOrigin
                 && mergeRoleSet.has(nextMessage.role)
                 && previous._preventContextMerge !== true
                 && nextMessage._preventContextMerge !== true) {
