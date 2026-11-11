@@ -23,8 +23,10 @@
         if (!['reply', 'silent', 'wait', 'act'].includes(proposal.decision)
             || !Array.isArray(proposal.actions) || proposal.actions.length > 6) throw new Error('角色决策或动作格式错误');
         if (proposal.actorId !== undefined && proposal.actorId !== context.actorId) throw new Error('模型不能改变绑定的角色身份');
-        const ids = proposal.referencedEvidenceIds || [];
-        if (!Array.isArray(ids) || ids.length > 20 || ids.some(id => !context.evidenceIds.includes(id))) throw new Error('提案引用了未观察或不存在的来源');
+        const rawIds = proposal.referencedEvidenceIds || [];
+        if (!Array.isArray(rawIds) || rawIds.length > 20) throw new Error('来源引用应为最多20个ID的数组');
+        const ids = rawIds.map(id => context.evidenceIds.includes(id) ? id : context.evidenceAliases?.[String(id)] || id);
+        if (ids.some(id => !context.evidenceIds.includes(id))) throw new Error('提案引用了未观察或不存在的来源，请复制提供的evidenceId/entryId，或省略非必要引用并返回空数组');
         if (proposal.decision === 'silent' && proposal.actions.length) throw new Error('沉默决策不能附带已完成动作');
         let bubbles = 0;
         const actions = proposal.actions.map(action => {
