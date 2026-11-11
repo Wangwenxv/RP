@@ -13,11 +13,16 @@
     }
     function validateProposal(value, context, kind) {
         const original = parseJson(value);
+        if (original.actorId !== undefined && original.actorId !== context.actorId) throw new Error('模型不能改变绑定的角色身份');
         let proposal = original;
         if (Array.isArray(original.messages)) {
             if (original.messages.some(item => item.type && item.type !== 'text')) throw new Error('世界微信当前只支持文本提案');
+            const parsed = window.RPHubWeChatProtocol?.parseReplyResult(JSON.stringify(original));
+            const messages = parsed ? parsed.messages : original.messages;
+            if (original.messages.length && !messages.length) throw new Error('微信模型未返回有效的文字消息');
             proposal = { decision: original.messages.length ? 'reply' : 'silent',
-                actions: original.messages.map(item => ({ kind: 'reply', text: item.content })),
+                actions: messages.map(item => ({ kind: 'reply', text: item.content })),
+                silence: parsed?.silence,
                 referencedEvidenceIds: [], needsPlayerResponse: false };
         }
         if (!['reply', 'silent', 'wait', 'act'].includes(proposal.decision)
@@ -32,7 +37,7 @@
         const actions = proposal.actions.map(action => {
             if (!action || typeof action !== 'object' || !['reply', 'tell', 'speak', 'act', 'move', 'wait', 'remember'].includes(action.kind)) throw new Error('未知角色动作类型');
             if (action.actorId !== undefined && action.actorId !== context.actorId) throw new Error('动作不属于当前角色');
-            if (action.kind === 'reply' && ++bubbles > 3) throw new Error('一批微信最多三个气泡');
+            if (action.kind === 'reply' && ++bubbles > (window.RPHubWeChatProtocol?.MAX_MESSAGES || 6)) throw new Error('一批微信最多六个气泡');
             if (kind === 'wechat' && ['speak', 'act'].includes(action.kind)) throw new Error('微信回复不能替代线下场景动作');
             if (['reply', 'tell', 'speak', 'act', 'remember'].includes(action.kind)
                 && (typeof action.text !== 'string' || !action.text.trim() || action.text.length > 5000)) throw new Error('角色动作需要有效短文本');
@@ -44,7 +49,8 @@
             for (const key of ['text', 'targetActorId', 'channel', 'placeId', 'delayMinutes', 'mode']) if (action[key] !== undefined) clean[key] = action[key];
             return clean;
         });
-        return { decision: proposal.decision, actions, referencedEvidenceIds: [...ids], needsPlayerResponse: proposal.needsPlayerResponse === true };
+        return { decision: proposal.decision, actions, referencedEvidenceIds: [...ids], needsPlayerResponse: proposal.needsPlayerResponse === true,
+            ...(proposal.silence ? { silence: proposal.silence } : {}) };
     }
     function budgetCheck(budget) {
         if (budget.callsUsed >= budget.maxCalls) throw Object.assign(new Error('本回合模型调用预算已用尽，未决步骤已保留'), { name: 'WorldBudgetError' });

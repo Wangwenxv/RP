@@ -231,6 +231,9 @@
                 const visibleParticipants = isWechat && c ? participants(snapshot, c)
                     : step.depth > 0 ? [...new Set([step.actorId, ...(step.sceneParticipantActorIds || [])])]
                         : [...new Set([snapshot.definition.playerActorId, ...turn.witnessActorIds, step.actorId])];
+                if (proposal.decision === 'silent' && proposal.silence) events.push(eventDraft(turn, snapshot, 'belief.adopted', step.actorId, null,
+                    { type: 'silence', text: window.RPHubWeChatProtocol.describeSilence(proposal.silence), silence: proposal.silence,
+                        evidenceStatus: 'subjective_state' }, [step.actorId], cause));
                 for (const [index, action] of proposal.actions.entries()) {
                     if (action.delayMinutes > 0 || action.kind === 'wait') {
                         tasks.push({ pendingActionId: `${turn.turnId}:${step.actorId}:${index}`, actorId: step.actorId,
