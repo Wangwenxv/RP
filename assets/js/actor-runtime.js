@@ -41,6 +41,11 @@
             if (kind === 'wechat' && ['speak', 'act'].includes(action.kind)) throw new Error('微信回复不能替代线下场景动作');
             if (['reply', 'tell', 'speak', 'act', 'remember'].includes(action.kind)
                 && (typeof action.text !== 'string' || !action.text.trim() || action.text.length > 5000)) throw new Error('角色动作需要有效短文本');
+            if (action.kind === 'act' && /前往|走向|走到|来到|到达|往.{1,40}走|去.{1,20}(?:吃饭|打球)/.test(action.text)
+                && !/打算|计划|想要|准备(?:去|前往)|考虑|尚未/.test(action.text)) {
+                const targets = context.movementTargets?.(action.text) || [];
+                if (targets.length) throw new Error(`跨地图地点移动必须用move，不能写进act。候选目的地：${JSON.stringify(targets)}；程序验证路线后才确认出发。`);
+            }
             if (action.kind === 'tell' && !context.allowedTargetActorIds.includes(action.targetActorId)) throw new Error('角色无法联系尚未认识的目标');
             if (action.channel !== undefined && !['dm', 'in_person'].includes(action.channel)) throw new Error('未知告知渠道');
             if (action.delayMinutes !== undefined && (!Number.isInteger(action.delayMinutes) || action.delayMinutes < 0 || action.delayMinutes > 10080)) throw new Error('延后时间须为0到10080剧情分钟');

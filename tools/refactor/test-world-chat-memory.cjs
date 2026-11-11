@@ -1,4 +1,5 @@
 const test = require('node:test'), assert = require('node:assert/strict');
+const fs = require('node:fs'), path = require('node:path');
 const { harness } = require('./world-engine-harness.cjs');
 const reply = text => ({ decision: 'reply', actions: [{ kind: 'reply', text }], referencedEvidenceIds: [] });
 test('连发两条先落盘，不调用模型；请求回复不重复玩家气泡，沉默也结清待回应', async () => {
@@ -101,4 +102,14 @@ test('从RP界面推进时间只处理待办与真实未读，不把RP会话当�
     assert.equal(h.requests.length - start, 1);
     assert.ok(!h.snapshot.events.some(e => e.kind === 'message.sent' && e.conversationId === 'rp-main'));
     assert.ok(!h.snapshot.events.some(e => e.kind === 'player.input' && !e.payload.text));
+});
+test('普通动作中的实际跨地点步行须修复为move，不能绕过地图状态', async () => {
+    const map = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../worlds/jiangnan-south-campus.json'), 'utf8'));
+    const h = await harness({ definition: { map }, actorStates: { qing: { position: 'dorm-13' } } });
+    const C = h.context.window.RPHubActorContext, R = h.context.window.RPHubActorRuntime;
+    const context = C.compile({ snapshot: h.snapshot, actorId: 'qing', kind: 'rp' });
+    const proposal = { decision: 'act', actions: [{ kind: 'act', text: '卿把手机揣进外套口袋，拿了校园卡，起身往三饭走。' }], referencedEvidenceIds: [] };
+    assert.throws(() => R.validateProposal(proposal, context, 'rp'), /移动必须用move/);
+    proposal.actions[0].text = '卿准备去三饭，但暂时还留在寝室。';
+    assert.equal(R.validateProposal(proposal, context, 'rp').actions[0].kind, 'act');
 });
