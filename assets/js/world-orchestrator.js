@@ -133,7 +133,7 @@
                     || !participants(snapshot, conversation).includes(snapshot.definition.playerActorId))) throw new Error('玩家不能在这个会话发送微信');
                 const selected = kind === 'wechat' ? participants(snapshot, conversation) : (options.actorIds || []);
                 if (selected.some(id => !actor(snapshot, id))) throw new Error('本轮人物不存在');
-                const ordered = candidateOrder(snapshot, selected, text).slice(0, 3);
+                const ordered = kind === 'advance' ? [] : candidateOrder(snapshot, selected, text).slice(0, 3);
                 turn = { turnId: options.turnId || uuid(), sessionId, branchId: snapshot.branchId, kind, text, conversationId: options.conversationId || null,
                     witnessActorIds: kind === 'rp' ? [...new Set(options.witnessActorIds || selected)] : [],
                     status: 'running', queue: ordered.map(id => ({ actorId: id, conversationId: options.conversationId || null, depth: 0 })),
@@ -189,7 +189,8 @@
                 Runtime().abortCheck(signal);
                 const step = turn.queue[turn.stepIndex];
                 if (turn.completedActorIds.includes(step.actorId)) { turn.stepIndex++; continue; }
-                const isWechat = turn.kind === 'wechat' || (turn.kind === 'advance' && !!step.conversationId && !step.inPerson) || (step.depth > 0 && !step.inPerson);
+                const isWechat = turn.kind === 'wechat' || (turn.kind === 'advance' && !!step.conversationId
+                    && conversationOf(snapshot, step.conversationId)?.kind !== 'rp' && !step.inPerson) || (step.depth > 0 && !step.inPerson);
                 if (isWechat && !canReadPhone(snapshot, step.actorId)) {
                     turn.actorResults[step.actorId] = { status: 'unread', reason: 'known_phone_restriction' };
                     turn.completedActorIds.push(step.actorId); turn.stepIndex++;

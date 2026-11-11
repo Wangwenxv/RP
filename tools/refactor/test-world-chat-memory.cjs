@@ -89,3 +89,15 @@ test('人物选择等待时不调用叙述模型补造移动，确定地点传�
     const turn = Object.values(h.snapshot.turns).at(-1), packet = h.context.window.RPHubSceneNarrator.scenePacket(h.snapshot, turn);
     assert.equal(packet.actors[0].state.ownState.position, 'dorm-13');
 });
+test('从RP界面推进时间只处理待办与真实未读，不把RP会话当微信发送', async () => {
+    const h = await harness({ actorStates: { suqixue: { phoneAccess: 'blocked', phoneRestrictedUntil: '2026-05-12T18:00:00' } } });
+    await h.run({ kind: 'wechat', conversationId: 'group', text: '哈喽' }, () => ({ decision: 'silent', actions: [] }));
+    const start = h.requests.length;
+    await h.run({ kind: 'advance', conversationId: 'rp-main', actorIds: ['qing'], storyTime: '2026-05-12T18:00:00' }, r => {
+        assert.equal(r.actorId, 'suqixue');
+        assert.equal(JSON.parse(r.messages[1].content).conversationId, 'group');
+        return reply('刚下课');
+    });
+    assert.equal(h.requests.length - start, 1);
+    assert.ok(!h.snapshot.events.some(e => e.kind === 'message.sent' && e.conversationId === 'rp-main'));
+});
