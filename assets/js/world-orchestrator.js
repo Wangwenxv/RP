@@ -122,7 +122,8 @@
                 if (unfinished) throw new Error('有尚未完成的世界回合，请先重试或停止它，再发送新的输入');
                 const kind = options.kind || 'wechat';
                 if (!['wechat', 'rp', 'advance'].includes(kind)) throw new Error('未知世界回合类型');
-                const text = String(options.text || '').trim();
+                const pendingInputs = window.RPHubWorldChat?.pendingInputs(snapshot, options.conversationId) || [];
+                const text = options.replyOnly ? pendingInputs.map(e => e.payload.text).join('\n') : String(options.text || '').trim();
                 if (!text && kind !== 'advance') throw new Error('请先输入消息或剧情');
                 if (text.length > 30000) throw new Error('玩家本轮输入过长');
                 if (options.storyTime && (!Number.isFinite(timeNumber(options.storyTime))
@@ -137,15 +138,16 @@
                     witnessActorIds: kind === 'rp' ? [...new Set(options.witnessActorIds || selected)] : [],
                     status: 'running', queue: ordered.map(id => ({ actorId: id, conversationId: options.conversationId || null, depth: 0 })),
                     stepIndex: 0, completedActorIds: [], actorResults: {}, callsUsed: 0, totalCalls: 0,
-                    sceneEventIds: [], usage: [], retryCount: 0, inputMode: options.inputMode || 'player_action' };
+                    sceneEventIds: [], usage: [], retryCount: 0, inputMode: options.inputMode || 'player_action',
+                    inputMessageIds: pendingInputs.map(e => e.eventId) };
                 budget = { callsUsed: 0, maxCalls: 6 };
                 const inputPrincipals = kind === 'wechat' ? participants(snapshot, conversation)
                     : [snapshot.definition.playerActorId, ...turn.witnessActorIds];
                 const newTime = options.storyTime || snapshot.storyTime;
                 const atSnapshot = { ...snapshot, storyTime: newTime };
-                const events = [eventDraft(turn, atSnapshot, 'player.input', snapshot.definition.playerActorId,
+                const events = options.replyOnly ? [] : [eventDraft(turn, atSnapshot, 'player.input', snapshot.definition.playerActorId,
                     options.conversationId || null, { text, channel: kind, inputMode: turn.inputMode }, inputPrincipals)];
-                if (kind === 'wechat') events.push(eventDraft(turn, atSnapshot, 'message.sent', snapshot.definition.playerActorId,
+                if (kind === 'wechat' && !options.replyOnly) events.push(eventDraft(turn, atSnapshot, 'message.sent', snapshot.definition.playerActorId,
                     options.conversationId, { text, type: 'text' }, inputPrincipals));
                 await commit(`${turn.turnId}:input`, events, { ...saveTurn(), storyTime: newTime });
             }
@@ -332,9 +334,27 @@
                 turn.narrationPublished = true;
                 await commit(`${turn.turnId}:narration`, [event], saveTurn('complete'));
             } else await commit(`${turn.turnId}:complete`, [], saveTurn('complete'));
+            // Memory failure must never undo dialogue or leave a completed turn blocking the composer.
+            if (apiConfig?.memoryEnabled && window.RPHubWorldMemory) {
+                const ids = snapshot.definition.actors.filter(a => a.enabled !== false && a.actorId !== snapshot.definition.playerActorId)
+                    .map(a => a.actorId).sort((a, b) => (window.RPHubWorldMemory.records(snapshot, a).at(-1)?.seq || 0)
+                        - (window.RPHubWorldMemory.records(snapshot, b).at(-1)?.seq || 0));
+                for (const actorId of ids) {
+                    if (signal?.aborted || budget.callsUsed >= budget.maxCalls) break;
+                    try {
+                        const draft = await window.RPHubWorldMemory.summarize({ snapshot, actorId, apiConfig, signal, budget, modelRunner,
+                            onUsage: record => usage.push(record) });
+                        if (draft) await commit(`${turn.turnId}:memory:${actorId}`, [draft], saveTurn('complete'));
+                    } catch (e) {
+                        if (e.name === 'AbortError') break;
+                        turn.memoryWarning = e.message;
+                        await commit(`${turn.turnId}:memory-warning:${actorId}`, [], saveTurn('complete'), false);
+                    }
+                }
+            }
             return snapshot;
         } catch (error) {
-            if (snapshot && turn && budget) {
+            if (snapshot && turn && budget && turn.status !== 'complete') {
                 turn.error = { name: error.name || 'Error', message: error.message };
                 turn.status = error.name === 'AbortError' ? 'paused' : 'failed';
                 turn.callsUsed = budget.callsUsed;

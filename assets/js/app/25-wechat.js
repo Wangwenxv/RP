@@ -1291,16 +1291,10 @@
          * replyDecision='silent' 是用户消息上的元数据，不添加空白 assistant 消息。
          */
         const wechatUnansweredCount = computed(() => {
-            let count = 0;
-            for (const item of wechatTimeline.value) {
-                if (item.channel !== 'wechat') continue;
-                if (item.role === 'assistant') count = 0;
-                else if (item.role === 'user') {
-                    count++;
-                    if (item.replyDecision === 'silent') count = 0;
-                }
-            }
-            return count;
+            return window.RPHubWeChatProtocol.countUnanswered(wechatTimeline.value
+                .filter(item => item.channel === 'wechat')
+                .map(item => ({ isUser: item.role === 'user', isReply: item.role === 'assistant',
+                    settled: item.role === 'user' && item.replyDecision === 'silent' })));
         });
         __s.wechatUnansweredCount = wechatUnansweredCount;
 

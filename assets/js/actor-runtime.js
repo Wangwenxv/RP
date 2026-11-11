@@ -50,6 +50,7 @@
     }
     async function request({ purpose, actorId, messages, tools, apiConfig = {}, signal, budget, modelRunner, onUsage }) {
         abortCheck(signal); budgetCheck(budget);
+        apiConfig.onPhase?.(purpose);
         const started = Date.now();
         let result;
         try {
@@ -60,12 +61,16 @@
                 result = await window.RPHubApiClient.requestChatCompletion({
                     url: window.RPHubApiUtils.buildApiEndpoint(apiConfig.apiUrl, 'chat/completions'),
                     apiKey: apiConfig.apiKey, model: apiConfig.model, temperature: apiConfig.temperature ?? 0.7,
-                    maxTokens: apiConfig.maxTokens || (purpose === 'narrator' ? 1800 : 1000),
-                    timeoutMs: apiConfig.timeoutMs || 90000, messages, tools, signal, stream: false,
+                    ...(apiConfig.maxTokens ? { maxTokens: apiConfig.maxTokens } : {}),
+                    reasoningEffort: apiConfig.reasoningEffort,
+                    timeoutMs: apiConfig.timeoutMs || 120000, messages, tools, signal, stream: apiConfig.stream !== false,
                     logRequest: !!apiConfig.logRequest, requestType: `world-${purpose}/${actorId || 'scene'}`,
-                    onUsage: (usage, metadata) => onUsage?.({ purpose, actorId, usage, ...metadata }) });
+                    onUsage: (usage, metadata) => { onUsage?.({ purpose, actorId, usage, ...metadata }); apiConfig.onUsage?.(usage, metadata); } });
             }
             abortCheck(signal);
+            if (!modelRunner && !result?.content?.trim() && !result?.toolCalls?.length) {
+                throw new Error(result?.finishReason === 'length' ? '模型输出额度耗尽且未返回正文，请提高输出额度或降低推理深度' : '模型返回了空正文，请检查接口和模型配置');
+            }
             if (modelRunner) onUsage?.({ purpose, actorId, usage: result?.usage || null, durationMs: Date.now() - started });
             return result;
         } catch (error) { abortCheck(signal); throw error; }

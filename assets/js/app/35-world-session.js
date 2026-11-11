@@ -12,9 +12,10 @@
         const worldStatePlace = ref(''), worldStateUntil = ref(''), worldNextTime = ref('');
         const worldTranscript = ref(null), worldSourceCardId = ref(''), worldImportPreview = ref(null);
         const worldUpdateActor = ref(''), worldUpdateCard = ref(null), worldUpdateSource = ref(''), worldInputMode = ref('player_action');
+        const worldBurstMode = ref(false), worldMemoryEnabled = ref(true), worldContextBudget = ref(60000), worldProgress = ref('');
         let controller = null, viewEpoch = 0, opened = false;
         const draftActor = (actorId, name, userBinding = 'player') => ({ actorId, name, card: null, sourcePath: '', bindings: { user: userBinding, partner: userBinding }, enabled: true });
-        const worldDraft = reactive({ name: '江南大学', playerName: '', playerDescription: '', storyTime: '', mapId: 'jiangnan-south-campus', publicLore: '',
+        const worldDraft = reactive({ name: '江南大学', playerName: '', playerDescription: '', storyTime: '2025-03-11T18:30', mapId: 'jiangnan-south-campus', publicLore: '',
             actors: [draftActor('suqixue', '苏祈雪'), draftActor('linwan', '林晚', 'qing'), draftActor('qing', '卿')] });
         const worldActors = computed(() => worldSnapshot.value?.definition.actors || []);
         const worldNpcs = computed(() => worldActors.value.filter(a => a.actorId !== worldSnapshot.value.definition.playerActorId && a.enabled !== false));
@@ -28,6 +29,10 @@
         });
         const worldRetryable = computed(() => Object.values(worldSnapshot.value?.turns || {}).filter(t => !['completed', 'complete', 'cancelled'].includes(t.status)));
         const worldEvidence = computed(() => worldSnapshot.value ? P.observedEvents(worldSnapshot.value, worldEvidenceActor.value) : []);
+        const worldMemories = computed(() => worldSnapshot.value ? window.RPHubWorldMemory.records(worldSnapshot.value, worldEvidenceActor.value) : []);
+        const worldUnansweredCount = computed(() => worldSnapshot.value ? window.RPHubWeChatProtocol.countUnanswered(
+            window.RPHubWorldChat.pendingInputs(worldSnapshot.value, worldConversationId.value).map(() => ({ isUser: true }))) : 0);
+        const worldMemoryWarning = computed(() => Object.values(worldSnapshot.value?.turns || {}).at(-1)?.memoryWarning || '');
         const actorName = id => worldActors.value.find(a => a.actorId === id)?.name || id;
         const eventText = e => e.payload?.text || e.payload?.content || e.payload?.narration || '';
         const worldSpeaker = e => e.kind === 'narration.published' ? '叙述' : actorName(e.actorId);
@@ -56,7 +61,8 @@
             cancel(); worldError.value = '';
             const epoch = viewEpoch;
             try {
-                const snapshot = branchId ? await S.selectBranch(sessionId, branchId) : await S.load(sessionId);
+                let snapshot = branchId ? await S.selectBranch(sessionId, branchId) : await S.load(sessionId);
+                snapshot = await window.RPHubWorldChat.ensureOpening(snapshot);
                 if (epoch !== viewEpoch) return;
                 await accept(snapshot); await refreshBranches(); worldShowSetup.value = false;
                 worldActorSelection.value = worldActorSelection.value.filter(id => worldNpcs.value.some(a => a.actorId === id));
@@ -90,7 +96,8 @@
             try {
                 if (!worldDraft.playerName.trim() || !worldDraft.storyTime) throw new Error('请填写玩家姓名和开局剧情时间');
                 if (!worldDraft.actors.some(a => a.card && a.enabled)) throw new Error('至少需要一张已启用的适配角色卡');
-                const actors = [{ actorId: 'player', name: worldDraft.playerName.trim(), kind: 'player', card: { name: worldDraft.playerName.trim(), personality: worldDraft.playerDescription } }];
+                const actors = [{ actorId: 'player', name: worldDraft.playerName.trim(), kind: 'player', publicProfile: worldDraft.playerDescription,
+                    card: { name: worldDraft.playerName.trim(), personality: worldDraft.playerDescription } }];
                 for (const a of worldDraft.actors) {
                     if (a.card && a.enabled) {
                         const report = M.preflightCard(a.card, { actorId: a.actorId, bindings: a.bindings });
@@ -111,19 +118,31 @@
                     ...actors.filter(a => a.kind === 'npc' && a.enabled).map(a => ({ conversationId: 'dm-' + a.actorId, kind: 'dm', name: a.name, participantActorIds: ['player', a.actorId] }))];
                 snapshot = await S.commit({ sessionId: snapshot.sessionId, branchId: snapshot.branchId, expectedRevision: snapshot.revision,
                     idempotencyKey: 'setup-conversations', events: [], patch: { conversations } });
+                snapshot = await window.RPHubWorldChat.ensureOpening(snapshot);
                 await accept(snapshot); await refreshList(); await refreshBranches(); worldShowSetup.value = false;
                 worldActorSelection.value = actors.filter(a => a.kind === 'npc' && a.enabled).slice(0, 1).map(a => a.actorId);
             } catch (e) { fail(e); }
             finally { worldBusy.value = false; }
         };
-        const apiConfig = () => ({ apiUrl: __s.settings.apiUrl, apiKey: __s.settings.apiKey, model: __s.settings.model,
-            temperature: __s.settings.temperature, maxTokens: 2400, contextBudget: 18000,
+        const apiConfig = () => ({ apiUrl: __s.settings.apiUrl, apiKey: __s.settings.apiKey,
+            model: __s.settings.model || __s.settings.qualityModel || __s.settings.balancedModel || __s.settings.fastModel,
+            temperature: __s.settings.temperature, stream: __s.settings.stream, reasoningEffort: __s.settings.reasoningEffort,
+            contextBudget: Math.max(12000, Number(worldContextBudget.value) || 60000), memoryEnabled: worldMemoryEnabled.value,
+            summaryModel: __s.memorySettings?.classicModel,
+            onPhase: purpose => { worldProgress.value = purpose === 'memory' ? '正在整理人物记忆…' : purpose === 'narrator' ? '正在组织剧情…' : '人物正在回应…'; },
+            onUsage: (usage, metadata) => __s.recordApiUsage?.(usage, { type: 'world', model: __s.settings.model,
+                apiUrl: __s.settings.apiUrl, apiKey: __s.settings.apiKey, ...metadata }),
             logRequest: __s.settings.debugModelRequests === true });
+        const validateApi = () => {
+            const config = apiConfig();
+            if (!config.apiUrl || !config.apiKey || !config.model) throw new Error('请在设置中配置 API 地址、密钥，并选择聊天模型；只有识图模型不能生成世界对话');
+        };
         const execute = async args => {
             if (worldBusy.value || !worldSnapshot.value) return;
             controller = new AbortController(); const epoch = ++viewEpoch, captured = worldSnapshot.value;
             worldBusy.value = true; worldError.value = '';
             try {
+                validateApi();
                 const options = { sessionId: captured.sessionId, branchId: captured.branchId, apiConfig: apiConfig(), signal: controller.signal,
                     onUpdate: snapshot => { if (epoch === viewEpoch) { worldSnapshot.value = snapshot; if (args.text !== undefined) worldInput.value = ''; scroll(); } }, ...args };
                 const snapshot = args.turnId ? await window.RPHubWorldOrchestrator.retryTurn(options) : await window.RPHubWorldOrchestrator.runTurn(options);
@@ -134,9 +153,39 @@
         };
         const worldSend = async () => {
             const c = worldConversation.value, text = worldInput.value.trim();
-            if (!c || !text) return;
+            if (!c || !text || worldBusy.value) return;
+            if (worldRetryable.value.length) { fail(new Error('请先继续或结束未完成回合，再发送新的消息')); return; }
             if (c.kind === 'rp' && !worldActorSelection.value.length) { fail(new Error('请选出本轮在场或能听到玩家输入的人物')); return; }
+            if (c.kind !== 'rp' && worldBurstMode.value) {
+                worldBusy.value = true; worldError.value = '';
+                try {
+                    const s = worldSnapshot.value;
+                    await accept(await window.RPHubWorldChat.send({ sessionId: s.sessionId, branchId: s.branchId, conversationId: c.conversationId, text }));
+                    worldInput.value = '';
+                } catch (e) { fail(e); } finally { worldBusy.value = false; }
+                return;
+            }
             await execute({ kind: c.kind === 'rp' ? 'rp' : 'wechat', conversationId: c.conversationId, text, actorIds: [...worldActorSelection.value], inputMode: worldInputMode.value });
+        };
+        const worldRequestReply = () => worldUnansweredCount.value ? execute({ kind: 'wechat', conversationId: worldConversationId.value, replyOnly: true }) : undefined;
+        const worldSummarizeMemories = async () => {
+            if (worldBusy.value || !worldSnapshot.value) return;
+            controller = new AbortController(); const epoch = ++viewEpoch;
+            worldBusy.value = true; worldError.value = '';
+            try {
+                validateApi();
+                const budget = { callsUsed: 0, maxCalls: 6 };
+                for (const a of worldNpcs.value) {
+                    if (controller.signal.aborted || budget.callsUsed >= budget.maxCalls) break;
+                    const captured = worldSnapshot.value;
+                    const draft = await window.RPHubWorldMemory.summarize({ snapshot: captured, actorId: a.actorId,
+                        apiConfig: apiConfig(), signal: controller.signal, budget });
+                    if (epoch !== viewEpoch) return;
+                    if (draft) await accept(await S.commit({ sessionId: captured.sessionId, branchId: captured.branchId,
+                        expectedRevision: captured.revision, idempotencyKey: M.id('memory-summary'), events: [draft] }));
+                }
+            } catch (e) { if (epoch === viewEpoch) fail(e); }
+            finally { if (epoch === viewEpoch) { worldBusy.value = false; controller = null; } }
         };
         const worldRetry = turnId => execute({ turnId });
         const worldAdvance = () => execute({ kind: 'advance', storyTime: worldNextTime.value, actorIds: [...worldActorSelection.value], conversationId: worldConversationId.value });
@@ -151,6 +200,7 @@
             if (epoch === undefined || epoch === viewEpoch) await accept(updated);
         };
         const worldSelectConversation = async conversationId => {
+            if (worldBusy.value) return;
             cancel(); worldConversationId.value = conversationId; worldInput.value = ''; worldError.value = '';
             try { await recordPlayerRead(viewEpoch); } catch (e) { fail(e); }
         };
@@ -248,7 +298,9 @@
             worldStateUntil, worldNextTime, worldTranscript, worldSourceCardId, worldImportPreview, worldOpen, worldNew, worldAddActor, worldUseCard, worldReadCard,
             worldCreate, worldSend, worldRetry, worldEndTurn, worldAdvance, worldSelectConversation, worldCreateGroup, worldSaveActorState, worldFork, worldExport, worldImport,
             worldConfirmImport, worldStop: cancel, worldSpeaker, worldIsSelf, worldEventText: eventText, worldCardIssues, worldActorName: actorName };
-        Object.assign(worldExports, { worldUpdateActor, worldUpdateCard, worldUpdateSource, worldReadReplacement, worldApplyReplacement, worldInputMode });
+        Object.assign(worldExports, { worldUpdateActor, worldUpdateCard, worldUpdateSource, worldReadReplacement, worldApplyReplacement, worldInputMode,
+            worldBurstMode, worldUnansweredCount, worldRequestReply, worldMemoryEnabled, worldMemories, worldSummarizeMemories,
+            worldContextBudget, worldProgress, worldMemoryWarning });
         Object.assign(__s, worldExports); __s.worldExports = worldExports;
         __s.worldUi = reactive(worldExports);
     };

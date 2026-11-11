@@ -233,7 +233,7 @@ test('实际API传输复用共享客户端，发送具名独立上下文、工�
     const snapshot = await h.Engine.runTurn({ sessionId: h.snapshot.sessionId, branchId: h.snapshot.branchId,
         kind: 'wechat', conversationId: 'dm-player-qing', text: '你好', apiConfig: { apiUrl: 'https://fixture.invalid', apiKey: 'fixture', model: 'fixture-model', logRequest: false } });
     assert.equal(sent.url, 'https://fixture.invalid/v1/chat/completions');
-    assert.equal(sent.body.model, 'fixture-model'); assert.equal(sent.body.stream, false);
+    assert.equal(sent.body.model, 'fixture-model'); assert.equal(sent.body.stream, true);
     assert.match(sent.body.messages[0].content, /actorId=qing/);
     assert.ok(sent.body.tools.some(tool => tool.function.name === 'search_my_memory'));
     assert.equal(sent.body.tools.some(tool => tool.function.name === 'tool_grep'), false);

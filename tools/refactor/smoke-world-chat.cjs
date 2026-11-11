@@ -35,6 +35,11 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
         await page.route('https://world-fixture.local/**', async route => {
             const body = route.request().postDataJSON();
             if (!body?.messages) return route.fulfill({ contentType: 'application/json', body: '{"data":[]}' });
+            if (body.messages[0]?.content.includes('本次只整理')) {
+                const sources = JSON.parse(body.messages.at(-1).content);
+                return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ choices: [{ message: {
+                    role: 'assistant', content: sources.map(e => e.name + '：' + e.text).join('；') }, finish_reason: 'stop' }] }) });
+            }
             const packet = body.messages.map(m => { try { return JSON.parse(m.content); } catch (_) { return null; } }).find(p => p?.actorId || p?.acceptedEvents);
             const actorId = packet?.actorId, record = { stage, actorId: actorId || 'narrator', body, packet }; requests.push(record);
             if (stage === 'late') { lateResolve?.(); await new Promise(done => setTimeout(done, 400)); }
@@ -53,14 +58,16 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
         await page.goto(url, { waitUntil: 'load', timeout: 45000 }); await ready(page);
         await page.evaluate(async () => {
             const s = window.__WORLD_SCOPE__; s.showUserSetupModal.value = false; s.currentView.value = 'world';
+            s.worldMemoryEnabled.value = false;
             Object.assign(s.settings, { apiUrl: 'https://world-fixture.local/v1', apiKey: 'fixture-only', model: 'world-fixture', temperature: 0.7, stream: false });
             Object.assign(s.worldDraft, { playerName: '独立玩家', playerDescription: '学生，另一个独立人物', storyTime: '2026-05-12T17:00', mapId: '' });
             const words = { suqixue: 'SU_CARD：在校学生。', linwan: 'LIN_CARD：恋人是{{user}}。', qing: 'QING_CARD：独立 NPC。' };
-            for (const a of s.worldDraft.actors) a.card = { name: a.name, personality: words[a.actorId], worldInfo: [{ id: 'self-' + a.actorId, comment: '个人参考', content: a.actorId === 'suqixue' ? 'SU_PRIVATE_CARD_ONLY' : a.actorId + '自己的参考', constant: true }] };
+            for (const a of s.worldDraft.actors) a.card = { name: a.name, personality: words[a.actorId], first_mes: a.actorId === 'suqixue' ? '三月六点半，语心湖边的路灯亮起来。' : '', worldInfo: [{ id: 'self-' + a.actorId, comment: '个人参考', content: a.actorId === 'suqixue' ? 'SU_PRIVATE_CARD_ONLY' : a.actorId + '自己的参考', constant: true }] };
             await s.worldCreate();
             if (s.worldError.value) throw new Error(s.worldError.value);
         });
         check('世界入口真实渲染，有 RP 和三条独立私聊', await page.locator('.world-contact').count() === 4);
+        check('创建世界自动展示苏祈雪开场白', await page.locator('.world-message.narration').innerText().then(text => text.includes('语心湖')));
         const sid = await page.evaluate(() => window.__WORLD_SCOPE__.worldSnapshot.value.sessionId);
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; await s.worldSelectConversation('dm-suqixue'); s.worldInput.value = '今晚去和卿打球，下课不用等我'; await s.worldSend(); if (s.worldError.value) throw new Error(s.worldError.value); });
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; await s.worldSelectConversation('dm-qing'); s.worldInput.value = 'SECRET_QING_ONLY：今晚取消打球，准备祈雪生日惊喜，请保密'; await s.worldSend(); if (s.worldError.value) throw new Error(s.worldError.value); });
@@ -144,9 +151,25 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
         });
         await pending;
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; await s.worldSelectConversation('rp-main'); await window.__LATE_SEND__; });
-        check('切换会话取消在途生成，晚到的角色回复不提交', await page.evaluate(() => {
-            const b = window.__WORLD_SCOPE__.worldSnapshot.value, t = Object.values(b.turns).find(t => t.text === '切会话时的晚到探针');
-            return t && !b.events.some(e => e.turnId === t.turnId && e.kind === 'message.sent' && e.actorId === 'qing');
+        check('生成时切会话保持原会话，完成后的回复正常保存', await page.evaluate(() => {
+            const s = window.__WORLD_SCOPE__, b = s.worldSnapshot.value, t = Object.values(b.turns).find(t => t.text === '切会话时的晚到探针');
+            return s.worldConversationId.value === 'dm-qing' && t && b.events.some(e => e.turnId === t.turnId && e.kind === 'message.sent' && e.actorId === 'qing');
+        }));
+        stage = 'burst'; const burstStart = requests.length;
+        await page.getByRole('checkbox', { name: '连发模式' }).check();
+        for (const text of ['先发第一条', '再发第二条']) {
+            await page.getByRole('textbox', { name: '世界消息输入' }).fill(text);
+            await page.getByRole('button', { name: '发送', exact: true }).click();
+            await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldBusy.value);
+        }
+        check('连发只保存两个气泡，未请求模型且显示待回应2条', requests.length === burstStart && await page.getByText('待回应 2 条').isVisible());
+        await page.evaluate(() => { window.__WORLD_SCOPE__.worldMemoryEnabled.value = true; });
+        await page.getByRole('button', { name: '让对方回复', exact: true }).click();
+        await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldBusy.value);
+        check('让对方回复只生成一批，没有重复玩家气泡，并保存该人物总结', await page.evaluate(() => {
+            const s = window.__WORLD_SCOPE__, b = s.worldSnapshot.value;
+            return s.worldUnansweredCount.value === 0 && b.events.filter(e => e.kind === 'message.sent' && e.payload.text === '先发第一条').length === 1
+                && window.RPHubWorldMemory.records(b, 'qing').length > 0 && !s.worldError.value;
         }));
         const review = path.join(ROOT, '.tmp-review'); fs.mkdirSync(review, { recursive: true });
         await page.locator('.entry-transition').waitFor({ state: 'hidden' });

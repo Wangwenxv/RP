@@ -7,7 +7,7 @@
         'world.fact_corrected', 'narration.published', 'belief.adopted',
         'conversation.created', 'conversation.member_joined', 'conversation.member_left',
         'actor.state_changed', 'turn.updated', 'pending.created', 'pending.updated',
-        'pending.completed', 'pending.replaced', 'world.clock_advanced'
+        'pending.completed', 'pending.replaced', 'world.clock_advanced', 'memory.summarized'
     ]);
     const clone = value => JSON.parse(JSON.stringify(value));
     const fail = (message, code = 'WORLD_INVALID') => { const e = new Error(message); e.code = code; throw e; };
@@ -141,6 +141,13 @@
         if (event.kind === 'narration.published') {
             const covered = event.payload.coveredEventIds || event.payload.eventIds || [];
             if (!Array.isArray(covered) || covered.some(id => !known.has(id))) fail('叙述引用的场景事件无效');
+        }
+        if (event.kind === 'memory.summarized') {
+            if (typeof event.payload.summary !== 'string' || !event.payload.summary.trim()
+                || !Array.isArray(event.payload.sourceEventIds) || !event.payload.sourceEventIds.length
+                || event.access.principals.length !== 1 || event.access.principals[0] !== event.actorId) fail('人物记忆缺少正文、来源或独立权限');
+            const observed = window.RPHubWorldProjections.knownEventIds(snapshot, event.actorId);
+            if (event.payload.sourceEventIds.some(id => !observed.has(id))) fail('人物总结引用了未观察的来源');
         }
         if (event.kind === 'turn.updated' && (!event.payload.turn || typeof event.payload.turn !== 'object' || !(event.payload.turnId || event.turnId))) fail('世界回合事件无效');
         if (event.kind === 'pending.replaced') {

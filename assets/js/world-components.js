@@ -53,7 +53,7 @@
             <div v-else-if="hub.worldSnapshot" class="world-workspace">
                 <aside class="world-sidebar custom-scrollbar" aria-label="会话与世界状态">
                     <div class="world-sidebar-header"><h2>会话</h2><button @click="hub.worldGroupEditor = !hub.worldGroupEditor" aria-label="创建群聊">＋</button></div>
-                    <button v-for="c in hub.worldConversations" :key="c.conversationId" class="world-contact" :class="{ active: hub.worldConversationId === c.conversationId }" @click="hub.worldSelectConversation(c.conversationId)">
+                    <button v-for="c in hub.worldConversations" :key="c.conversationId" class="world-contact" :disabled="hub.worldBusy" :class="{ active: hub.worldConversationId === c.conversationId }" @click="hub.worldSelectConversation(c.conversationId)">
                         <span class="world-contact-avatar">{{ c.kind === 'rp' ? 'RP' : c.kind === 'group' ? '群' : c.name.charAt(0) }}</span><span>{{ c.name }}<small>{{ c.kind === 'rp' ? '共享世界剧情' : c.kind === 'group' ? c.participantActorIds.length + ' 人群聊' : '独立私聊' }}</small></span>
                     </button>
                     <section v-if="hub.worldGroupEditor" class="world-side-form">
@@ -79,6 +79,13 @@
                         <p class="world-hint">人物记忆、会话、未读与待办一起回到该时刻，原分支保留。</p>
                     </details>
                     <button class="world-evidence-toggle" @click="hub.worldShowEvidence = !hub.worldShowEvidence">查看人物知情来源</button>
+                    <details class="world-details"><summary>世界记忆与上下文</summary>
+                        <label class="world-check"><input type="checkbox" v-model="hub.worldMemoryEnabled" :disabled="hub.worldBusy">自动逐轮总结</label>
+                        <p class="world-hint">复用微信的回复规则与记忆总结；各人物只总结自己的已读内容，RP 和微信共同召回。</p>
+                        <label>上下文字符预算<input type="number" min="12000" max="1000000" step="1000" v-model.number="hub.worldContextBudget" :disabled="hub.worldBusy"></label>
+                        <button @click="hub.worldSummarizeMemories" :disabled="hub.worldBusy || hub.worldRetryable.length">补录人物记忆</button>
+                        <p v-if="hub.worldMemoryWarning" class="world-hint">回复已保存，记忆待补录：{{ hub.worldMemoryWarning }}</p>
+                    </details>
                     <details class="world-details"><summary>更新角色卡</summary>
                         <label>人物<select v-model="hub.worldUpdateActor"><option value="">选择人物</option><option v-for="a in hub.worldActors.filter(a => a.actorId !== hub.worldSnapshot.definition.playerActorId)" :key="a.actorId" :value="a.actorId">{{ a.name }}{{ a.enabled === false ? '（待启用）' : '' }}</option></select></label>
                         <label>适配后的卡<input type="file" accept=".json" @change="hub.worldReadReplacement"></label>
@@ -88,7 +95,7 @@
                     </details>
                 </aside>
                 <main class="world-chat">
-                    <header class="world-chat-header"><div><h2>{{ hub.worldConversation?.name || '世界剧情' }}</h2><p>{{ hub.worldConversation?.kind === 'rp' ? '允许 NPC 镜头；读者看到的秘密不会自动成为玩家角色的记忆。' : '每位人物按自己的卡与已读记忆回应。' }}</p></div><span v-if="hub.worldBusy" role="status">正在推进…</span></header>
+                    <header class="world-chat-header"><div><h2>{{ hub.worldConversation?.name || '世界剧情' }}</h2><p>{{ hub.worldConversation?.kind === 'rp' ? '允许 NPC 镜头；读者看到的秘密不会自动成为玩家角色的记忆。' : '每位人物按自己的卡与已读记忆回应。' }}</p></div><span v-if="hub.worldBusy" role="status">{{ hub.worldProgress || '正在保存…' }}</span></header>
                     <div :ref="el => hub.worldTranscript = el" class="world-transcript custom-scrollbar" aria-live="polite">
                         <p v-if="!hub.worldMessages.length" class="world-empty">{{ hub.worldConversation?.kind === 'rp' ? '写下你的行动或剧情前提，开始这个世界。' : '发一条消息，人物的故事从这里交汇。' }}</p>
                         <article v-for="e in hub.worldMessages" :key="e.eventId" class="world-message" :class="{ self: hub.worldIsSelf(e), narration: e.kind === 'narration.published' }">
@@ -100,6 +107,7 @@
                         <div v-for="t in hub.worldRetryable" :key="t.turnId"><span>{{ t.error?.message || t.error || '该回合尚未完成，已保存的回复会保留。' }}</span><button @click="hub.worldRetry(t.turnId)" :disabled="hub.worldBusy">继续未完成回合</button><button @click="hub.worldEndTurn(t.turnId)" :disabled="hub.worldBusy">结束此回合</button></div>
                     </section>
                     <form class="world-composer" @submit.prevent="hub.worldSend">
+                        <div v-if="hub.worldConversation?.kind !== 'rp'" class="world-witnesses"><label class="world-check"><input type="checkbox" v-model="hub.worldBurstMode" :disabled="hub.worldBusy">连发模式</label><span v-if="hub.worldUnansweredCount">待回应 {{ hub.worldUnansweredCount }} 条</span><button v-if="hub.worldUnansweredCount" type="button" @click="hub.worldRequestReply" :disabled="hub.worldBusy || hub.worldRetryable.length">让对方回复</button></div>
                         <div v-if="hub.worldConversation?.kind === 'rp'" class="world-witnesses"><select v-model="hub.worldInputMode" aria-label="剧情输入类型"><option value="player_action">玩家行动／对话</option><option value="author_premise">作者剧情前提</option></select><span>本轮在场／听到：</span><label v-for="a in hub.worldNpcs" :key="a.actorId" class="world-check"><input type="checkbox" :value="a.actorId" v-model="hub.worldActorSelection" :disabled="hub.worldBusy">{{ a.name }}</label></div>
                         <textarea v-model="hub.worldInput" :disabled="hub.worldBusy" rows="3" :placeholder="hub.worldConversation?.kind === 'rp' ? '你的行动、对话或作者剧情前提…' : '发送消息…'" aria-label="世界消息输入" @keydown.ctrl.enter.prevent="hub.worldSend"></textarea>
                         <div class="world-composer-footer"><small>Ctrl + Enter 发送 · 仅玩家操作推进剧情</small><button v-if="hub.worldBusy" type="button" @click="hub.worldStop">停止</button><button v-else type="submit" class="world-primary" :disabled="!hub.worldInput.trim()">{{ hub.worldConversation?.kind === 'rp' ? '推进剧情' : '发送' }}</button></div>
@@ -109,6 +117,7 @@
                     <header><h2>知情来源</h2><button @click="hub.worldShowEvidence = false" aria-label="关闭知情来源">×</button></header>
                     <select v-model="hub.worldEvidenceActor" aria-label="查看人物记忆"><option v-for="a in hub.worldActors" :key="a.actorId" :value="a.actorId">{{ a.name }}</option></select>
                     <p class="world-hint">这里只展示该人物已经观察到的事件。调试阅读不会增加玩家角色知识。</p>
+                    <article v-for="m in hub.worldMemories" :key="m.memoryEventId"><small>人物记忆 · {{ m.summaryModel }} · {{ m.sourceEventIds.length }} 条来源</small><p>{{ m.summary }}</p></article>
                     <article v-for="e in hub.worldEvidence" :key="e.eventId"><small>#{{ e.seq }} · {{ e.kind }} · {{ hub.worldActorName(e.actorId) }}</small><p>{{ hub.worldEventText(e) || JSON.stringify(e.payload) }}</p></article>
                     <p v-if="!hub.worldEvidence.length" class="world-hint">尚无已观察事件</p>
                 </aside>
