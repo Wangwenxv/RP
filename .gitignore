@@ -9,6 +9,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .refactor-tmp/
+.tmp-review/
 /card/suqixue/
 
 # 卡片预览生成物（内联了卡内容，不入库）

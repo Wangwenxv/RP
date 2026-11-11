@@ -5,6 +5,12 @@
         const M = window.RPHubWeChatMedia;
         const library = M.createLibrary(window.RPHubStorage);
         __s.deleteWechatMediaOwner = ownerId => library.purgeOwner(ownerId);
+        __s.reloadWechatMediaLibrary = async () => {
+            __s.invalidateWechatMedia?.();
+            await library.reload();
+            __s.wechatMediaGallery.value = await library.list(__s.currentCharacter.value?.uuid || '');
+            __s.loadVisibleWechatImages?.();
+        };
         const tasksKey = 'wechat_media_tasks';
         const urls = new Map();
         const urlLoads = new Map();

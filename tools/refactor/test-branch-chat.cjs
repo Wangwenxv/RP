@@ -114,3 +114,21 @@ test('bundled photos keep their built-in reference without requiring a local Blo
     assert.equal((await B.collectResources(branches, 'source', storage, builtins)).length, 0);
     assert.equal(B.parse(branches, 2, new Set(['main']), builtins).chats.size, 1);
 });
+
+test('voice and document shared by forked timelines get independently authorized destination scopes', async () => {
+    const { B, data, storage } = harness(), branches = fixture(data);
+    branches[0].wechatTimeline.push(...structuredClone(branches[1].wechatTimeline.slice(0, 2)));
+    const resources = await B.collectResources(branches, 'source', storage);
+    const parsed = B.parse([...branches, ...resources], 2, new Set(['main', 'alt']));
+    let id = 0;
+    const prepared = await B.prepareResources(parsed, 'destination', storage, () => `scope-${++id}`), writes = new Map(prepared.entries);
+    for (const kind of ['voice', 'document']) {
+        const main = prepared.chats.get('main').wechatTimeline.find(item => item.type === kind), alt = prepared.chats.get('alt').wechatTimeline.find(item => item.type === kind);
+        const mainId = kind === 'voice' ? main.media.assetId : main.document.id, altId = kind === 'voice' ? alt.media.assetId : alt.document.id;
+        assert.notEqual(mainId, altId);
+        const index = writes.get(`wechat_${kind}_index`);
+        assert.equal(index.find(item => item.id === mainId).scopeId, 'destination');
+        assert.equal(index.find(item => item.id === altId).scopeId, 'destination__branch__alt');
+        assert.equal(await writes.get(`wechat_${kind}_blob_${mainId}`).text(), await writes.get(`wechat_${kind}_blob_${altId}`).text());
+    }
+});

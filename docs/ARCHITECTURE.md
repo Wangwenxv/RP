@@ -1,5 +1,11 @@
 # RP-Hub 架构交接文档
 
+> 2026-11-11 多角色世界已落地独立 `world_session` 路径：`world-model/store/projections` 保存版本化身份、事件和观察；`actor-context/runtime` 编译隔离资料并共用 API；`world-orchestrator/scene-narrator` 执行群聊顺序回复、有限告知及 RP 叙述。`35-world-session.js` 和 `world-components.js` 提供导航世界入口。旧单卡模式保留；当前多人通信以文本为范围。实际状态与测试见 [实施交接](./Multi-Agent-Engineering/06-implementation-status.md)。
+
+> 世界服务加载在 `data-services.js` 后，组件加载在 `app.js` 前；setup 在 `historyRetrieval` 后调用 `worldSession`。新模式不调用旧微信镜像、旧总提要或未适配工具，`chatHistory` 不充当世界权威历史。主库新增 `world_session_v1:<sessionId>` 逻辑键；单键／多键同步事务入口在同一 IDB 事务比较 revision 和幂等记录。世界回档覆盖全部人物，更卡生成新存档副本，原卡／分支保留。世界包和整库备份校验事件来源及卡／地图哈希。
+
+> 2026-11-11 修复此前交接提及但工作树缺失的全分支 JSONL v2 导出：补 `branch-chat-utils.js` 与 `22` 接线、多键原子写入、微信图片缓存重载。v1 兼容；详情仍见 [分支聊天导出交接](./branch-chat-export.md)。
+
 > 2026-11-09 单角色全部分支聊天修复：JSONL v2 包含 RP、微信时间线及被引用附件；原 v1 兼容，导入原子写入并刷新当前作用域缓存。见 [分支聊天导出交接](./branch-chat-export.md)。
 
 > 2026-11-08 地点用途检索：全部内置场景补keywords，原图快递聚集区及生活服务独立建点；RP/微信请求前本地召回，tool_geo search返回候选简介与匹配原因。地图编辑、包往返和内置新版副本接线见 [地点检索交接](./geography-place-search.md)。

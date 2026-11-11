@@ -229,7 +229,8 @@
             await load();
             for (const item of metadata.filter(item => item.ownerId === ownerId)) await remove(item.id);
         };
-        return { list, get, save, read, remove, candidates, purgeOwner };
+        const reload = async () => { await writes; loadPromise = null; await load(); };
+        return { list, get, save, read, remove, candidates, purgeOwner, reload };
     }
 
     window.RPHubWeChatMedia = Object.freeze({ BUILTINS, MAX_FILE_BYTES, normalizeIntent, imageRecordText, shortText, assertActive, blobToDataURL, rasterize, draw, createLibrary });

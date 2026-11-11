@@ -206,6 +206,7 @@ const app = createApp({
         AddCharacterModal,
         AppNavigation,
         MapsView,
+        WorldSessionView: window.RPHubWorldSessionView,
         AutoImageGenModal,
         CharacterExportModal,
         CharacterEditorModal,
@@ -273,8 +274,11 @@ const app = createApp({
         __sections.fullBackup(__s);
         __sections.conversationClear(__s);
         __sections.historyRetrieval(__s);
+        __sections.worldSession(__s);
 
         return {
+            ...__s.worldExports,
+            worldUi: __s.worldUi,
             fullBackupBusy: __s.fullBackupBusy, fullBackupProgress: __s.fullBackupProgress, fullBackupError: __s.fullBackupError,
             fullBackupBlocked: __s.fullBackupBlocked, backupIncludeCredentials: __s.backupIncludeCredentials,
             fullBackupPreview: __s.fullBackupPreview, importBackupCredentials: __s.importBackupCredentials,

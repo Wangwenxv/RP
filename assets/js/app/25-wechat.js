@@ -2267,7 +2267,7 @@
                     document: item.document,
                     imageUrl: item.type === 'image' ? (item.media?.assetId ? __s.wechatMediaUrls?.[item.media.assetId] || '' : item.content) : '',
                     // 命中表情包库则带上图，前端据此渲染成图；未命中为 null，回退文本。
-                    stickerImage: item.type === 'sticker' ? stickerImageOf(item.content) : null
+                    stickerImage: item.type === 'sticker' ? item.stickerImage || stickerImageOf(item.content) : null
                 });
             }
             return items;
