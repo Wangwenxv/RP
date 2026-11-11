@@ -14,7 +14,7 @@
 
 | 阶段 | 交付 | 完成条件 |
 | --- | --- | --- |
-| P0 基线与契约 | 核对分支导出缺文件、现有测试状态；固定 ID/事件/权限协议；创建合成夹具 | 已知缺口有结论；旧模式基线可追踪；本目录中的“已实现/提议”未混用 |
+| P0 基线与契约 | 核对当前 RP 分支聊天 version 1 与整库备份的边界、现有测试状态；固定 ID/事件/权限协议；创建合成夹具 | 旧模式基线可追踪；已回退的扩展不作为前置任务；本目录中的“已实现/提议”未混用 |
 | P1 世界与多私聊 | 世界/角色/会话容器，追加事件，观察过滤，共用 ActorRunner，事务版本/幂等，世界检查点 | 两条私聊隔离；卿获得取消证据；刷新、重复请求、切分支不串；未适配旧工具禁用而非绕过过滤 |
 | P1b RP 窄桥接 | 在现有 RP 请求中注入选定事件及逐人物来源，替换盲目微信合并 | 生日场景最终行为正确，来源可查；明确此时 RP 仍是一个叙述模型，尚无完整演员隔离保证 |
 | P2 群聊 | 成员区间、每人阅读游标、回复调度、依次生成、逐批提交 | 四人问候、晚读、接话、无人回复、半成功重试、发送者/音色/合并均正确 |
@@ -112,7 +112,6 @@ P1b 是便于对照和早期体验的过渡路径，不是目标架构的终点�
 - `tools/refactor/test-history-retrieval.cjs`、`test-memory-recall.cjs`。
 - `tools/refactor/test-full-backup.cjs`、`test-conversation-clear.cjs`。
 - `tools/refactor/smoke-wechat.cjs`、`smoke-history-retrieval.cjs`、`smoke-player-agency.cjs`。
-- `tools/refactor/test-branch-chat.cjs`/`smoke-branch-chat.cjs` 已出现在工作树，但依赖的 v2 实现缺口先处理，不能预先认定可通过。
 
 新增测试名称可用 `test-world-events.cjs`、`test-actor-visibility.cjs`、`test-world-turns.cjs`、`smoke-world-chat.cjs` 等，**这些文件现在尚不存在**。断言清单见 [场景与验收](./04-scenarios-and-evaluation.md)。
 

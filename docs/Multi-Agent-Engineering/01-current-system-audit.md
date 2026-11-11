@@ -77,16 +77,14 @@
 
 `app/31-map-library.js:23` 中浏览器保存的同 ID 地图可覆盖内置地图；`:33` 使用 `geographyMaps` 存储。迁移要固定实际使用的地图版本，不能拿磁盘同名 JSON 就认定和旧存档一致。
 
-## 5. 文档与当前工作树不一致
+## 5. 当前导出边界与历史文档
 
-当前分支导出存在明显基线缺口：
+2026-11-11 用户确认已回退有缺陷的分支聊天扩展导出，相关交接、专用测试及失效引用已清理。该扩展不是待补齐的功能，多角色重构不应将其恢复作为前置任务。
 
-- `docs/branch-chat-export.md`、部分架构更新描述 v2 全分支 RP＋微信＋附件导出。
-- `index.html:3527` 引用了 `assets/js/branch-chat-utils.js`，但本次磁盘审计该文件不存在。
-- `assets/js/data-services.js:929` 的导出版本仍是 `STORY_BRANCH_CHAT_EXPORT_VERSION = 1`。
-- 当前 `22-character-io.js` 未接入文档描述的 `RPHubBranchChat/wechatTimeline`；底层也没有文档所述的通用 `setStoredValues` API。
-
-因此该能力应标为“文档已写、工作树未完整落地或文件缺失”，不能当作新世界导出器的成品基础。这不等于整库 `.rphub` 备份不可用，两者是不同路径。本次不顺手修复，实施阶段 0 先核对。
+- `assets/js/data-services.js:929` 的 `STORY_BRANCH_CHAT_EXPORT_VERSION = 1` 是当前保留版本。
+- `22-character-io.js` 导出分支目录、活动分支和各分支 RP 聊天记录；不打包微信时间线、附件原件、记忆或提要。
+- `index.html` 不再引用已移除的扩展导出脚本。
+- `.rphub` 整库备份是独立功能，继续保留；覆盖范围见 [全部内容备份与恢复](../full-backup.md)。新世界导出器仍需单独设计。
 
 较早文档中“24/27 个模块”“模块加载顺序等于编号”等描述也是历史快照；目前实际加载已到 34，且加载顺序与 setup 调用顺序并非完全按编号。新增模块前应核对 `index.html` 末尾与 `app.js:241` 两处。
 
