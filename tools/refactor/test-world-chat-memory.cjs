@@ -14,6 +14,8 @@ test('连发两条先落盘，不调用模型；请求回复不重复玩家气�
     });
     assert.equal(h.snapshot.events.filter(e => e.kind === 'message.sent' && e.actorId === 'player').length, 2);
     assert.equal(Chat.pendingInputs(h.snapshot, args.conversationId).length, 0);
+    const forked = await h.Store.fork({ sessionId: h.snapshot.sessionId, branchId: 'main', atSeq: h.snapshot.events.length });
+    assert.equal(Chat.pendingInputs(forked, args.conversationId).length, 0);
     await Chat.send({ ...args, text: '好' });
     await h.run({ kind: 'wechat', conversationId: args.conversationId, replyOnly: true }, () => ({ decision: 'silent', actions: [] }));
     assert.equal(Chat.pendingInputs(h.snapshot, args.conversationId).length, 0);

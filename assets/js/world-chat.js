@@ -2,7 +2,9 @@
 (function () {
     const pendingInputs = (snapshot, conversationId) => {
         const settled = new Set();
-        for (const turn of Object.values(snapshot.turns || {})) if (turn.status === 'complete' && turn.conversationId === conversationId) {
+        // Forks deliberately clear resumable turns, but completed historical batches remain settled.
+        const turns = new Map(snapshot.events.filter(e => e.kind === 'turn.updated').map(e => [e.payload.turnId, e.payload.turn]));
+        for (const turn of turns.values()) if (turn.status === 'complete' && turn.conversationId === conversationId) {
             (turn.inputMessageIds || []).forEach(id => settled.add(id));
             snapshot.events.filter(e => e.kind === 'message.sent' && e.turnId === turn.turnId && e.actorId === snapshot.definition.playerActorId).forEach(e => settled.add(e.eventId));
         }
