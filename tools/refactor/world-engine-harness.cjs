@@ -16,7 +16,7 @@ async function harness(options = {}) {
         },
         async readStorageSnapshot() { await serial; return [...stored].map(([key, value]) => [key, plain(value)]); }
     };
-    for (const file of ['world-model.js', 'world-projections.js', 'world-store.js', 'wechat-time.js',
+    for (const file of ['world-model.js', 'world-projections.js', 'world-store.js', 'wechat-time.js', 'wechat-protocol.js',
         'geography.js', 'actor-context.js', 'actor-runtime.js', 'world-chat.js', 'world-memory.js', 'scene-narrator.js', 'world-orchestrator.js'])
         vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js', file), 'utf8'), context, { filename: file });
     const actors = [

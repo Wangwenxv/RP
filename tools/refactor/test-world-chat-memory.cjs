@@ -64,3 +64,28 @@ test('苏祈雪开场白只种一次，读者旁白不赋予全员记忆', async
     assert.equal(h.context.window.RPHubActorContext.observed(again, 'qing').length, 0);
     h.Store.validateSession((await h.Store.exportSession(again.sessionId)).session);
 });
+test('世界微信复用原生分段和沉默归因，RP短引用只映射本人观察', async () => {
+    const h = await harness(), C = h.context.window.RPHubActorContext, R = h.context.window.RPHubActorRuntime;
+    await h.run({ kind: 'wechat', conversationId: 'dm-player-qing', text: '现在忙吗' }, () => ({ content: JSON.stringify({ messages: [
+        { type: 'text', content: '不忙' }, { type: 'text', content: '咋了' }] }) }));
+    assert.equal(h.snapshot.events.filter(e => e.kind === 'message.sent' && e.actorId === 'qing').length, 2);
+    await h.run({ kind: 'wechat', conversationId: 'dm-player-qing', text: '没事了' }, () => ({ content: JSON.stringify({ messages: [],
+        silence: { reason: 'topic_closed', summary: '没有待回应事项', awareness: 'read' } }) }));
+    const silence = h.snapshot.events.find(e => e.kind === 'belief.adopted' && e.payload.type === 'silence');
+    assert.ok(silence); assert.deepEqual(Array.from(silence.access.principals), ['qing']);
+    const context = C.compile({ snapshot: h.snapshot, actorId: 'qing', kind: 'rp' });
+    const source = C.observed(h.snapshot, 'qing')[0];
+    assert.deepEqual(Array.from(R.validateProposal({ decision: 'act', actions: [], referencedEvidenceIds: [`E${source.seq}`] }, context, 'rp').referencedEvidenceIds), [source.eventId]);
+    assert.throws(() => R.validateProposal({ decision: 'act', actions: [], referencedEvidenceIds: ['E999999'] }, context, 'rp'), /未观察/);
+});
+test('人物选择等待时不调用叙述模型补造移动，确定地点传入场景包', async () => {
+    const map = { places: [{ id: 'dorm-13', name: '南苑13栋' }] };
+    const h = await harness({ definition: { map }, actorStates: { qing: { position: 'dorm-13', activity: '在寝室闲着' } } });
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], inputMode: 'author_premise', text: '同一时段继续自己的生活' }, r => {
+        assert.equal(r.purpose, 'actor'); return { decision: 'wait', actions: [], referencedEvidenceIds: [] };
+    });
+    const narration = h.snapshot.events.find(e => e.kind === 'narration.published');
+    assert.match(narration.payload.text, /仍在南苑13栋/);
+    const turn = Object.values(h.snapshot.turns).at(-1), packet = h.context.window.RPHubSceneNarrator.scenePacket(h.snapshot, turn);
+    assert.equal(packet.actors[0].state.ownState.position, 'dorm-13');
+});

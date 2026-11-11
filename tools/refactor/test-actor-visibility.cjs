@@ -54,7 +54,7 @@ test('上下文硬预算按实际序列化messages计数，无关世界书留待
     const h = await harness(), C = h.context.window.RPHubActorContext;
     const card = h.snapshot.definition.actors.find(a => a.actorId === 'qing').card;
     card.character_book.entries.push({ entryId: 'unrelated', comment: '完全无关', content: '\\"'.repeat(2000), keys: ['毫无关系'] });
-    const packet = C.compile({ snapshot: h.snapshot, actorId: 'qing', conversationId: 'dm-player-qing', stimulus: '哈喽', maxCharacters: 2600 });
+    const packet = C.compile({ snapshot: h.snapshot, actorId: 'qing', conversationId: 'dm-player-qing', kind: 'rp', stimulus: '哈喽', maxCharacters: 2600 });
     assert.ok(JSON.stringify(packet.messages).length <= 2600);
     assert.equal(packet.budget.characters, JSON.stringify(packet.messages).length);
     assert.equal(packet.packet.cardReferences.some(e => e.entryId === 'unrelated'), false);

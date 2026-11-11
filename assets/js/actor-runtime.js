@@ -73,7 +73,8 @@
                     reasoningEffort: apiConfig.reasoningEffort,
                     timeoutMs: apiConfig.timeoutMs || 120000, messages, tools, signal, stream: apiConfig.stream !== false,
                     logRequest: !!apiConfig.logRequest, requestType: `world-${purpose}/${actorId || 'scene'}`,
-                    onUsage: (usage, metadata) => { onUsage?.({ purpose, actorId, usage, ...metadata }); apiConfig.onUsage?.(usage, metadata); } });
+                    onUsage: (usage, metadata) => { onUsage?.({ purpose, actorId, usage, ...metadata });
+                        apiConfig.onUsage?.(usage, { ...metadata, model: apiConfig.model, purpose, actorId }); } });
             }
             abortCheck(signal);
             if (!modelRunner && !result?.content?.trim() && !result?.toolCalls?.length) {
