@@ -100,4 +100,5 @@ test('从RP界面推进时间只处理待办与真实未读，不把RP会话当�
     });
     assert.equal(h.requests.length - start, 1);
     assert.ok(!h.snapshot.events.some(e => e.kind === 'message.sent' && e.conversationId === 'rp-main'));
+    assert.ok(!h.snapshot.events.some(e => e.kind === 'player.input' && !e.payload.text));
 });

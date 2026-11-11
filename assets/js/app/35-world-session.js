@@ -24,7 +24,8 @@
         const worldMessages = computed(() => {
             const s = worldSnapshot.value, c = worldConversation.value;
             if (!s || !c) return [];
-            if (c.kind === 'rp') return s.events.filter(e => e.conversationId === c.conversationId && (e.kind === 'player.input' || e.kind === 'narration.published'));
+            if (c.kind === 'rp') return s.events.filter(e => e.conversationId === c.conversationId
+                && (e.kind === 'narration.published' || (e.kind === 'player.input' && String(e.payload?.text || '').trim())));
             return P.conversationMessages(s, c.conversationId, s.definition.playerActorId);
         });
         const worldRetryable = computed(() => Object.values(worldSnapshot.value?.turns || {}).filter(t => !['completed', 'complete', 'cancelled'].includes(t.status)));
@@ -35,7 +36,7 @@
         const worldMemoryWarning = computed(() => Object.values(worldSnapshot.value?.turns || {}).at(-1)?.memoryWarning || '');
         const actorName = id => worldActors.value.find(a => a.actorId === id)?.name || id;
         const eventText = e => e.payload?.text || e.payload?.content || e.payload?.narration || '';
-        const worldSpeaker = e => e.kind === 'narration.published' ? '叙述' : actorName(e.actorId);
+        const worldSpeaker = e => e.kind === 'narration.published' ? '叙述' : e.payload?.inputMode === 'author_premise' ? '剧情前提' : actorName(e.actorId);
         const worldIsSelf = e => e.actorId === worldSnapshot.value?.definition.playerActorId && e.kind !== 'narration.published';
         const worldCardIssues = actor => {
             if (!actor.card) return ['尚未提供角色卡，暂不参与模拟'];

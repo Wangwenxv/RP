@@ -145,7 +145,7 @@
                     : [snapshot.definition.playerActorId, ...turn.witnessActorIds];
                 const newTime = options.storyTime || snapshot.storyTime;
                 const atSnapshot = { ...snapshot, storyTime: newTime };
-                const events = options.replyOnly ? [] : [eventDraft(turn, atSnapshot, 'player.input', snapshot.definition.playerActorId,
+                const events = options.replyOnly || kind === 'advance' ? [] : [eventDraft(turn, atSnapshot, 'player.input', snapshot.definition.playerActorId,
                     options.conversationId || null, { text, channel: kind, inputMode: turn.inputMode }, inputPrincipals)];
                 if (kind === 'wechat' && !options.replyOnly) events.push(eventDraft(turn, atSnapshot, 'message.sent', snapshot.definition.playerActorId,
                     options.conversationId, { text, type: 'text' }, inputPrincipals));
