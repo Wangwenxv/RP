@@ -1,5 +1,7 @@
 # 微信与 RP 实现交接
 
+> 2026-11-09 单角色全部分支聊天补齐：原 JSONL v1 只含 RP；新版 v2 同时导出/导入微信时间线、消息引用附件与表情图片，支持跨角色资源重映射与事务回滚。见 [分支聊天导出交接](./branch-chat-export.md)。
+
 > 2026-11-08 发送归属：玩家草稿、玩家明确发送和指定角色发送分别处理；本体角色工具具名且单向，system 与回复/压缩规则保留原说话人。见 [发送归属交接](./wechat-sender-ownership.md)。
 
 > 2026-11-08 压缩后原文核实：RP 与微信共用可选 `tool_search_history/tool_read_history`，按本轮关键词找回当前分支原文，结果不跨轮重放。快捷面板可打印每次请求的实际 messages，见 [调试与原文检索交接](./history-retrieval-and-debug.md)。

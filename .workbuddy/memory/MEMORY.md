@@ -34,5 +34,9 @@
   纯能力声明 + 她对距离的反应函数，删掉卡内分钟断言。世界数据补 23 处 scene、5 个 district label、3 条北三路边。
   修 `map-packages.js` 丢 `landmarks` 的 bug。
   验证：单测 24+3+4、浏览器 smoke 22 项、地图库 E2E 全过。详见 docs/geography-v2-positions.md。
+- （2026-11-09 已完成）角色卡阅读器：`card/viewer.html`（零依赖阅读器 + 内联编辑 + 导出 JSON/Markdown）、
+  `card/build-preview.cjs`（扫卡按 mtime 倒序内联生成 preview.html）、`card/view.cmd` 一键。
+  preview.html/manifest.json 是生成物且含卡正文，必须留在 .gitignore。`window.__CARD_API__` 供测试断言。
+  验证：tools/refactor/shot-card-viewer.cjs 21/21。详见 docs/card-viewer.md。
 - 待办：北三路西侧通路/师苑性质/教学楼 D—C—B—A 连廊待用户确认；RP 正文回合仍未接入附件工具
   （`tool_grep` 可复用 `RPHubWeChatSearch.scan`）；检索目前是线性扫描，可考虑 Worker + 块级倒排。
