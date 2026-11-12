@@ -30,3 +30,11 @@ fixture 验证程序和实际界面链路，不替代真实模型的人设与自
 维护入口：`actor-context.js` 的发送提示、`actor-runtime.js` 的原生工具适配、`world-orchestrator.js` 的原子通信提交、`app/35-world-session.js` 的交接导航、`world-components.js`/`world.css` 的来信入口。原 RP 共享校验入口位于 `wechat-protocol.js` 与 `app/25-wechat.js`。
 
 验证截图保存在本地忽略目录 `.refactor-tmp/world-chat/rp-wechat-handoff.png`，不随文档提交。
+
+## 线上部署与真实模型尝试
+
+代码提交 `684d152` 已推送，线上 `actor-runtime.js` 与本地资源一致。复用现有生日存档建立“微信工具交接验证”分支，原 20:00 结尾保持 237 条事件。
+
+验证输入为玩家在 A109 轻声请卿用微信发一句“我们准备好了”。真实模型接口首次请求返回 **403：当前订阅额度不足或暂不可用**，没有人物消息或原生发送回执。因此不能把这次尝试记成真实模型调用成功。该失败属于接口限制，尚未进入发送校验或界面交接。
+
+失败回合保留在测试分支，可以在接口恢复后通过“继续未完成回合”重试。页面已切回原生日结尾，不留未完成回合挡住原剧情输入。完整包和检查记录保存在 `.refactor-tmp/world-chat/live-wechat-test.rpworld.json` 与 `live-wechat-review.json`。
