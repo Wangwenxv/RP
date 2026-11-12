@@ -33,7 +33,7 @@
         const ids = rawIds.map(id => context.evidenceIds.includes(id) ? id : context.evidenceAliases?.[String(id)] || id);
         if (ids.some(id => !context.evidenceIds.includes(id))) throw new Error('提案引用了未观察或不存在的来源，请复制提供的evidenceId/entryId，或省略非必要引用并返回空数组');
         if (proposal.decision === 'silent' && proposal.actions.length) throw new Error('沉默决策不能附带已完成动作');
-        let bubbles = 0;
+        let bubbles = 0, establishedPlace = context.currentPlaceId || null;
         const actions = proposal.actions.map(action => {
             if (!action || typeof action !== 'object' || !['reply', 'tell', 'speak', 'act', 'move', 'wait', 'remember'].includes(action.kind)) throw new Error('未知角色动作类型');
             if (action.actorId !== undefined && action.actorId !== context.actorId) throw new Error('动作不属于当前角色');
@@ -52,6 +52,27 @@
             if (action.kind === 'move' && (typeof action.placeId !== 'string' || !action.placeId)) throw new Error('移动需要目标地点');
             const clean = { kind: kind === 'rp' && action.kind === 'reply' ? 'speak' : action.kind };
             for (const key of ['text', 'targetActorId', 'channel', 'placeId', 'delayMinutes', 'mode']) if (action[key] !== undefined) clean[key] = action[key];
+            if (action.state !== undefined) {
+                if (action.kind !== 'act' || !action.state || typeof action.state !== 'object' || Array.isArray(action.state)
+                    || Object.keys(action.state).some(key => !['phoneAccess', 'activity', 'position'].includes(key))) throw new Error('状态只能随本人的已完成 act 动作更新');
+                const state = {};
+                if (action.state.phoneAccess !== undefined) {
+                    if (!['available', 'blocked'].includes(action.state.phoneAccess)) throw new Error('手机状态无效');
+                    state.phoneAccess = action.state.phoneAccess;
+                    state.phoneRestrictedUntil = null;
+                }
+                if (action.state.activity !== undefined) {
+                    if (typeof action.state.activity !== 'string' || action.state.activity.length > 120) throw new Error('活动描述无效');
+                    state.activity = action.state.activity;
+                }
+                if (action.state.position !== undefined) {
+                    const placeId = typeof action.state.position === 'string' ? action.state.position : action.state.position?.placeId;
+                    if (establishedPlace || !context.mapPlaceIds.includes(placeId)) throw new Error('已有位置不能通过状态修改跨地点移动；请使用 move');
+                    state.position = { status: 'confirmed', placeId, source: 'npc_scene_start' };
+                    establishedPlace = placeId;
+                }
+                clean.state = state;
+            }
             return clean;
         });
         return { decision: proposal.decision, actions, referencedEvidenceIds: [...ids], needsPlayerResponse: proposal.needsPlayerResponse === true,

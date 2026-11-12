@@ -13,7 +13,7 @@
     };
     const metadata = session => ({ sessionId: session.sessionId, name: session.definition.name,
         versionLabel: '版本 ' + (session.definition.revision || 1),
-        activeBranchId: session.activeBranchId, recordedAt: session.recordedAt,
+        activeBranchId: session.activeBranchId, recordedAt: session.recordedAt, archivedAt: session.archivedAt || null,
         branches: Object.values(session.branches).map(b => ({ branchId: b.branchId, name: b.name, revision: b.revision,
             parentBranchId: b.parentBranchId || null, forkAtSeq: b.forkAtSeq ?? null, eventCount: b.events.length, storyTime: b.storyTime })) });
     const flatten = (session, branchId) => {
@@ -62,11 +62,12 @@
         if (session.schemaVersion !== M().SCHEMA_VERSION) M().fail('世界存档版本不兼容');
         return flatten(session, branchId);
     };
-    const list = async () => {
+    const list = async ({ includeArchived = false } = {}) => {
         // The fallback is retained for lightweight pure-function test harnesses.
         const entries = S().getStoredEntriesByPrefix ? await S().getStoredEntriesByPrefix(PREFIX)
             : (await S().readStorageSnapshot()).filter(([k]) => k.startsWith(PREFIX));
-        return entries.map(([, session]) => metadata(session)).sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)));
+        return entries.filter(([, session]) => includeArchived || !session.archivedAt).map(([, session]) => metadata(session))
+            .sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)));
     };
     const patchEvents = (snapshot, patch, turnId) => {
         const result = [], admin = snapshot.definition.playerActorId;
@@ -143,6 +144,82 @@
             current.activeBranchId = branchId; return current;
         });
         return flatten(session, branchId);
+    };
+    // A correction creates a new causal history; no derived memory after the
+    // correction survives, and the original branch remains available for recovery.
+    const reviseRecord = async ({ sessionId, branchId, expectedRevision, eventId, text, name = '修改后的故事' } = {}) => {
+        const value = String(text || '').trim(), target = M().id('branch');
+        if (!value || value.length > 30000) M().fail('修改内容不能为空或超过 30000 字');
+        const session = await S().updateStoredValue(key(sessionId), current => {
+            if (!current?.branches[branchId]) M().fail('世界分支不存在');
+            const snapshot = flatten(current, branchId);
+            if (snapshot.revision !== expectedRevision) M().fail('世界在编辑期间发生变化，请重新打开记录编辑', 'WORLD_CONFLICT');
+            const event = snapshot.events.find(e => e.eventId === eventId);
+            if (!event || !['player.input', 'message.sent', 'narration.published'].includes(event.kind)) M().fail('请选择可编辑的聊天或剧情记录');
+            if (event.kind === 'message.sent' && !P().canAccess(snapshot, event, snapshot.definition.playerActorId)) M().fail('不能修改玩家无权查看的私聊');
+            const copy = P().replay(snapshot, { throughSeq: event.seq });
+            copy.branchId = target; copy.parentBranchId = branchId; copy.forkAtSeq = event.seq;
+            copy.name = String(name).slice(0, 120); copy.revision = 0; copy.idempotency = {}; copy.turns = {}; copy.baseState.turns = {};
+            copy.events = copy.events.map(e => ({ ...e, branchId: target }));
+            // Normal WeChat input has both an input event and a message event.
+            // They represent one utterance and must never retain different text.
+            const mirrors = event.turnId && event.actorId === snapshot.definition.playerActorId && event.kind === 'message.sent'
+                ? copy.events.filter(e => e.turnId === event.turnId && e.kind === 'player.input' && e.payload.channel === 'wechat') : [];
+            for (const edited of [copy.events.at(-1), ...mirrors]) {
+                edited.payload.text = value;
+                delete edited.payload.content; delete edited.payload.narration;
+                edited.source = { ...edited.source, kind: 'player_edit', editedAt: new Date().toISOString(), originalBranchId: branchId };
+            }
+            if (M().storyTimeNumber(event.storyTime) > M().storyTimeNumber(copy.storyTime)) {
+                copy.events.push({ kind: 'world.clock_advanced', actorId: snapshot.definition.playerActorId,
+                    eventId: M().id('event'), seq: copy.events.length + 1, sessionId, branchId: target,
+                    storyTime: event.storyTime, recordedAt: new Date().toISOString(), access: { principals: [] },
+                    payload: { storyTime: event.storyTime }, causedBy: [], source: { kind: 'program' } });
+                copy.storyTime = event.storyTime;
+            }
+            // All explicitly selected RP witnesses hear the corrected input,
+            // including witnesses not scheduled inside a bounded model turn.
+            if (event.kind === 'player.input' && event.payload.channel === 'rp') {
+                for (const actorId of event.access.principals.filter(id => id !== snapshot.definition.playerActorId)) {
+                    const observation = { kind: 'observation.acquired', actorId, eventId: M().id('event'), seq: copy.events.length + 1,
+                        sessionId, branchId: target, storyTime: copy.storyTime, recordedAt: new Date().toISOString(),
+                        access: { principals: [actorId] }, payload: { eventIds: [eventId] }, causedBy: [eventId], source: { kind: 'program' } };
+                    M().validateEvent(observation, copy, { persisted: true }); copy.events.push(observation);
+                }
+            }
+            delete copy.definition; delete copy.sessionId; delete copy.schemaVersion; delete copy.branches; delete copy.commitEventIds;
+            current.branches[target] = copy; current.activeBranchId = target;
+            validateSession(current);
+            return current;
+        });
+        return flatten(session, target);
+    };
+    const clearHistory = async ({ sessionId, branchId, expectedRevision } = {}) => {
+        const target = M().id('branch');
+        const session = await S().updateStoredValue(key(sessionId), current => {
+            if (!current?.branches[branchId]) M().fail('世界分支不存在');
+            const snapshot = flatten(current, branchId);
+            if (snapshot.revision !== expectedRevision) M().fail('世界已更新，请重新确认清空范围', 'WORLD_CONFLICT');
+            const conversations = snapshot.conversations.map(c => {
+                const members = M().activeMembers(c, snapshot.events.length + 1);
+                return M().normalizeConversation({ ...c, participantActorIds: members,
+                    memberships: members.map(actorId => ({ actorId, joinedAtSeq: 0 })) }, snapshot.definition, 0);
+            });
+            const baseState = { conversations, actorStates: M().clone(snapshot.baseState.actorStates || {}),
+                storyTime: snapshot.storyTime, turns: {}, pendingActions: [] };
+            current.branches[target] = { branchId: target, name: '清空后的故事', parentBranchId: branchId, forkAtSeq: 0,
+                revision: 0, events: [], idempotency: {}, ...M().clone(baseState), baseState };
+            current.activeBranchId = target;
+            return current;
+        });
+        return flatten(session, target);
+    };
+    const archiveSession = async (sessionId, archived = true) => {
+        await S().updateStoredValue(key(sessionId), current => {
+            if (!current) M().fail('世界存档不存在');
+            if (archived) current.archivedAt = new Date().toISOString(); else delete current.archivedAt;
+            return current;
+        });
     };
     const validateSession = session => {
         if (!session || session.schemaVersion !== M().SCHEMA_VERSION || !session.branches || typeof session.branches !== 'object') M().fail('世界包版本或结构不兼容');
@@ -252,5 +329,5 @@
         return flatten(session, branchId);
     };
     window.RPHubWorldStore = Object.freeze({ PREFIX, key, create, list, load, commit, fork, selectBranch,
-        validateSession, exportSession, importSession, reviseDefinition, updateActorAvatar });
+        validateSession, exportSession, importSession, reviseDefinition, updateActorAvatar, reviseRecord, clearHistory, archiveSession });
 })();

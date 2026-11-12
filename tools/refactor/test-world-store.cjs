@@ -158,3 +158,55 @@ test('并发头像更新与旧编辑草稿不能覆盖新资料，拒绝脚本�
   assert.equal(result.find(r => r.status === 'rejected').reason.code, 'WORLD_CONFLICT');
   await assert.rejects(S.reviseDefinition({ sessionId: s.sessionId, definition: s.definition, expectedDefinitionRevision: s.definition.revision }), /编辑期间/);
 });
+
+
+test('记录修订同步玩家输入与微信，回退跨会话记忆和状态，原分支可恢复', async () => {
+  const { S, P } = harness(); let s = await S.create({ definition: definition(), conversations: [conversation('dm', ['player', 'qing']), conversation('other', ['player', 'suqixue'])] });
+  s = await commit(S, s, [
+    { kind: 'player.input', eventId: 'input', actorId: 'player', conversationId: 'dm', turnId: 't', access: { principals: ['player', 'qing'] }, payload: { text: '去打球', channel: 'wechat' } },
+    { ...sent('msg', 'player', 'dm', ['player', 'qing'], '去打球'), turnId: 't' }, read('read', 'qing', 'dm', ['msg'])
+  ]);
+  s = await commit(S, s, [sent('later', 'player', 'other', ['player', 'suqixue'], '后续剧情'),
+    { kind: 'memory.summarized', actorId: 'qing', access: { principals: ['qing'] }, payload: { summary: '去打球', sourceEventIds: ['msg'] } }
+  ], { actorStates: { qing: { position: 'court' } }, turns: { t: { turnId: 't', status: 'complete' } } });
+  const revised = await S.reviseRecord({ sessionId: s.sessionId, branchId: s.branchId, expectedRevision: s.revision, eventId: 'msg', text: '今晚不打球' });
+  assert.deepEqual(plain(revised.events.map(e => e.payload.text)), ['今晚不打球', '今晚不打球']);
+  assert.equal(P.hasObserved(revised, 'msg', 'qing'), false);
+  assert.equal(revised.events.some(e => e.kind === 'memory.summarized' || e.eventId === 'later'), false);
+  assert.notEqual(revised.actorStates.qing.position, 'court');
+  const original = await S.load(s.sessionId, 'main'); assert.equal(original.events.find(e => e.eventId === 'msg').payload.text, '去打球');
+  assert.equal(original.actorStates.qing.position, 'court');
+  assert.equal((await S.importSession(await S.exportSession(s.sessionId))).branches.length, 2);
+});
+test('RP修订保持每位明确见证者的观察，回退后时间不倒退，拒绝过期编辑', async () => {
+  const { S, P } = harness(); let s = await S.create({ definition: definition(), conversations: [conversation('rp', ['player', 'qing', 'linwan', 'suqixue'], 'rp')] });
+  s = await commit(S, s, [{ kind: 'player.input', eventId: 'rp-input', actorId: 'player', conversationId: 'rp',
+    access: { principals: ['player', 'qing'] }, payload: { channel: 'rp', text: '我答应了' } }], { storyTime: '2026-05-12T18:00:00' });
+  const d = { sessionId: s.sessionId, branchId: s.branchId, expectedRevision: s.revision, eventId: 'rp-input', text: '我拒绝了' };
+  const revised = await S.reviseRecord(d);
+  assert.equal(revised.storyTime, '2026-05-12T18:00:00');
+  assert.equal(P.hasObserved(revised, 'rp-input', 'qing'), true); assert.equal(P.hasObserved(revised, 'rp-input', 'suqixue'), false);
+  assert.equal((await S.importSession(await S.exportSession(s.sessionId))).storyTime, revised.storyTime);
+  await commit(S, s, [], { actorStates: { qing: { activity: '新变化' } } });
+  await assert.rejects(S.reviseRecord(d), /编辑期间发生变化/);
+});
+test('清空全世界记录新建可恢复分支，群成员与时间保留且可重新发送', async () => {
+  const { S, P } = harness(); const def = definition(); def.actors.find(a => a.actorId === 'qing').initialState = { activity: '开局', phoneAccess: 'available' };
+  let s = await S.create({ definition: def, conversations: [conversation('dm', ['player', 'qing'])] });
+  s = await commit(S, s, [sent('secret', 'player', 'dm', ['player', 'qing'], '旧秘密'), read('read', 'qing', 'dm', ['secret'])],
+    { storyTime: '2026-05-12T19:00:00', conversations: [conversation('group', ['player', 'qing', 'linwan'], 'group')], actorStates: { qing: { activity: '变更', position: 'court' } }, pendingActions: [{ actionId: 'p', actorId: 'qing', type: 'wait' }] });
+  const next = await S.clearHistory({ sessionId: s.sessionId, branchId: s.branchId, expectedRevision: s.revision });
+  assert.equal(next.events.length, 0); assert.equal(next.pendingActions.length, 0); assert.equal(next.storyTime, s.storyTime);
+  assert.equal(next.actorStates.qing.activity, '开局'); assert.equal(P.hasObserved(next, 'secret', 'qing'), false);
+  assert.deepEqual(plain(next.conversations.find(c => c.conversationId === 'group').participantActorIds), ['player', 'qing', 'linwan']);
+  const sentAgain = await commit(S, next, [sent('new', 'player', 'group', ['player', 'qing', 'linwan'], '新剧情')]); assert.equal(sentAgain.events.length, 1);
+  assert.equal((await S.load(s.sessionId, 'main')).events.some(e => e.eventId === 'secret'), true);
+  assert.equal((await S.importSession(await S.exportSession(s.sessionId))).branches.length, 2);
+});
+test('版本移入回收站可恢复，全部分支卡牌历史不受损', async () => {
+  const { S } = harness(); let s = await S.create({ definition: definition(), conversations: [conversation('dm', ['player', 'qing'])] });
+  s = await commit(S, s, [sent('m', 'player', 'dm', ['player', 'qing'], '保留')]); await S.fork({ sessionId: s.sessionId, branchId: 'main', atSeq: 1 });
+  await S.archiveSession(s.sessionId); assert.equal((await S.list()).length, 0); assert.equal((await S.list({ includeArchived: true })).length, 1);
+  await S.archiveSession(s.sessionId, false); assert.equal((await S.list()).length, 1); assert.equal((await S.load(s.sessionId)).branches.length, 2);
+  assert.equal((await S.load(s.sessionId, 'main')).events[0].payload.text, '保留');
+});

@@ -4,7 +4,7 @@
         const Context = window.RPHubActorContext;
         const ids = new Set(turn.sceneEventIds || []);
         const events = snapshot.events.filter(event => ids.has(event.eventId)
-            && ['player.input', 'message.sent', 'action.committed', 'belief.adopted', 'actor.state_changed'].includes(event.kind));
+            && ['player.input', 'message.sent', 'action.committed', 'belief.adopted', 'actor.state_changed', 'world.fact_asserted'].includes(event.kind));
         return { storyTime: snapshot.storyTime, player: Context.actorOf(snapshot, snapshot.definition.playerActorId)?.name || '玩家',
             playerInput: turn.text, actors: (turn.completedActorIds || []).map(id => {
                 const actor = Context.actorOf(snapshot, id);
@@ -21,13 +21,14 @@
         const packet = scenePacket(snapshot, turn);
         // A neutral player premise and an empty NPC proposal are not permission to invent a scene.
         if (!packet.acceptedEvents.some(e => e.actorId !== snapshot.definition.playerActorId)) {
-            const text = packet.actors.map(a => {
+            const actorsText = packet.actors.map(a => {
                 const position = a.state.ownState.position || a.state.ownState.location;
                 const placeId = typeof position === 'string' ? position : position?.placeId;
                 const map = snapshot.definition.map?.data || snapshot.definition.map;
                 const place = map?.places?.find(p => p.id === placeId)?.name;
                 return `【${a.name}】\n${place ? `${a.name}仍在${place}，` : `${a.name}`}暂时没有新的举动。`;
             }).join('\n\n') || '暂时没有新的角色行动，等待你继续推进。';
+            const text = (turn.inputMode === 'author_premise' ? turn.text + '\n\n' : '') + actorsText;
             return { text, coveredEventIds: packet.acceptedEvents.map(e => e.eventId), packet };
         }
         const messages = [{ role: 'system', content:

@@ -11,7 +11,7 @@
         return snapshot.events.filter(e => e.kind === 'message.sent' && e.conversationId === conversationId
             && e.actorId === snapshot.definition.playerActorId && !settled.has(e.eventId));
     };
-    async function send({ sessionId, branchId, conversationId, text }) {
+    async function send({ sessionId, branchId, conversationId, text, storyTime }) {
         const S = window.RPHubWorldStore, M = window.RPHubWorldModel;
         const snapshot = await S.load(sessionId, branchId), c = snapshot.conversations.find(c => c.conversationId === conversationId);
         const members = M.activeMembers(c, snapshot.events.length + 1), player = snapshot.definition.playerActorId;
@@ -19,7 +19,7 @@
         if (!c || c.kind === 'rp' || !members.includes(player)) throw new Error('玩家不能在这个会话发送微信');
         if (!text || text.length > 30000) throw new Error('请输入不超过30000字的微信消息');
         return S.commit({ sessionId, branchId: snapshot.branchId, expectedRevision: snapshot.revision,
-            idempotencyKey: M.id('wechat-send'), events: [{ kind: 'message.sent', actorId: player, conversationId,
+            idempotencyKey: M.id('wechat-send'), patch: storyTime ? { storyTime } : {}, events: [{ kind: 'message.sent', actorId: player, conversationId,
                 access: { principals: members }, payload: { text, type: 'text' }, source: { kind: 'player_input' } }] });
     }
     function openingEvents(snapshot) {

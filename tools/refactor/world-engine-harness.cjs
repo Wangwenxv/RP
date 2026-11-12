@@ -17,7 +17,7 @@ async function harness(options = {}) {
         async readStorageSnapshot() { await serial; return [...stored].map(([key, value]) => [key, plain(value)]); }
     };
     for (const file of ['world-model.js', 'world-projections.js', 'world-store.js', 'wechat-time.js', 'wechat-protocol.js',
-        'geography.js', 'actor-context.js', 'actor-runtime.js', 'world-chat.js', 'world-memory.js', 'scene-narrator.js', 'world-orchestrator.js'])
+        'geography.js', 'actor-context.js', 'actor-runtime.js', 'world-chat.js', 'world-memory.js', 'scene-narrator.js', 'world-director.js', 'world-orchestrator.js'])
         vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js', file), 'utf8'), context, { filename: file });
     const actors = [
         { actorId: 'player', name: '玩家', card: null },
@@ -39,7 +39,7 @@ async function harness(options = {}) {
     const requests = [], Engine = context.window.RPHubWorldOrchestrator;
     const run = async (args, responder) => {
         const runner = async request => { requests.push(plain({ purpose: request.purpose, actorId: request.actorId, messages: request.messages }));
-            return responder ? responder(request) : { decision: 'reply', actions: [{ kind: 'reply', text: 'ok' }], referencedEvidenceIds: [] }; };
+            return responder ? responder(request) : request.purpose === 'narrator' ? { content: '已接受行动的测试叙述。' } : request.purpose === 'director' ? { updates: [] } : { decision: 'reply', actions: [{ kind: 'reply', text: 'ok' }], referencedEvidenceIds: [] }; };
         try { snapshot = await Engine.runTurn({ sessionId: snapshot.sessionId, branchId: snapshot.branchId,
             ...args, modelRunner: runner, onUpdate: next => { snapshot = next; } }); }
         finally { snapshot = await Store.load(snapshot.sessionId, snapshot.branchId); }

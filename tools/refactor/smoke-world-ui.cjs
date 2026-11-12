@@ -89,7 +89,7 @@ const fits = page => page.evaluate(() => document.documentElement.scrollWidth <=
         check('会话名册立即显示人物头像', await qingContact.locator('img').count() === 1);
         await qingContact.click();
         check('私聊标题同步显示头像', await page.locator('.world-chat-title img').count() === 1);
-        await page.getByRole('checkbox', { name: '连发模式' }).check();
+        await page.getByRole('checkbox', { name: '连发，暂不回应' }).check();
         await page.getByRole('textbox', { name: '世界消息输入' }).fill('测试消息，保留在当前分支。');
         await page.getByRole('button', { name: '发送', exact: true }).click();
         await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldBusy.value);
@@ -111,7 +111,7 @@ const fits = page => page.evaluate(() => document.documentElement.scrollWidth <=
         const revisedId = await page.evaluate(() => { const s = window.__WORLD_SCOPE__; if (s.worldError.value) throw Error(s.worldError.value); return s.worldSnapshot.value.sessionId; });
         check('世界编辑保存为新版本，保留已有剧情与头像', revisedId !== originalId && await page.evaluate(ids => ids.every(id => window.__WORLD_SCOPE__.worldSnapshot.value.events.some(e => e.eventId === id)) && !!window.__WORLD_SCOPE__.worldAvatar('qing'), historyIds));
         check('旧世界原设置与历史仍可打开', await page.evaluate(async id => (await RPHubWorldStore.load(id)).definition.name === '江南大学', originalId));
-        await page.reload(); await ready(page);
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 }); await ready(page);
         await page.locator('.entry-transition').waitFor({ state: 'hidden' });
         await page.evaluate(async id => { const s = window.__WORLD_SCOPE__; s.showUserSetupModal.value = false; s.currentView.value = 'world'; await Vue.nextTick(); await s.worldOpen(id); await s.worldSelectConversation('dm-qing'); }, revisedId);
         await page.waitForFunction(id => window.__WORLD_SCOPE__.worldSnapshot.value?.sessionId === id && document.querySelector('.world-chat-title img'), revisedId);
@@ -123,6 +123,59 @@ const fits = page => page.evaluate(() => document.documentElement.scrollWidth <=
         await group.getByRole('button', { name: '创建群聊', exact: true }).click();
         await group.waitFor({ state: 'hidden' });
         check('群聊可直接创建并打开', (await page.locator('.world-chat-title').innerText()).includes('测试同学群'));
+
+        await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; await s.worldSelectConversation('dm-qing'); });
+        await page.getByRole('checkbox', { name: '连发，暂不回应', exact: true }).check();
+        const input = page.getByRole('textbox', { name: '世界消息输入', exact: true });
+        await input.fill('第一行'); await input.press('Shift+Enter');
+        check('Shift+Enter换行不发送', (await input.inputValue()).includes('\n') && await page.evaluate(() => !window.__WORLD_SCOPE__.worldBusy.value));
+        await input.fill('输入法选词');
+        await input.dispatchEvent('keydown', { key: 'Enter', isComposing: true });
+        check('中文输入法确认候选不会误发消息', await input.inputValue() === '输入法选词');
+        await input.fill('老！婆！'); await input.press('Enter');
+        await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldBusy.value && !window.__WORLD_SCOPE__.worldInput.value);
+        const firstTime = await page.evaluate(() => window.__WORLD_SCOPE__.worldSnapshot.value.storyTime);
+        await page.getByRole('button', { name: '+5 分钟', exact: true }).click();
+        await page.waitForFunction(time => !window.__WORLD_SCOPE__.worldBusy.value && window.__WORLD_SCOPE__.worldSnapshot.value.storyTime !== time, firstTime);
+        check('连发中途+5分钟只调时钟、不请求回复', await page.evaluate(() => !window.__WORLD_SCOPE__.worldRetryable.value.length && !window.__WORLD_SCOPE__.worldError.value));
+        await input.fill('喂喂喂，老婆人呢？'); await input.press('Enter');
+        await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldBusy.value && !window.__WORLD_SCOPE__.worldInput.value);
+        check('Enter发送两条连发消息保留五分钟间隔', await page.evaluate(() => {
+            const e = window.__WORLD_SCOPE__.worldSnapshot.value.events.filter(e => e.kind === 'message.sent' && e.actorId === 'player').slice(-2);
+            return e.length === 2 && RPHubWorldModel.storyTimeNumber(e[1].storyTime) - RPHubWorldModel.storyTimeNumber(e[0].storyTime) === 300000;
+        }));
+        const editSource = await page.evaluate(() => window.__WORLD_SCOPE__.worldSnapshot.value.branchId);
+        await page.locator('.world-message.self .world-message-edit').last().click();
+        check('私聊记录编辑显示全世界回退范围', await page.getByRole('dialog').isVisible() && (await page.getByRole('dialog').innerText()).includes('所有剧情、私聊、群聊与人物记忆'));
+        await page.getByRole('textbox', { name: '修改记录内容', exact: true }).fill('五分钟后再问一遍。');
+        await page.getByRole('button', { name: '保存修改', exact: true }).click();
+        await page.getByRole('dialog').waitFor({ state: 'hidden' });
+        check('保存修订建立分支，私聊显示修正文本', await page.evaluate(source => window.__WORLD_SCOPE__.worldSnapshot.value.branchId !== source, editSource)
+            && (await page.locator('.world-transcript').innerText()).includes('五分钟后再问一遍'));
+        await page.getByRole('button', { name: '清空世界记录', exact: true }).click();
+        await page.getByRole('button', { name: '清空并重新开始', exact: true }).click();
+        await page.getByRole('dialog').waitFor({ state: 'hidden' });
+        check('清空全世界聊天保留联系人头像和旧分支', await page.evaluate(() => {
+            const s = window.__WORLD_SCOPE__; return s.worldSnapshot.value.events.length === 0 && s.worldSnapshot.value.branches.length >= 3 && !!s.worldAvatar('qing');
+        }));
+        await page.waitForFunction(() => !document.querySelector('.toast-item'));
+        await page.screenshot({ path: path.join(SHOTS, 'world-private-empty-redesign.png') });
+        await page.evaluate(async source => { const s = window.__WORLD_SCOPE__; await s.worldOpen(s.worldSnapshot.value.sessionId, source); }, editSource);
+        check('清空后可恢复旧分支的全部记录', (await page.locator('.world-transcript').innerText()).includes('喂喂喂，老婆人呢'));
+
+        await page.locator('.world-file-menu > summary').click();
+        await page.getByRole('button', { name: '删除当前版本', exact: true }).click();
+        await page.getByRole('button', { name: '移入回收站', exact: true }).click();
+        await page.waitForFunction(() => window.__WORLD_SCOPE__.worldTrash.value.length === 1 && !window.__WORLD_SCOPE__.worldBusy.value);
+        check('删除当前版本移入回收站，不删除其他版本', await page.evaluate(id => window.__WORLD_SCOPE__.worldSnapshot.value.sessionId === id, originalId));
+        if (!await page.getByRole('button', { name: /版本回收站/ }).isVisible()) await page.locator('.world-file-menu > summary').click();
+        await page.getByRole('button', { name: /版本回收站/ }).click();
+        await page.getByRole('button', { name: '恢复版本', exact: true }).click();
+        await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldTrash.value.length && !window.__WORLD_SCOPE__.worldBusy.value);
+        await page.evaluate(async arg => { const s = window.__WORLD_SCOPE__; await s.worldOpen(arg.id, arg.branch); }, { id: revisedId, branch: editSource });
+        check('版本回收站恢复全部分支和人物头像', await page.evaluate(() => window.__WORLD_SCOPE__.worldSnapshot.value.branches.length >= 3 && !!window.__WORLD_SCOPE__.worldAvatar('qing')));
+        if (await page.locator('.world-file-menu[open]').count()) await page.locator('.world-file-menu > summary').click();
+        await page.waitForFunction(() => !document.querySelector('.toast-item'));
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; await s.worldSelectConversation('rp-main'); });
         await page.screenshot({ path: path.join(SHOTS, 'world-rp-redesign.png') });
         check('桌面布局没有溢出', await fits(page));

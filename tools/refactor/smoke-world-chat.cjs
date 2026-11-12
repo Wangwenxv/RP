@@ -104,13 +104,14 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
         stage = 'rp'; const rpStart = requests.length;
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; await s.worldSelectConversation('rp-main'); s.worldActorSelection.value = ['suqixue', 'qing']; s.worldInput.value = '同一时段，继续他们各自的安排，不替我决定'; await s.worldSend(); if (s.worldError.value) throw new Error(s.worldError.value); });
         const rp = requests.slice(rpStart);
-        check('RP 按角色独立观察决策，随后叙述；取消约定无需玩家重述', rp.filter(r => r.actorId !== 'narrator').length === 2 && rp.at(-1).actorId === 'narrator'
+        check('RP 按三位角色独立观察决策，随后叙述；取消约定无需玩家重述', rp.filter(r => r.actorId !== 'narrator').length === 3 && rp.at(-1).actorId === 'narrator'
             && JSON.stringify(rp.find(r => r.actorId === 'qing').body.messages).includes('SECRET_QING_ONLY') && !JSON.stringify(rp.find(r => r.actorId === 'suqixue').body.messages).includes('SECRET_QING_ONLY'));
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__, b = s.worldSnapshot.value; s.worldSnapshot.value = await window.RPHubWorldStore.commit({ sessionId: b.sessionId, branchId: b.branchId, expectedRevision: b.revision, idempotencyKey: 'fixture-phone-released', events: [], patch: { actorStates: { suqixue: { phoneAccess: 'available' } } } }); });
         stage = 'tell'; const tellStart = requests.length;
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; s.worldActorSelection.value = ['linwan']; s.worldInput.value = '求林晚不要告诉苏祈雪我在准备生日礼物'; await s.worldSend(); if (s.worldError.value) throw new Error(s.worldError.value); });
         const tell = requests.slice(tellStart);
-        check('实际告知并阅读之后，苏祈雪才取得转述并作出自己的决定', tell.map(r => r.actorId).join(',') === 'linwan,suqixue,narrator' && JSON.stringify(tell[1].body.messages).includes('TRANSFERRED_ONLY'));
+        check('实际告知并阅读之后，苏祈雪才取得转述并作出自己的决定', tell.find(r => r.actorId === 'suqixue')?.packet.observations.some(e => e.text.includes('TRANSFERRED_ONLY'))
+            && tell.at(-1).actorId === 'narrator');
         check('NPC 镜头可见，但玩家角色不自动获得幕后通信知识', await page.evaluate(() => {
             const b = window.__WORLD_SCOPE__.worldSnapshot.value, P = window.RPHubWorldProjections, event = b.events.find(e => e.kind === 'message.sent' && e.payload.text.includes('TRANSFERRED_ONLY'));
             return !!b.events.find(e => e.kind === 'narration.published' && e.payload.text.includes('TRANSFERRED_ONLY')) && P.hasObserved(b, event.eventId, 'suqixue') && !P.hasObserved(b, event.eventId, 'player');
@@ -156,7 +157,7 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
             return s.worldConversationId.value === 'dm-qing' && t && b.events.some(e => e.turnId === t.turnId && e.kind === 'message.sent' && e.actorId === 'qing');
         }));
         stage = 'burst'; const burstStart = requests.length;
-        await page.getByRole('checkbox', { name: '连发模式' }).check();
+        await page.getByRole('checkbox', { name: '连发，暂不回应' }).check();
         for (const text of ['先发第一条', '再发第二条']) {
             await page.getByRole('textbox', { name: '世界消息输入' }).fill(text);
             await page.getByRole('button', { name: '发送', exact: true }).click();

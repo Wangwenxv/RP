@@ -83,6 +83,7 @@ test('人物选择等待时不调用叙述模型补造移动，确定地点传�
     const map = { places: [{ id: 'dorm-13', name: '南苑13栋' }] };
     const h = await harness({ definition: { map }, actorStates: { qing: { position: 'dorm-13', activity: '在寝室闲着' } } });
     await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], inputMode: 'author_premise', text: '同一时段继续自己的生活' }, r => {
+        if (r.purpose === 'director') return { updates: [] };
         assert.equal(r.purpose, 'actor'); return { decision: 'wait', actions: [], referencedEvidenceIds: [] };
     });
     const narration = h.snapshot.events.find(e => e.kind === 'narration.published');
@@ -90,16 +91,20 @@ test('人物选择等待时不调用叙述模型补造移动，确定地点传�
     const turn = Object.values(h.snapshot.turns).at(-1), packet = h.context.window.RPHubSceneNarrator.scenePacket(h.snapshot, turn);
     assert.equal(packet.actors[0].state.ownState.position, 'dorm-13');
 });
-test('从RP界面推进时间只处理待办与真实未读，不把RP会话当微信发送', async () => {
+test('全局推进处理未读并模拟独立场景，不把RP会话当微信发送', async () => {
     const h = await harness({ actorStates: { suqixue: { phoneAccess: 'blocked', phoneRestrictedUntil: '2026-05-12T18:00:00' } } });
     await h.run({ kind: 'wechat', conversationId: 'group', text: '哈喽' }, () => ({ decision: 'silent', actions: [] }));
     const start = h.requests.length;
     await h.run({ kind: 'advance', conversationId: 'rp-main', actorIds: ['qing'], storyTime: '2026-05-12T18:00:00' }, r => {
-        assert.equal(r.actorId, 'suqixue');
-        assert.equal(JSON.parse(r.messages[1].content).conversationId, 'group');
-        return reply('刚下课');
+        if (r.purpose === 'narrator') return { content: '苏祈雪回复了群聊，其余人物继续自己的生活。' };
+        if (r.actorId === 'suqixue') {
+            assert.equal(JSON.parse(r.messages[1].content).conversationId, 'group');
+            return reply('刚下课');
+        }
+        assert.equal(JSON.parse(r.messages[1].content).kind, 'rp');
+        return { decision: 'silent', actions: [] };
     });
-    assert.equal(h.requests.length - start, 1);
+    assert.equal(h.requests.length - start, 4);
     assert.ok(!h.snapshot.events.some(e => e.kind === 'message.sent' && e.conversationId === 'rp-main'));
     assert.ok(!h.snapshot.events.some(e => e.kind === 'player.input' && !e.payload.text));
 });

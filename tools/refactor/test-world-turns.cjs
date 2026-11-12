@@ -197,6 +197,7 @@ test('RP上课收起手机者的私聊告知成为待办，不能当作已发送
 test('作者剧情前提有独立来源，不能伪装成玩家亲口台词', async () => {
     const h = await harness();
     await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['linwan'], text: '林晚知道有礼物但玩家没有说出口', inputMode: 'author_premise' }, request => {
+        if (request.purpose === 'director') return { updates: [] };
         if (request.purpose === 'narrator') return { content: '林晚心里留了个念头。' };
         const packet = JSON.parse(request.messages[1].content);
         assert.equal(packet.observations.find(e => /没有说出口/.test(e.text)).evidenceStatus, 'author_premise');
@@ -244,4 +245,80 @@ test('格式修复最多一次且计入预算，连续非法提案不写成角�
     await assert.rejects(h.run({ kind: 'wechat', conversationId: 'dm-player-qing', text: '格式测试' }, () => ({ content: '{坏JSON}' })), /有效的 JSON/);
     assert.equal(h.requests.length, 2); assert.equal(turnOf(h).callsUsed, 2);
     assert.equal(h.snapshot.events.filter(e => e.kind === 'message.sent' && e.actorId === 'qing').length, 0);
+});
+
+
+test('连发中途调时不调用模型，两条时间分别保留并告知五分钟未回应', async () => {
+    const h = await harness(), Chat = h.context.window.RPHubWorldChat;
+    await Chat.send({ sessionId: h.snapshot.sessionId, branchId: 'main', conversationId: 'dm-player-qing', text: '老！婆！', storyTime: '2026-05-12T17:00:00' });
+    const s = await h.Store.load(h.snapshot.sessionId);
+    await h.Store.commit({ sessionId: s.sessionId, branchId: 'main', expectedRevision: s.revision, idempotencyKey: 'burst-clock', patch: { storyTime: '2026-05-12T17:05:00' } });
+    await Chat.send({ sessionId: s.sessionId, branchId: 'main', conversationId: 'dm-player-qing', text: '喂喂喂，老婆人呢？' });
+    assert.equal(h.requests.length, 0);
+    await h.run({ kind: 'wechat', conversationId: 'dm-player-qing', replyOnly: true }, r => {
+        const packet = JSON.parse(r.messages[1].content);
+        assert.equal(packet.conversationTiming.unansweredMinutes, 5);
+        const messages = packet.observations.filter(e => e.kind === 'message.sent');
+        assert.deepEqual(messages.map(e => e.storyTime), ['2026-05-12T17:00:00', '2026-05-12T17:05:00']);
+        return reply('刚才没看手机，五分钟而已。');
+    });
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.snapshot.events.filter(e => e.kind === 'message.sent' && e.actorId === 'player').length, 2);
+});
+test('全世界RP镜头独立行动，卿先告知林晚再移动，未告知者不知道生日秘密', async () => {
+    const h = await harness({ definition: { map: { places: [] } }, actorStates: { qing: { position: 'dorm' }, linwan: { position: 'library' } } });
+    h.context.window.RPHubGeography.route = () => ({ status: 'ok', duration: { typicalMinutes: 15 } });
+    await h.run({ kind: 'wechat', conversationId: 'dm-player-qing', text: '秘密：今晚给苏祈雪办生日惊喜，叫上林晚。' }, () => reply('收到，保密。'));
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing', 'linwan', 'suqixue'], witnessActorIds: [], text: '卿继续自己的场景，玩家出门买蛋糕。', inputMode: 'author_premise', apiConfig: { maxWorldCalls: 18 } }, r => {
+        if (r.purpose === 'director') return { updates: [] };
+        if (r.purpose === 'narrator') return { content: '卿联系林晚，两人各自出发。苏祈雪尚不知情。' };
+        const packet = JSON.parse(r.messages[1].content);
+        if (r.actorId === 'qing') return { decision: 'act', actions: [{ kind: 'tell', targetActorId: 'linwan', channel: 'dm', text: '今晚在A109给祈雪生日惊喜，先保密，过来布置。' }, { kind: 'move', placeId: 'a109' }] };
+        if (r.actorId === 'linwan') {
+            assert.match(JSON.stringify(packet.observations), /给祈雪生日惊喜/); assert.equal(packet.kind, 'rp');
+            return { decision: 'act', actions: [{ kind: 'move', placeId: 'a109' }] };
+        }
+        assert.doesNotMatch(JSON.stringify(packet), /生日惊喜/);
+        return silent();
+    });
+    assert.equal(h.snapshot.actorStates.qing.position.status, 'travelling');
+    assert.equal(h.snapshot.actorStates.linwan.position.status, 'travelling');
+    assert.equal(h.context.window.RPHubActorContext.searchMemory(h.snapshot, 'suqixue', '生日惊喜').count, 0);
+});
+test('作者关闭手机只修改明确的玩家状态，各NPC不能读取整段作者输入', async () => {
+    const h = await harness();
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing', 'linwan', 'suqixue'], witnessActorIds: [], text: '关闭手机，夜晚悄悄到来。', inputMode: 'author_premise' }, r => {
+        if (r.purpose === 'director') return { updates: [{ actorId: 'player', quote: '关闭手机', phoneAccess: 'blocked', activity: '独处' }] };
+        if (r.purpose === 'narrator') return { content: '夜晚到来，玩家关上手机。' };
+        assert.doesNotMatch(JSON.stringify(JSON.parse(r.messages[1].content).observations), /关闭手机/);
+        return silent();
+    });
+    assert.equal(h.snapshot.actorStates.player.phoneAccess, 'blocked');
+    assert.equal(h.snapshot.actorStates.qing.phoneAccess, 'available');
+    assert.equal(h.context.window.RPHubWorldProjections.observedEvents(h.snapshot, 'suqixue').some(e => /关闭手机/.test(e.payload.text)), false);
+});
+test('作者状态解析拒绝无来源和错误人物，不覆盖已有状态', async () => {
+    const h = await harness();
+    await assert.rejects(h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], witnessActorIds: [], text: '关闭手机。', inputMode: 'author_premise' }, () =>
+        ({ updates: [{ actorId: 'suqixue', quote: '关闭手机', phoneAccess: 'blocked' }] })), /没有明确指定/);
+    assert.equal(h.snapshot.actorStates.suqixue.phoneAccess, 'available');
+});
+test('NPC实际收起手机同步自己的状态，act状态不能越过已有地点', async () => {
+    const h = await harness({ actorStates: { qing: { position: 'dorm' } } });
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '独处' }, r => r.purpose === 'narrator' ? { content: '卿收起手机。' } :
+        { decision: 'act', actions: [{ kind: 'act', text: '卿收起手机，专心复习。', state: { phoneAccess: 'blocked', activity: '复习' } }] });
+    assert.equal(h.snapshot.actorStates.qing.phoneAccess, 'blocked');
+    const context = h.context.window.RPHubActorContext.compile({ snapshot: h.snapshot, actorId: 'qing', kind: 'rp' });
+    assert.throws(() => h.context.window.RPHubActorRuntime.validateProposal({ decision: 'act', actions: [{ kind: 'act', text: '已到图书馆', state: { position: 'library' } }] }, context, 'rp'), /已有位置/);
+});
+test('修改后的RP输入可重新回应一次，保留见证范围且不重复玩家输入', async () => {
+    const h = await harness();
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '去打球。' }, () => silent());
+    const e = h.snapshot.events.find(e => e.kind === 'player.input');
+    const revised = await h.Store.reviseRecord({ sessionId: h.snapshot.sessionId, branchId: 'main', expectedRevision: h.snapshot.revision, eventId: e.eventId, text: '不打球了。' });
+    const options = { sessionId: revised.sessionId, branchId: revised.branchId, kind: 'rp', conversationId: 'rp-main', existingInputEventId: e.eventId,
+        modelRunner: r => { assert.equal(r.actorId, 'qing'); assert.match(JSON.stringify(r.messages), /不打球了/); assert.doesNotMatch(JSON.stringify(r.messages), /去打球。/); return silent(); } };
+    const result = await h.Engine.runTurn(options);
+    assert.equal(result.events.filter(e => e.kind === 'player.input').length, 1);
+    await assert.rejects(h.Engine.runTurn(options), /只能继续尚未重新回应/);
 });
