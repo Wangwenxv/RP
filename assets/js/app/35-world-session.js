@@ -15,6 +15,7 @@
         const worldBurstMode = ref(false), worldMemoryEnabled = ref(true), worldContextBudget = ref(60000), worldProgress = ref('');
         const worldEditing = ref(false), worldEditSource = ref(null);
         const worldRecordDialog = ref(null), worldRecordText = ref(''), worldSendTime = ref(''), worldTrash = ref([]);
+        const worldWechatHandoff = ref(null);
         const cardIssueCache = new WeakMap();
         let preparedMap = null;
         const prepareMap = id => {
@@ -82,7 +83,8 @@
             cardIssueCache.set(actor.card, { key, issues }); return issues;
         };
         const fail = e => { worldError.value = e?.message || String(e); };
-        const cancel = () => { viewEpoch++; controller?.abort(); controller = null; worldBusy.value = false; worldRecordDialog.value = null; };
+        const cancel = ({ keepHandoff = false } = {}) => { viewEpoch++; controller?.abort(); controller = null; worldBusy.value = false; worldRecordDialog.value = null;
+            if (!keepHandoff) worldWechatHandoff.value = null; };
         const scroll = async () => { await nextTick(); const node = worldTranscript.value; if (node) node.scrollTop = node.scrollHeight; };
         const accept = async snapshot => {
             markRaw(snapshot.definition);
@@ -269,6 +271,21 @@
             const config = apiConfig();
             if (!config.apiUrl || !config.apiKey || !config.model) throw new Error('请在设置中配置 API 地址、密钥，并选择聊天模型；只有识图模型不能生成世界对话');
         };
+        const showRpWechat = (snapshot, captured, args, openChat) => {
+            const turnId = args.turnId || Object.keys(snapshot.turns).find(id => !captured.turns[id]);
+            const turn = snapshot.turns[turnId];
+            if (!turn || !['rp', 'advance'].includes(turn.kind)) return;
+            const source = snapshot.conversations.find(c => c.conversationId === turn.conversationId && c.kind === 'rp');
+            if (!source) return;
+            const player = snapshot.definition.playerActorId;
+            const incoming = [...snapshot.events].reverse().find(e => e.turnId === turnId && e.kind === 'message.sent' && e.actorId !== player
+                && snapshot.conversations.some(c => c.conversationId === e.conversationId && c.kind === 'dm'
+                    && c.participantActorIds.includes(player)) && P.canAccess(snapshot, e, player));
+            if (!incoming) return;
+            worldWechatHandoff.value = { eventId: incoming.eventId, conversationId: incoming.conversationId, sourceConversationId: source.conversationId,
+                senderName: actorName(incoming.actorId), text: eventText(incoming) };
+            if (openChat) { worldConversationId.value = incoming.conversationId; worldBurstMode.value = false; }
+        };
         const execute = async args => {
             if (worldBusy.value || !worldSnapshot.value) return;
             controller = new AbortController(); const epoch = ++viewEpoch, captured = worldSnapshot.value;
@@ -278,9 +295,11 @@
                 const options = { sessionId: captured.sessionId, branchId: captured.branchId, apiConfig: apiConfig(), signal: controller.signal,
                     onUpdate: snapshot => { if (epoch === viewEpoch) { worldSnapshot.value = snapshot; if (args.text !== undefined) worldInput.value = ''; scroll(); } }, ...args };
                 const snapshot = args.turnId ? await window.RPHubWorldOrchestrator.retryTurn(options) : await window.RPHubWorldOrchestrator.runTurn(options);
-                if (epoch === viewEpoch) { await accept(snapshot); if (args.text !== undefined) worldInput.value = ''; await recordPlayerRead(epoch); }
+                if (epoch === viewEpoch) { await accept(snapshot); if (args.text !== undefined) worldInput.value = '';
+                    showRpWechat(snapshot, captured, args, true); await recordPlayerRead(epoch); await scroll(); }
             } catch (e) {
-                if (epoch === viewEpoch) { fail(e); try { await accept(await S.load(captured.sessionId, captured.branchId)); } catch (_) {} }
+                if (epoch === viewEpoch) { fail(e); try { const saved = await S.load(captured.sessionId, captured.branchId); await accept(saved);
+                    showRpWechat(saved, captured, args, false); } catch (_) {} }
             } finally { if (epoch === viewEpoch) { worldBusy.value = false; controller = null; } }
         };
         const worldSend = async () => {
@@ -392,9 +411,13 @@
         };
         const worldSelectConversation = async conversationId => {
             if (worldBusy.value) return;
-            cancel(); worldConversationId.value = conversationId; worldInput.value = ''; worldError.value = '';
+            cancel({ keepHandoff: true }); worldConversationId.value = conversationId; worldInput.value = ''; worldError.value = '';
+            if (worldWechatHandoff.value && ![worldWechatHandoff.value.conversationId, worldWechatHandoff.value.sourceConversationId].includes(conversationId)) worldWechatHandoff.value = null;
             try { await recordPlayerRead(viewEpoch); } catch (e) { fail(e); }
+            await scroll();
         };
+        const worldReturnToRp = () => worldWechatHandoff.value && worldSelectConversation(worldWechatHandoff.value.sourceConversationId);
+        const worldOpenIncomingWechat = () => worldWechatHandoff.value && worldSelectConversation(worldWechatHandoff.value.conversationId);
         const worldEndTurn = async turnId => {
             if (worldBusy.value) return;
             const s = worldSnapshot.value, turn = s?.turns[turnId]; if (!turn) return;
@@ -501,7 +524,8 @@
         Object.assign(worldExports, { worldEditing, worldEditSource, worldEdit, worldCancelSetup, worldRemoveDraftActor,
             worldReadAvatar, worldSaveAvatar, worldAvatar, worldConversationActor, worldConversationPreview, worldFormatTime, worldRenderText });
         Object.assign(worldExports, { worldRecordDialog, worldRecordText, worldSendTime, worldTrash, worldPendingRp, worldContinueRp,
-            worldInputKeydown, worldBeginRecordEdit, worldConfirmClear, worldSaveRecord, worldArchiveVersion });
+            worldInputKeydown, worldBeginRecordEdit, worldConfirmClear, worldSaveRecord, worldArchiveVersion,
+            worldWechatHandoff, worldReturnToRp, worldOpenIncomingWechat });
         Object.assign(__s, worldExports); __s.worldExports = worldExports;
         __s.worldUi = reactive(worldExports);
     };

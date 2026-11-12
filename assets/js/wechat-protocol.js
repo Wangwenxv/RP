@@ -21,6 +21,15 @@
     // 截得太短会把长消息拦腰砍断，比不发还假。
     const MAX_CONTENT_LEN = 400;
 
+    // Shared by RP active contact and world actors. One call is one text bubble.
+    function normalizeActiveText(content) {
+        if (typeof content !== 'string' || !content.trim()) throw new Error('微信消息内容不能空，且必须是纯文本');
+        const text = content.trim();
+        if (extractJSON(text) !== null || /^\s*```/.test(text)) throw new Error('content 必须是角色的一条纯文本消息，不接受 JSON 消息列表或发送者；图片请使用独立的 image 参数');
+        if (text.length > MAX_CONTENT_LEN) throw new Error(`主动微信消息不得超过 ${MAX_CONTENT_LEN} 字符`);
+        return text;
+    }
+
     const PROTOCOL = `【输出格式 — 必须严格遵守】
 你只能输出一个 JSON 对象，不要输出任何解释、前言、Markdown 代码块或多余文字。
 格式：
@@ -413,6 +422,7 @@
     const countUnanswered = items => items.reduce((count, item) => item.isReply || item.settled ? 0 : item.isUser ? count + 1 : count, 0);
     window.RPHubWeChatProtocol = Object.freeze({
         countUnanswered,
+        normalizeActiveText,
         MAX_MESSAGES,
         MAX_CONTENT_LEN,
         PROTOCOL,

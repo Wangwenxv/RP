@@ -42,10 +42,14 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
             }
             const packet = body.messages.map(m => { try { return JSON.parse(m.content); } catch (_) { return null; } }).find(p => p?.actorId || p?.acceptedEvents);
             const actorId = packet?.actorId, record = { stage, actorId: actorId || 'narrator', body, packet }; requests.push(record);
+            if (stage === 'native-wx' && actorId === 'qing') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+                choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'fixture-active-wx', type: 'function',
+                    function: { name: 'tool_wechat', arguments: JSON.stringify({ content: '蛋糕拿到了吗？我在109。' }) } }] }, finish_reason: 'tool_calls' }] }) });
             if (stage === 'late') { lateResolve?.(); await new Promise(done => setTimeout(done, 400)); }
             if (stage === 'group-retry' && actorId === 'linwan' && failLin) { failLin = false; return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":{"message":"fixture timeout"}}' }); }
             let content;
-            if (!actorId) content = stage === 'tell' ? '【NPC镜头】林晚把 TRANSFERRED_ONLY 告诉苏祈雪。苏祈雪决定暂时装作不知道。玩家的回应留待本人决定。'
+            if (!actorId) content = stage === 'native-wx' ? '卿给玩家发去微信：“蛋糕拿到了吗？我在109。”他等待玩家回应。'
+                : stage === 'tell' ? '【NPC镜头】林晚把 TRANSFERRED_ONLY 告诉苏祈雪。苏祈雪决定暂时装作不知道。玩家的回应留待本人决定。'
                 : '同一时段，卿改变了晚上的安排；苏祈雪仍依据自己读过的私聊理解玩家去打球，没有得知惊喜。';
             else if (stage === 'tell' && actorId === 'linwan') content = proposal('act', [{ kind: 'tell', targetActorId: 'suqixue', channel: 'dm', text: 'TRANSFERRED_ONLY：玩家在准备生日惊喜，请装作不知道。' }]);
             else if (stage === 'tell' && actorId === 'suqixue') content = proposal('act', [{ kind: 'remember', text: '读到林晚的转告后，决定暂时装作不知道。' }]);
@@ -171,6 +175,34 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
             const s = window.__WORLD_SCOPE__, b = s.worldSnapshot.value;
             return s.worldUnansweredCount.value === 0 && b.events.filter(e => e.kind === 'message.sent' && e.payload.text === '先发第一条').length === 1
                 && window.RPHubWorldMemory.records(b, 'qing').length > 0 && !s.worldError.value;
+        }));
+        stage = 'native-wx'; const wxStart = requests.length;
+        await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; s.worldMemoryEnabled.value = false;
+            await s.worldSelectConversation('rp-main'); s.worldInput.value = '卿，用微信确认一下蛋糕。'; await s.worldSend();
+            if (s.worldError.value) throw new Error(s.worldError.value); });
+        check('实际HTTP请求提供原生微信工具，发送后没有演员工具续写', requests.slice(wxStart).map(r => r.actorId).join(',') === 'qing,narrator'
+            && requests[wxStart].body.tools.some(t => t.function.name === 'tool_wechat'));
+        check('RP来信自动打开原联系人，单条气泡按当前世界时间保存', await page.evaluate(() => {
+            const s = window.__WORLD_SCOPE__, b = s.worldSnapshot.value, message = b.events.find(e => e.kind === 'message.sent' && e.payload.text === '蛋糕拿到了吗？我在109。');
+            return s.worldConversationId.value === 'dm-qing' && message?.actorId === 'qing' && message.storyTime === b.storyTime
+                && b.conversations.filter(c => c.kind === 'dm' && c.participantActorIds.includes('qing') && c.participantActorIds.includes('player')).length === 1
+                && window.RPHubWorldProjections.hasObserved(b, message.eventId, 'player');
+        }) && await page.getByRole('button', { name: '返回世界剧情', exact: true }).isVisible());
+        await page.screenshot({ path: path.join(OUT, 'rp-wechat-handoff.png'), fullPage: false });
+        const countAfterHandoff = requests.length;
+        await page.getByRole('button', { name: '返回世界剧情', exact: true }).click();
+        check('一键返回RP保留刚生成的剧情，不会请求模型', requests.length === countAfterHandoff
+            && await page.locator('.world-message.narration').last().innerText().then(t => t.includes('他等待玩家回应'))
+            && await page.getByRole('button', { name: '查看私聊', exact: true }).isVisible());
+        await page.getByRole('button', { name: '查看私聊', exact: true }).click();
+        stage = 'wx-player-reply';
+        await page.getByRole('textbox', { name: '世界消息输入' }).fill('蛋糕拿到了，正在回去。');
+        await page.getByRole('button', { name: '发送', exact: true }).click();
+        await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldBusy.value);
+        check('交接后玩家能正常回复，新输入只属于对应私聊', await page.evaluate(() => {
+            const s = window.__WORLD_SCOPE__, b = s.worldSnapshot.value;
+            return !s.worldError.value && b.events.filter(e => e.kind === 'message.sent' && e.actorId === 'player' && e.payload.text === '蛋糕拿到了，正在回去。').length === 1
+                && s.worldConversationId.value === 'dm-qing' && s.worldBurstMode.value === false;
         }));
         const review = path.join(ROOT, '.tmp-review'); fs.mkdirSync(review, { recursive: true });
         await page.locator('.entry-transition').waitFor({ state: 'hidden' });

@@ -363,7 +363,8 @@
                                 { eventIds: [event.eventId] }, [observer], [event.eventId]));
                     }
                 }
-                turn.actorResults[step.actorId] = { status: proposal.decision, proposal, contextBudget: result.contextBudget };
+                turn.actorResults[step.actorId] = { status: proposal.decision, proposal, contextBudget: result.contextBudget,
+                    ...(result.wechatToolReceipts ? { wechatToolReceipts: result.wechatToolReceipts } : {}) };
                 if (!turn.completedActorIds.includes(step.actorId)) turn.completedActorIds.push(step.actorId);
                 turn.stepIndex++;
                 // Scope commits and tasks to the queue step: an actor can react twice in one turn.

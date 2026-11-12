@@ -146,7 +146,7 @@ test('两轮资料读取后仍能提交最终提案，为其他人物与旁白�
             assert.ok(r.tools.length);
             return { toolCalls: [{ id: 'lookup-' + reads, type: 'function', function: { name: 'get_scene_context', arguments: '{}' } }] };
         }
-        assert.equal(r.tools, undefined); assert.match(r.messages.at(-1).content, /读取已结束/);
+        assert.deepEqual(Array.from(r.tools, t => t.function.name), ['tool_wechat']); assert.match(r.messages.at(-1).content, /读取已结束/);
         return { decision: 'act', actions: [{ kind: 'act', text: '整理书桌。' }] };
     });
     assert.equal(turnOf(h).status, 'complete'); assert.equal(h.requests.length, 4);
@@ -444,4 +444,90 @@ test('NPC主动私聊玩家复用原联系人，不创建第二个同名私聊',
     const sent = h.snapshot.events.find(e => e.kind === 'message.sent' && e.actorId === 'qing');
     assert.equal(sent.conversationId, 'dm-player-qing');
     assert.deepEqual(Array.from(sent.access.principals).sort(), ['player', 'qing']);
+});
+
+const wxCall = (id, args) => ({ id, type: 'function', function: { name: 'tool_wechat', arguments: JSON.stringify(args) } });
+
+test('世界RP原生微信联系玩家只接受一次，直接提交并停在玩家回应点', async () => {
+    const h = await harness();
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing', 'linwan'], text: '卿继续准备生日。' }, r => {
+        if (r.purpose === 'narrator') return { content: '卿发来微信，等待玩家回应。' };
+        assert.equal(r.actorId, 'qing');
+        const tool = r.tools.find(t => t.function.name === 'tool_wechat');
+        assert.ok(tool); assert.equal(tool.function.parameters.additionalProperties, false);
+        return { toolCalls: [wxCall('wx-1', { content: '蛋糕拿到了吗？\n我在109。' }), wxCall('wx-2', { content: '收到，那你快来。' })] };
+    });
+    const messages = h.snapshot.events.filter(e => e.kind === 'message.sent');
+    assert.equal(messages.length, 1); assert.equal(messages[0].actorId, 'qing');
+    assert.equal(messages[0].conversationId, 'dm-player-qing'); assert.match(messages[0].payload.text, /\n我在109/);
+    assert.deepEqual(Array.from(messages[0].access.principals).sort(), ['player', 'qing']);
+    assert.equal(h.requests.filter(r => r.purpose === 'actor').length, 1);
+    assert.equal(turnOf(h).responsePoint, true); assert.equal(turnOf(h).status, 'complete');
+    const receipts = turnOf(h).actorResults.qing.wechatToolReceipts;
+    assert.equal(receipts[0].queued, true); assert.equal(receipts[0].delivered, false);
+    assert.equal(receipts[1].status, 'invalid_arguments');
+});
+
+test('原生微信可联系已知NPC，收件人依自己的上下文回应而不向玩家泄露', async () => {
+    const h = await harness();
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], witnessActorIds: [], text: '各自继续' }, r => {
+        if (r.purpose === 'narrator') return { content: '卿和林晚私下确认生日准备。' };
+        if (r.actorId === 'qing') return { toolCalls: [wxCall('to-lin', { targetActorId: 'linwan', content: '秘密：在A109布置生日惊喜。' })] };
+        assert.equal(r.actorId, 'linwan'); assert.match(JSON.stringify(r.messages), /在A109布置生日惊喜/);
+        assert.doesNotMatch(JSON.stringify(r.messages), /SU_PRIVATE_CARD_ONLY/);
+        return { decision: 'act', actions: [{ kind: 'remember', text: '收到卿的安排，先保密。' }] };
+    });
+    const event = h.snapshot.events.find(e => e.kind === 'message.sent');
+    const P = h.context.window.RPHubWorldProjections;
+    assert.equal(P.hasObserved(h.snapshot, event.eventId, 'linwan'), true);
+    assert.equal(P.hasObserved(h.snapshot, event.eventId, 'player'), false);
+    assert.equal(P.hasObserved(h.snapshot, event.eventId, 'suqixue'), false);
+    assert.equal(turnOf(h).responsePoint, undefined);
+});
+
+test('原生微信拒绝冒用发送者、JSON气泡列表及未知收件人，未修正前不落消息', async () => {
+    for (const args of [{ content: '你好', senderActorId: 'player' }, { content: '{"messages":[{"content":"我到了"}]}' },
+        { content: '你好', targetActorId: 'stranger' }]) {
+        const h = await harness(); let attempts = 0;
+        await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '继续' }, r => {
+            if (r.purpose === 'narrator') return { content: '卿保持现状。' };
+            if (!attempts++) return { toolCalls: [wxCall('invalid', args)] };
+            assert.match(r.messages.at(-1).content, /invalid_arguments/);
+            return silent();
+        });
+        assert.equal(h.snapshot.events.filter(e => e.kind === 'message.sent').length, 0);
+    }
+});
+
+test('手机不可用时不提供发送工具，伪造调用不能产生消息', async () => {
+    const h = await harness({ actorStates: { qing: { phoneAccess: 'blocked' } } }); let attempts = 0;
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '卿独处' }, r => {
+        assert.equal(r.tools.some(t => t.function.name === 'tool_wechat'), false);
+        if (!attempts++) return { toolCalls: [wxCall('blocked', { content: '我能发消息了' })] };
+        assert.match(r.messages.at(-1).content, /无法使用手机/); return silent();
+    });
+    assert.equal(h.snapshot.events.filter(e => e.kind === 'message.sent').length, 0);
+});
+
+test('两轮查资料后仍可原生联系玩家，微信不占用第三轮读取预算', async () => {
+    const h = await harness(); let calls = 0;
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '查完路线再联系我' }, r => {
+        if (r.purpose === 'narrator') return { content: '卿查完路线后给玩家发微信。' };
+        if (calls++ < 2) return { toolCalls: [{ id: 'read-' + calls, type: 'function', function: { name: 'get_scene_context', arguments: '{}' } }] };
+        assert.deepEqual(Array.from(r.tools, t => t.function.name), ['tool_wechat']);
+        return { toolCalls: [wxCall('send-after-reads', { content: '路线看好了，你在哪？' })] };
+    });
+    assert.equal(h.snapshot.events.filter(e => e.kind === 'message.sent').length, 1);
+    assert.equal(h.requests.filter(r => r.purpose === 'actor').length, 3);
+});
+
+test('原生发送落盘后旁白失败，恢复只重写旁白且不重复发送', async () => {
+    const h = await harness();
+    await assert.rejects(h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '继续' }, r => {
+        if (r.purpose === 'narrator') throw new Error('旁白断线');
+        return { toolCalls: [wxCall('sent-before-failure', { content: '拿到快递了吗？' })] };
+    }), /旁白断线/);
+    await h.retry(turnOf(h).turnId, r => { assert.equal(r.purpose, 'narrator'); return { content: '卿已发出微信，等玩家回复。' }; });
+    assert.equal(h.snapshot.events.filter(e => e.kind === 'message.sent').length, 1);
+    assert.equal(turnOf(h).status, 'complete');
 });

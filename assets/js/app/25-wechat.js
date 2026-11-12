@@ -2164,8 +2164,7 @@
             if (image ? text : !text) throw new Error('微信文字与图片必须二选一，消息内容不能空');
             if (__s.pendingActiveWechatMessages.length) throw new Error('本轮已发起微信联系，等待玩家回应；不能继续自问自答或补发下一轮消息');
             // 主动联系不是被动微信的多气泡回复：不接受嵌套消息列表或发送者字段。
-            if (wxProtocol.extractJSON(text) !== null || /^\s*```/.test(text)) throw new Error('content 必须是角色的一条纯文本消息，不接受 JSON 消息列表或发送者；图片请使用独立的 image 参数');
-            if (text.length > wxProtocol.MAX_CONTENT_LEN) throw new Error(`主动微信消息不得超过 ${wxProtocol.MAX_CONTENT_LEN} 字符`);
+            if (!image) wxProtocol.normalizeActiveText(text);
             if (sendAt !== undefined && !wxTime.valid(wxTime.parse(sendAt))) throw new Error('微信发送时间无效');
             const message = image ? { type: 'image_request', media: image, ...(sendAt ? { sendAt } : {}) }
                 : sendAt ? { type: 'text', content: text, sendAt } : text;

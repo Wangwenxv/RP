@@ -115,26 +115,55 @@
         modelRunner, onUsage, maxCharacters }) {
         const context = Context().compile({ snapshot, actorId, conversationId, kind, stimulus, maxCharacters });
         const boundTools = Context().createTools(snapshot, actorId, conversationId);
+        const wechatTool = kind === 'rp' && window.RPHubWorldOrchestrator.canReadPhone(snapshot, actorId)
+            ? { type: 'function', function: { name: 'tool_wechat',
+                description: '以当前绑定角色身份发一条真实微信。content 是本人纯文本短消息，不能含发送者或JSON消息列表。targetActorId 省略时联系玩家，也可选择已认识的NPC。每次人物决策仅接收一次发送，成功后不再工具续写；联系玩家时等待玩家回答，联系NPC时由收件人独立回应。消息在世界提交成功后才算发送，不虚构已读、回复或约定。',
+                parameters: { type: 'object', properties: { content: { type: 'string', maxLength: window.RPHubWeChatProtocol.MAX_CONTENT_LEN },
+                    targetActorId: { type: 'string', enum: context.allowedTargetActorIds } }, required: ['content'], additionalProperties: false } } }
+            : null;
         const messages = context.messages.map(item => ({ ...item }));
         let repaired = false, toolRounds = 0;
         for (;;) {
-            const result = await request({ purpose: 'actor', actorId, messages, tools: toolRounds < 2 ? boundTools.definitions : undefined,
+            const offeredTools = [...(toolRounds < 2 ? boundTools.definitions : []), ...(wechatTool ? [wechatTool] : [])];
+            const result = await request({ purpose: 'actor', actorId, messages, tools: offeredTools.length ? offeredTools : undefined,
                 apiConfig, signal, budget, modelRunner, onUsage });
             const calls = result?.toolCalls;
             if (Array.isArray(calls) && calls.length) {
-                if (calls.length > 4) throw new Error('一次最多四个角色读取工具');
-                if (toolRounds >= 2) throw new Error('人物读取已完成，请返回最终行动提案');
-                toolRounds++;
+                if (calls.length > 4) throw new Error('一次最多四个角色工具调用');
+                let outgoing = null;
+                const receipts = [];
                 messages.push(result.assistantMessage || { role: 'assistant', content: result.content || null,
                     tool_calls: calls.map(({ index, ...call }) => call) });
                 for (const call of calls) {
                     abortCheck(signal);
                     let output;
-                    try { output = boundTools.execute(call.function.name, parseJson(call.function.arguments)); }
-                    catch (_) { output = { status: 'invalid_arguments' }; }
+                    if (call.function.name === 'tool_wechat') {
+                        try {
+                            if (!wechatTool) throw new Error('当前场景未提供微信发送工具或本人无法使用手机');
+                            if (outgoing) throw new Error('本次人物决策已发起一次微信联系，请等待收件人回应');
+                            const args = parseJson(call.function.arguments);
+                            if (Object.keys(args).some(key => !['content', 'targetActorId'].includes(key))) throw new Error('微信工具不能指定发送者、消息列表、图片或未知字段');
+                            const target = args.targetActorId === undefined ? snapshot.definition.playerActorId : args.targetActorId;
+                            const text = window.RPHubWeChatProtocol.normalizeActiveText(args.content);
+                            outgoing = validateProposal({ decision: 'act', actions: [{ kind: 'tell', channel: 'dm', targetActorId: target, text }],
+                                referencedEvidenceIds: [], needsPlayerResponse: target === snapshot.definition.playerActorId }, context, 'rp');
+                            output = { queued: true, delivered: false, senderActorId: actorId, recipientActorId: target,
+                                awaitingPlayer: outgoing.needsPlayerResponse };
+                        } catch (error) { output = { status: 'invalid_arguments', error: error.message }; }
+                        receipts.push({ callId: call.id, name: 'tool_wechat', ...output });
+                    } else {
+                        if (toolRounds >= 2) output = { status: 'budget_exhausted', error: '人物读取已完成，请返回最终行动提案' };
+                        else try { output = boundTools.execute(call.function.name, parseJson(call.function.arguments)); }
+                        catch (_) { output = { status: 'invalid_arguments' }; }
+                    }
                     messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(output) });
                 }
-                if (toolRounds === 2) messages.push({ role: 'user', content: '本次资料读取已结束。请根据已获得的资料返回最终JSON；未知项保持未知，可以等待或保留意见，不再调用工具。' });
+                // Sending is a final proposal, never an extra model turn that could invent a reply.
+                // The orchestrator still owns the atomic, revision-checked store commit.
+                if (outgoing) return { proposal: outgoing, contextBudget: context.budget, wechatToolReceipts: receipts };
+                if (toolRounds >= 2) throw new Error('人物读取已完成；请返回最终行动提案或有效的微信发送');
+                toolRounds++;
+                if (toolRounds === 2) messages.push({ role: 'user', content: '本次资料读取已结束。请根据已获得的资料返回最终JSON，或调用仍提供的微信发送工具；未知项保持未知，可以等待或保留意见，不再查询资料。' });
                 continue;
             }
             try {

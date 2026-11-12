@@ -331,6 +331,10 @@ html[data-app-theme=dark] .world-view button.world-primary { color: var(--world-
 .world-witness-help summary { cursor: pointer; list-style: none; width: 20px; height: 20px; text-align: center; border: 1px solid var(--world-border); border-radius: 50%; line-height: 18px; }
 .world-witness-help p { position: absolute; bottom: 28px; right: 0; z-index: 30; width: min(310px, 78vw); padding: 16px; background: var(--world-paper); border: 1px solid var(--world-border); border-radius: 10px; box-shadow: var(--world-shadow); color: var(--world-ink); font-size: 12px; line-height: 1.9; }
 .world-edited-input { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 11px; color: var(--world-accent); }
+.world-wechat-handoff { display: flex; align-items: center; gap: 8px; padding: 8px 24px; border-bottom: 1px solid var(--world-border); color: var(--world-accent); font-size: 11px; flex: none; }
+.world-wechat-handoff span { flex: 1; min-width: 0; }
+.world-view .world-wechat-handoff button { font-size: 11px; padding: 4px 8px; }
+.world-wechat-handoff .world-icon { width: 16px; height: 16px; flex: none; }
 .world-state-correction summary { cursor: pointer; font-size: 12px; color: var(--world-muted); }
 .world-state-correction > :is(label,p,template,button) { margin-top: 14px; }
 .world-dialog-backdrop { position: absolute; inset: 0; z-index: 100; background: var(--world-overlay); display: grid; place-items: center; padding: 20px; }
