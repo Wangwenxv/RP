@@ -1,5 +1,9 @@
 # App 模块地图（assets/js/app/）
 
+> 2026-11-11 新增 `35-world-session.js`（`worldSession`）：独立世界创建／会话／群聊／状态／分支／更卡／导入导出及恢复界面，在 `historyRetrieval` 后初始化。纯世界服务分别位于 `world-model.js`、`world-store.js`、`world-projections.js`、`actor-context.js`、`actor-runtime.js`、`world-orchestrator.js`、`scene-narrator.js`；组件是 `world-components.js`，样式 `assets/css/world.css`。按人物观察过滤，不复用旧单卡历史。见 [多角色世界实际实施交接](./Multi-Agent-Engineering/06-implementation-status.md)。
+
+> 2026-11-09 `22` 的全部分支聊天升级到 JSONL v2；`branch-chat-utils.js` 保存微信及附件，`data-services` 支持多作用域原子写入，`25/27/wechat-media` 支持导入后时间线/图片缓存重载与携带表情图片。见 [分支聊天导出交接](./branch-chat-export.md)。
+
 > 2026-11-08 `30`新增本轮用途关键词召回和search地点记忆，`31`新增创建内置新版副本；地理引擎与地图编辑/浏览共用search，字段校验及包往返保留keywords。见 [地点用途检索与快递聚集区](./geography-place-search.md)。
 
 > 2026-11-08 `built-in-content` 明确NPC默认镜头、玩家终点与RP/微信来源；`23` 原动态预设入口接入新COT/准备文案。56项专项与Qwen参数假API回归通过。见 [NPC镜头交接](./rp-scene-routing.md)。

@@ -409,7 +409,10 @@
         return out;
     }
 
+    // Shared by single-character and world composers. A silent decision settles the batch too.
+    const countUnanswered = items => items.reduce((count, item) => item.isReply || item.settled ? 0 : item.isUser ? count + 1 : count, 0);
     window.RPHubWeChatProtocol = Object.freeze({
+        countUnanswered,
         MAX_MESSAGES,
         MAX_CONTENT_LEN,
         PROTOCOL,

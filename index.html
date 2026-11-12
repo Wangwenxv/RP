@@ -8,6 +8,7 @@
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
     <meta name="rphub-update-api" content="https://rphub-presence.zeabur.app">
     <title>RP Hub</title>
+    <link rel="stylesheet" href="assets/css/world.css">
     <!-- GitHub Pages rebuild marker for CSS-only animation update. -->
     <!-- <link rel="icon" href="logo.jpg" type="image/jpeg"> -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -202,6 +203,7 @@
 
 
             <!-- Chat View -->
+            <world-session-view v-if="currentView === 'world'" :hub="worldUi" :characters="characters" :maps="geographyMapOptions" @navigate="toggleNavigation"></world-session-view>
             <div v-show="currentView === 'chat'" class="chat-view-root flex flex-col h-full relative">
 
                 <!-- Character Background Layer -->
@@ -2951,6 +2953,7 @@
                             <span>记忆 {{ fullBackupPreview.memories }}</span><span>自建地图 {{ fullBackupPreview.maps }}</span>
                             <span>图片 {{ fullBackupPreview.images }}</span><span>语音 {{ fullBackupPreview.voices }}</span>
                             <span>文档原件 {{ fullBackupPreview.documents }}</span>
+                            <template v-if="fullBackupPreview.worlds"><span>世界存档 {{ fullBackupPreview.worlds }}</span><span>世界分支 {{ fullBackupPreview.worldBranches }}</span><span>世界人物 {{ fullBackupPreview.worldActors }}</span><span>世界事件 {{ fullBackupPreview.worldEvents }}</span></template>
                             <span>工坊草稿 {{ fullBackupPreview.workshop }}</span><span>小说 {{ fullBackupPreview.novels }}</span>
                         </div>
                         <label v-if="fullBackupPreview.credentials" class="flex items-center gap-2 text-sm text-gray-700">
@@ -3523,6 +3526,17 @@
         document.write('<script src="assets/js/wechat-protocol.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/emoji-catalog.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/data-services.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/branch-chat-utils.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/world-model.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/world-projections.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/world-store.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/actor-context.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/actor-runtime.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/world-chat.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/world-memory.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/scene-narrator.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/world-orchestrator.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/world-components.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/backup-utils.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/runtime-services.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/ui-components.js?v=' + new Date().getTime() + '"><\/script>');
@@ -3563,6 +3577,7 @@
         document.write('<script src="assets/js/app/26-recap.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/33-conversation-clear.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/34-history-retrieval.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/35-world-session.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app.js?v=' + new Date().getTime() + '"><\/script>');
     </script>
 </body>

@@ -121,6 +121,11 @@
             if ((arrayKeys.includes(key) || /^(?:chat|classic_memories|wechat_timeline|wechat_media_tasks)_/.test(key)) && !Array.isArray(value)) throw new Error(`备份中的 ${key} 应为列表`);
             if (['settings', 'memory_settings', 'user', 'worldinfo_settings'].includes(key) && (!value || typeof value !== 'object' || Array.isArray(value))) throw new Error(`备份中的 ${key} 设置无效`);
             if (key === 'workshop_characters' && (typeof value !== 'string' || !Array.isArray(JSON.parse(value)))) throw new Error('备份中的角色工坊草稿无效');
+            if (key.startsWith('world_session_v1:')) {
+                if (!value || value.schemaVersion !== 1 || !value.definition || !value.branches
+                    || key !== 'world_session_v1:' + encodeURIComponent(value.sessionId)) throw new Error('备份中的世界存档身份或版本无效');
+                if (window.RPHubWorldStore) window.RPHubWorldStore.validateSession(JSON.parse(JSON.stringify(value)));
+            }
         }
         const characters = entries.find(([key]) => key === 'characters')?.[1];
         if (!Array.isArray(characters)) throw new Error('这不是包含全部角色的完整备份');
@@ -145,6 +150,12 @@
             else if (key === 'geographyMaps') result.maps = value.length;
             else if (key === 'workshop_characters') result.workshop = JSON.parse(value).length;
             else if (key === 'novel_library') result.novels = value?.books?.length || 0;
+            else if (key.startsWith('world_session_v1:')) {
+                result.worlds = (result.worlds || 0) + 1;
+                result.worldActors = (result.worldActors || 0) + value.definition.actors.length;
+                result.worldBranches = (result.worldBranches || 0) + Object.keys(value.branches).length;
+                result.worldEvents = (result.worldEvents || 0) + Object.values(value.branches).reduce((n, b) => n + b.events.length, 0);
+            }
         }
         return result;
     };
@@ -193,6 +204,17 @@
             if (entries.length % 128 === 0) { onProgress(`正在检查记录 ${entries.length}/${manifest.records.length}`); await pause(); }
         }
         validateEntries(entries);
+        // Decode owns these records. Restore canonical projections from events,
+        // rather than accepting a stale or edited actor-state cache in a backup.
+        if (window.RPHubWorldStore) for (const record of entries.filter(([key]) => key.startsWith('world_session_v1:'))) {
+            record[1] = window.RPHubWorldStore.validateSession(record[1]);
+        }
+        if (window.RPHubWorldModel) for (const [key, session] of entries.filter(([key]) => key.startsWith('world_session_v1:'))) {
+            for (const actor of session.definition.actors) if (actor.card && actor.cardHash
+                && actor.cardHash !== await window.RPHubWorldModel.hash(actor.card, actor.cardHash.split(':')[0])) throw new Error('备份中的世界角色卡校验失败');
+            if (session.definition.map && session.definition.mapHash
+                && session.definition.mapHash !== await window.RPHubWorldModel.hash(session.definition.map, session.definition.mapHash.split(':')[0])) throw new Error('备份中的世界地图校验失败');
+        }
         return { entries, browser: sanitizeBrowser(manifest.browser, manifest.credentials), credentials: manifest.credentials, createdAt: manifest.createdAt, summary: summarize(entries) };
     };
     window.RPHubBackup = Object.freeze({ create, inspect, summarize, stripCredentials, removeCredentials, sanitizeBrowser, browserKeys });

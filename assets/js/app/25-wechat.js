@@ -1291,16 +1291,10 @@
          * replyDecision='silent' 是用户消息上的元数据，不添加空白 assistant 消息。
          */
         const wechatUnansweredCount = computed(() => {
-            let count = 0;
-            for (const item of wechatTimeline.value) {
-                if (item.channel !== 'wechat') continue;
-                if (item.role === 'assistant') count = 0;
-                else if (item.role === 'user') {
-                    count++;
-                    if (item.replyDecision === 'silent') count = 0;
-                }
-            }
-            return count;
+            return window.RPHubWeChatProtocol.countUnanswered(wechatTimeline.value
+                .filter(item => item.channel === 'wechat')
+                .map(item => ({ isUser: item.role === 'user', isReply: item.role === 'assistant',
+                    settled: item.role === 'user' && item.replyDecision === 'silent' })));
         });
         __s.wechatUnansweredCount = wechatUnansweredCount;
 
@@ -2267,7 +2261,7 @@
                     document: item.document,
                     imageUrl: item.type === 'image' ? (item.media?.assetId ? __s.wechatMediaUrls?.[item.media.assetId] || '' : item.content) : '',
                     // 命中表情包库则带上图，前端据此渲染成图；未命中为 null，回退文本。
-                    stickerImage: item.type === 'sticker' ? stickerImageOf(item.content) : null
+                    stickerImage: item.type === 'sticker' ? item.stickerImage || stickerImageOf(item.content) : null
                 });
             }
             return items;

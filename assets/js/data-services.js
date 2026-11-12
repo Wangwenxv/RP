@@ -104,6 +104,80 @@
     const scopedStorageKey = (name, id) => `${storageKey(name)}_${id}`;
     const legacyScopedStorageKey = (name, id) => `${legacyStorageKey(name)}_${id}`;
 
+    // A validated import is committed atomically; Blob originals must keep their binary type.
+    const setStoredValues = async (entries) => {
+        assertStorageWritable();
+        if (!Array.isArray(entries) || entries.some(entry => !Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string')) throw new Error('存储批次无效');
+        if (new Set(entries.map(entry => entry[0])).size !== entries.length) throw new Error('存储批次键重复');
+        if (!mainDb) await initDB();
+        assertStorageWritable();
+        await new Promise((resolve, reject) => {
+            const transaction = mainDb.transaction(['store'], 'readwrite');
+            const store = transaction.objectStore('store');
+            transaction.oncomplete = resolve;
+            transaction.onabort = () => reject(transaction.error || new Error('聊天导入已回滚'));
+            transaction.onerror = () => reject(transaction.error || new Error('聊天导入失败'));
+            try { entries.forEach(([name, value]) => store.put(value, storageKey(name))); }
+            catch (error) { transaction.abort(); reject(error); }
+        });
+    };
+
+    // A synchronous read/compare/write callback keeps world revisions and their
+    // event batches in one IndexedDB transaction, including across browser tabs.
+    const updateStoredValue = async (name, update) => {
+        assertStorageWritable();
+        if (!mainDb) await initDB();
+        assertStorageWritable();
+        if (typeof update !== 'function') throw new Error('存储更新函数无效');
+        return new Promise((resolve, reject) => {
+            const transaction = mainDb.transaction(['store'], 'readwrite');
+            const store = transaction.objectStore('store');
+            const request = store.get(storageKey(name));
+            let next, failure;
+            request.onsuccess = () => {
+                try {
+                    next = update(request.result === undefined ? undefined : cloneForStorage(request.result));
+                    if (next && typeof next.then === 'function') throw new Error('事务内不能等待异步操作');
+                    if (next !== undefined) store.put(cloneForStorage(next), storageKey(name));
+                } catch (error) { failure = error; transaction.abort(); }
+            };
+            transaction.oncomplete = () => resolve(next === undefined ? undefined : cloneForStorage(next));
+            transaction.onabort = () => reject(failure || transaction.error || new Error('存储事务已回滚'));
+            transaction.onerror = () => reject(failure || transaction.error || new Error('存储事务失败'));
+        });
+    };
+
+    // Multi-key counterpart for creating a revised world while atomically
+    // confirming that the source world has not changed during card preparation.
+    const updateStoredValues = async (names, update) => {
+        assertStorageWritable();
+        if (!mainDb) await initDB();
+        assertStorageWritable();
+        if (!Array.isArray(names) || !names.length || new Set(names).size !== names.length || typeof update !== 'function') throw new Error('多记录事务参数无效');
+        return new Promise((resolve, reject) => {
+            const transaction = mainDb.transaction(['store'], 'readwrite'), store = transaction.objectStore('store');
+            const current = Object.create(null); let remaining = names.length, next, failure;
+            names.forEach(name => {
+                const request = store.get(storageKey(name));
+                request.onsuccess = () => {
+                    current[name] = request.result === undefined ? undefined : cloneForStorage(request.result);
+                    if (--remaining) return;
+                    try {
+                        next = update(current);
+                        if (!next || typeof next !== 'object' || typeof next.then === 'function') throw new Error('事务更新必须同步返回记录');
+                        for (const [name, value] of Object.entries(next)) {
+                            if (!names.includes(name)) throw new Error('事务不能写入未读取的记录');
+                            if (value !== undefined) store.put(cloneForStorage(value), storageKey(name));
+                        }
+                    } catch (error) { failure = error; transaction.abort(); }
+                };
+            });
+            transaction.oncomplete = () => resolve(cloneForStorage(next));
+            transaction.onabort = () => reject(failure || transaction.error || new Error('存储事务已回滚'));
+            transaction.onerror = () => reject(failure || transaction.error || new Error('存储事务失败'));
+        });
+    };
+
     // 聊天清理必须同事务更新正文、镜像和派生摘要，避免刷新后只清掉一部分。
     const setScopedStoredValues = async (id, values) => {
         assertStorageWritable();
@@ -223,6 +297,26 @@
         return value;
     };
 
+    // A world picker should not deserialize unrelated chats, credentials or media.
+    const getStoredEntriesByPrefix = async logicalPrefix => {
+        if (typeof logicalPrefix !== 'string' || !logicalPrefix || logicalPrefix.length > 1024) throw new Error('存储前缀无效');
+        if (!mainDb) await initDB();
+        const prefix = storageKey(logicalPrefix);
+        return new Promise((resolve, reject) => {
+            const entries = [], transaction = mainDb.transaction(['store'], 'readonly');
+            const request = transaction.objectStore('store').openCursor(IDBKeyRange.bound(prefix, prefix + '\uffff'));
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) return;
+                entries.push([getStorageLogicalKey(String(cursor.key)), cursor.value]);
+                cursor.continue();
+            };
+            transaction.oncomplete = () => resolve(entries);
+            transaction.onabort = () => reject(transaction.error || new Error('读取存储目录失败'));
+            transaction.onerror = () => reject(transaction.error || new Error('读取存储目录失败'));
+        });
+    };
+
     const readStorageSnapshot = async () => {
         if (!mainDb) await initDB();
         const entries = new Map();
@@ -293,6 +387,7 @@
         getScopedStoredValue: (name, id) => dbGetWithLegacy(scopedStorageKey(name, id), legacyScopedStorageKey(name, id)),
         getStoredValue: (name) => dbGetWithLegacy(storageKey(name), legacyStorageKey(name)),
         getStorageLogicalKey,
+        getStoredEntriesByPrefix,
         initDB,
         isDatabaseClosingError,
         readStorageKeys,
@@ -303,7 +398,10 @@
         scanStorageEntries,
         setScopedStoredValue: (name, id, value, options = {}) => dbSet(scopedStorageKey(name, id), value, options),
         setScopedStoredValues,
+        setStoredValues,
         setStoredValue: (name, value, options = {}) => dbSet(storageKey(name), value, options),
+        updateStoredValue,
+        updateStoredValues,
         unwrapForStorage
     });
 })();
@@ -926,7 +1024,7 @@
     const STORY_BRANCH_MAIN_ID = 'main';
     const STORY_BRANCH_SCOPE_SEPARATOR = '__branch__';
     const STORY_BRANCH_CHAT_EXPORT_TYPE = 'rp-hub-branch-chat';
-    const STORY_BRANCH_CHAT_EXPORT_VERSION = 1;
+    const STORY_BRANCH_CHAT_EXPORT_VERSION = 2;
 
     const getStoryBranchScopeId = (characterId, branchId = STORY_BRANCH_MAIN_ID) => {
         if (!characterId || !branchId || branchId === STORY_BRANCH_MAIN_ID) return characterId || null;
