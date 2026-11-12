@@ -432,3 +432,16 @@ test('旁白不获得尚未实施的延后动作正文，只有待办元数据',
             { kind: 'act', text: '以后才洗脸。', delayMinutes: 45 }] };
     });
 });
+
+test('NPC主动私聊玩家复用原联系人，不创建第二个同名私聊', async () => {
+    const h = await harness();
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '继续卿自己的场景。' }, r =>
+        r.purpose === 'narrator' ? { content: '卿问玩家到了没有。' } : { decision: 'act', actions: [
+            { kind: 'tell', targetActorId: 'player', channel: 'dm', text: '布置好了，你到了没？' }
+        ] });
+    assert.equal(h.snapshot.conversations.filter(c => c.kind === 'dm' && c.participantActorIds.includes('qing')
+        && c.participantActorIds.includes('player')).length, 1);
+    const sent = h.snapshot.events.find(e => e.kind === 'message.sent' && e.actorId === 'qing');
+    assert.equal(sent.conversationId, 'dm-player-qing');
+    assert.deepEqual(Array.from(sent.access.principals).sort(), ['player', 'qing']);
+});

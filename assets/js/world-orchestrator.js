@@ -326,7 +326,10 @@
                                 { type: 'tell', text: action.text, targetActorId: target, channel: 'in_person' }, [step.actorId, target], cause));
                             enqueueReaction(target, null, step.depth + 1, true, [step.actorId, target]);
                         } else {
-                            const conversationId = `dm:${[step.actorId, target].sort().join(':')}`;
+                            const existing = snapshot.conversations.find(item => item.kind === 'dm'
+                                && item.participantActorIds.length === 2 && item.participantActorIds.includes(step.actorId)
+                                && item.participantActorIds.includes(target));
+                            const conversationId = existing?.conversationId || `dm:${[step.actorId, target].sort().join(':')}`;
                             if (!conversationOf(snapshot, conversationId) && !newConversations.some(item => item.conversationId === conversationId))
                                 newConversations.push({ conversationId, kind: 'dm', name: `${actor(snapshot, step.actorId).name} · ${actor(snapshot, target).name}`,
                                     participantActorIds: [step.actorId, target], memberships: [step.actorId, target].map(actorId => ({ actorId, joinedAtSeq: 0 })) });
