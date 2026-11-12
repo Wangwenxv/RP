@@ -61,3 +61,16 @@ test('上下文硬预算按实际序列化messages计数，无关世界书留待
     assert.equal(C.readEvidence(h.snapshot, 'qing', 'unrelated').status, 'ok');
     assert.throws(() => C.compile({ snapshot: h.snapshot, actorId: 'qing', maxCharacters: 300 }), /必需人设/);
 });
+
+test('独立RP按本人的近期约定预取地图，其他人不会获得私聊目的地', async () => {
+    const map = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../worlds/jiangnan-south-campus.json'), 'utf8'));
+    const h = await harness({ definition: { map } });
+    await h.run({ kind: 'wechat', conversationId: 'dm-player-qing', text: '到教学楼A栋109布置生日惊喜。' }, () =>
+        ({ messages: [{ type: 'text', content: '收到。' }] }));
+    const C = h.context.window.RPHubActorContext;
+    const qing = C.compile({ snapshot: h.snapshot, actorId: 'qing', kind: 'rp', stimulus: '继续自己的场景。' });
+    const su = C.compile({ snapshot: h.snapshot, actorId: 'suqixue', kind: 'rp', stimulus: '继续自己的场景。' });
+    assert.match(JSON.stringify(qing.packet.geography), /教学楼A栋/);
+    assert.equal(su.packet.geography, null);
+    assert.doesNotMatch(JSON.stringify(su.messages), /生日惊喜|109/);
+});

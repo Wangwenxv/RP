@@ -45,7 +45,9 @@
         const playerId = snapshot.definition.playerActorId;
         const unique = [...new Set(ids)].filter(id => id !== playerId && actor(snapshot, id)?.enabled !== false && actor(snapshot, id)?.card);
         const offset = snapshot.events.length % (unique.length || 1);
+        const latestSeq = snapshot.events.at(-1)?.seq || 1;
         return unique.map((id, index) => ({ id, score: (String(text).includes(actor(snapshot, id).name) ? 100 : 0)
+            + 20 * (Context().observed(snapshot, id).filter(e => e.kind === 'message.sent' && e.actorId === playerId).at(-1)?.seq || 0) / latestSeq
             + (canReadPhone(snapshot, id) ? 10 : 0) - (snapshot.actorStates?.[id]?.replyOrder ?? ((index + offset) % unique.length)) }))
             .sort((a, b) => b.score - a.score).map(item => item.id);
     }
@@ -145,12 +147,14 @@
                 const conversation = conversationOf(snapshot, options.conversationId);
                 if (kind === 'wechat' && (!conversation || conversation.kind === 'rp'
                     || !participants(snapshot, conversation).includes(snapshot.definition.playerActorId))) throw new Error('玩家不能在这个会话发送微信');
+                const savedWitnesses = savedInput?.access.principals.filter(id => id !== snapshot.definition.playerActorId);
                 const selected = kind === 'wechat' ? participants(snapshot, conversation)
-                    : savedInput ? savedInput.access.principals.filter(id => id !== snapshot.definition.playerActorId) : (options.actorIds || []);
+                    : savedInput ? savedInput.payload.sceneActorIds || (savedInput.payload.inputMode === 'author_premise'
+                        ? snapshot.definition.actors.filter(a => canSimulate(snapshot, a.actorId)).map(a => a.actorId) : savedWitnesses) : (options.actorIds || []);
                 if (selected.some(id => !actor(snapshot, id))) throw new Error('本轮人物不存在');
                 const ordered = kind === 'advance' ? [] : candidateOrder(snapshot, selected, text).slice(0, 3);
                 turn = { turnId: options.turnId || uuid(), sessionId, branchId: snapshot.branchId, kind, text, conversationId: options.conversationId || null,
-                    witnessActorIds: kind === 'rp' ? [...new Set(savedInput ? selected : options.witnessActorIds || selected)] : [],
+                    witnessActorIds: kind === 'rp' ? [...new Set(savedInput ? savedWitnesses : options.witnessActorIds || selected)] : [],
                     status: 'running', queue: ordered.map(id => ({ actorId: id, conversationId: options.conversationId || null, depth: 0 })),
                     stepIndex: 0, completedActorIds: [], actorResults: {}, callsUsed: 0, totalCalls: 0,
                     sceneEventIds: [], usage: [], retryCount: 0, inputMode: savedInput?.payload.inputMode || options.inputMode || 'player_action',
@@ -162,7 +166,8 @@
                 const newTime = options.storyTime || snapshot.storyTime;
                 const atSnapshot = { ...snapshot, storyTime: newTime };
                 const events = savedInput || options.replyOnly || kind === 'advance' ? [] : [eventDraft(turn, atSnapshot, 'player.input', snapshot.definition.playerActorId,
-                    options.conversationId || null, { text, channel: kind, inputMode: turn.inputMode }, inputPrincipals)];
+                    options.conversationId || null, { text, channel: kind, inputMode: turn.inputMode,
+                        ...(kind === 'rp' ? { sceneActorIds: selected } : {}) }, inputPrincipals)];
                 if (kind === 'wechat' && !options.replyOnly) events.push(eventDraft(turn, atSnapshot, 'message.sent', snapshot.definition.playerActorId,
                     options.conversationId, { text, type: 'text' }, inputPrincipals));
                 if (kind === 'rp') {
@@ -198,7 +203,7 @@
             const pending = clone(snapshot.pendingActions || []);
             let pendingChanged = false;
             for (const task of pending) {
-                if (task.status !== 'pending' || !task.dueAt || timeNumber(task.dueAt) > timeNumber(snapshot.storyTime)) continue;
+                if (!['pending', 'rescheduled'].includes(task.status) || !task.dueAt || timeNumber(task.dueAt) > timeNumber(snapshot.storyTime)) continue;
                 if (task.type === 'move' && task.routeVerified) {
                     const state = clone(snapshot.actorStates?.[task.actorId] || {});
                     state.position = { status: 'confirmed', placeId: task.placeId, source: task.pendingActionId, storyTime: snapshot.storyTime };
@@ -206,9 +211,15 @@
                     await commit(`${turn.turnId}:due:${task.pendingActionId}`, [eventDraft(turn, snapshot, 'action.committed',
                         task.actorId, null, { type: 'arrived', text: `${actor(snapshot, task.actorId).name}到达${task.placeId}`, placeId: task.placeId },
                         [task.actorId], task.sourceEvidenceIds || [])], { actorStates: { [task.actorId]: state } });
-                } else if (['reply', 'tell', 'wait'].includes(task.type) && canSimulate(snapshot, task.actorId) && turn.queue.length < maxSteps) {
-                    if (!turn.queue.some(item => item.actorId === task.actorId)) turn.queue.push({ actorId: task.actorId,
-                        conversationId: task.conversationId || null, depth: 0, pendingActionId: task.pendingActionId });
+                } else if (canSimulate(snapshot, task.actorId)) {
+                    let step = turn.queue.slice(turn.stepIndex).find(item => item.actorId === task.actorId);
+                    if (!step && turn.queue.length < maxSteps) {
+                        step = { actorId: task.actorId, conversationId: task.conversationId || null, depth: 0,
+                            ownScene: !['reply', 'tell'].includes(task.type), revisit: turn.completedActorIds.includes(task.actorId) };
+                        turn.queue.push(step);
+                    }
+                    if (!step) continue;
+                    step.pendingActionIds = [...new Set([...(step.pendingActionIds || []), task.pendingActionId])];
                     task.status = 'rescheduled'; pendingChanged = true;
                 }
             }
@@ -269,6 +280,10 @@
                 const current = await Store().load(sessionId, snapshot.branchId);
                 if (current.revision !== beforeRevision) throw Object.assign(new Error('世界分支已变化，旧角色提案已丢弃'), { name: 'WorldConflictError' });
                 const proposal = result.proposal, events = [], changes = {}, newConversations = [], tasks = clone(snapshot.pendingActions || []);
+                // A due plan wakes its owner to decide afresh. It is reviewed once, never replayed blindly.
+                for (const task of tasks) if ((step.pendingActionIds || []).includes(task.pendingActionId)) {
+                    task.status = 'complete'; task.reviewedAt = snapshot.storyTime;
+                }
                 const cause = proposal.referencedEvidenceIds.filter(id => snapshot.events.some(event => event.eventId === id));
                 const c = conversationOf(snapshot, step.conversationId);
                 const visibleParticipants = step.ownScene || (turn.kind === 'advance' && !isWechat && !step.inPerson)

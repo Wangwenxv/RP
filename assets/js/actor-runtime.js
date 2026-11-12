@@ -50,6 +50,7 @@
             if (action.channel !== undefined && !['dm', 'in_person'].includes(action.channel)) throw new Error('未知告知渠道');
             if (action.delayMinutes !== undefined && (!Number.isInteger(action.delayMinutes) || action.delayMinutes < 0 || action.delayMinutes > 10080)) throw new Error('延后时间须为0到10080剧情分钟');
             if (action.kind === 'move' && (typeof action.placeId !== 'string' || !action.placeId)) throw new Error('移动需要目标地点');
+            if (action.kind === 'move' && !context.mapPlaceIds.includes(action.placeId)) throw new Error('移动目标必须使用公共地图中的地点ID，请查询地点后重试');
             const clean = { kind: kind === 'rp' && action.kind === 'reply' ? 'speak' : action.kind };
             for (const key of ['text', 'targetActorId', 'channel', 'placeId', 'delayMinutes', 'mode']) if (action[key] !== undefined) clean[key] = action[key];
             if (action.state !== undefined) {
@@ -115,13 +116,15 @@
         const context = Context().compile({ snapshot, actorId, conversationId, kind, stimulus, maxCharacters });
         const boundTools = Context().createTools(snapshot, actorId, conversationId);
         const messages = context.messages.map(item => ({ ...item }));
-        let repaired = false;
+        let repaired = false, toolRounds = 0;
         for (;;) {
-            const result = await request({ purpose: 'actor', actorId, messages, tools: boundTools.definitions,
+            const result = await request({ purpose: 'actor', actorId, messages, tools: toolRounds < 2 ? boundTools.definitions : undefined,
                 apiConfig, signal, budget, modelRunner, onUsage });
             const calls = result?.toolCalls;
             if (Array.isArray(calls) && calls.length) {
                 if (calls.length > 4) throw new Error('一次最多四个角色读取工具');
+                if (toolRounds >= 2) throw new Error('人物读取已完成，请返回最终行动提案');
+                toolRounds++;
                 messages.push(result.assistantMessage || { role: 'assistant', content: result.content || null,
                     tool_calls: calls.map(({ index, ...call }) => call) });
                 for (const call of calls) {
@@ -131,6 +134,7 @@
                     catch (_) { output = { status: 'invalid_arguments' }; }
                     messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(output) });
                 }
+                if (toolRounds === 2) messages.push({ role: 'user', content: '本次资料读取已结束。请根据已获得的资料返回最终JSON；未知项保持未知，可以等待或保留意见，不再调用工具。' });
                 continue;
             }
             try {

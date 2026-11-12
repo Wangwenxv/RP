@@ -154,7 +154,7 @@
                 '\n本世界微信目前只用type=text，最多6条气泡。不输出actions或来源引用。群聊时只发送本人的消息，对方既可能是玩家也可能是群内另一人物。收到问候、问题或新的安排，若没有明确的通信限制，按人设正常回应；资料缺失不意味着无法回复。'
                 : `返回 JSON：{"decision":"reply|silent|wait|act","actions":[{"kind":"tell|speak|act|move|wait|remember","text":"本人短台词/动作","targetActorId":"仅tell可用","channel":"dm|in_person","placeId":"仅move可用","delayMinutes":0}],"referencedEvidenceIds":[],"needsPlayerResponse":false}。\n` +
                     `silent的actions为空。RP可用speak/act/remember表达自己的选择；remember只记自己的意图，不确认客观事实。tell是实际通信提案，需有渠道和可接收机会。\n` +
-                    `先回顾自己的未完成约定与待办，决定现在要不要执行、告知、出发或保持现状；不要只描述心情而永远搁置约定。不得因为世界时间推进就知道他人的秘密。`);
+                    `先回顾自己的未完成约定与待办，决定现在要不要执行、告知、出发或保持现状；不要只描述心情而永远搁置约定。决定现在前往时，在同一提案提交move；收拾物品的act并不代表已出发。若起始位置未知，可先用act.state.position建立本人的初始场景，再提交move，路线由程序验证。不得因为世界时间推进就知道他人的秘密。`);
         const incoming = sources.filter(e => e.kind === 'message.sent' && e.conversationId === conversationId && e.actorId !== actorId);
         const unanswered = window.RPHubWorldChat?.pendingInputs(snapshot, conversationId) || [];
         const timing = kind === 'wechat' ? { currentTime: snapshot.storyTime, firstUnansweredAt: unanswered[0]?.storyTime || null,
@@ -172,7 +172,8 @@
         const wireSize = () => JSON.stringify(makeMessages()).length;
         const required = wireSize();
         if (required > maxCharacters) throw new Error(`${actor.name} 的必需人设与本轮输入超出上下文字符预算，请提高预算或整理角色卡`);
-        packet.geography = prefetchGeography(snapshot, actorId, stimulus);
+        const geographyText = kind === 'rp' ? [stimulus, ...sources.slice(-6).map(textOf)].join('\n') : stimulus;
+        packet.geography = prefetchGeography(snapshot, actorId, geographyText);
         if (wireSize() > maxCharacters) packet.geography = null;
         for (const memory of window.RPHubWorldMemory?.recall(snapshot, actorId, stimulus) || []) {
             memories.push({ memoryEventId: memory.memoryEventId, summary: memory.summary, sourceEventIds: memory.sourceEventIds });

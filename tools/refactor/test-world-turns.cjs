@@ -118,7 +118,7 @@ test('已记录的手机限制仅在玩家推进到截止时间后释放并读�
     assert.equal(h.context.window.RPHubActorContext.searchMemory(h.snapshot, 'suqixue', '晚读消息').count, 1);
 });
 test('有35分钟路线的移动先出发，玩家推进到到达时刻才到达', async () => {
-    const h = await harness({ actorStates: { qing: { phoneAccess: 'available', position: 'dorm' } }, definition: { map: { places: [] } } });
+    const h = await harness({ actorStates: { qing: { phoneAccess: 'available', position: 'dorm' } }, definition: { map: { places: [{ id: 'library', name: '图书馆' }] } } });
     h.context.window.RPHubGeography.route = () => ({ status: 'ok', duration: { typicalMinutes: 35 } });
     await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '卿准备去图书馆' }, request =>
         request.purpose === 'narrator' ? { content: '卿出发前往图书馆。' } : { decision: 'act', actions: [{ kind: 'move', placeId: 'library' }] });
@@ -129,13 +129,56 @@ test('有35分钟路线的移动先出发，玩家推进到到达时刻才到达
     assert.equal(h.snapshot.actorStates.qing.position.placeId, 'library');
     assert.equal(h.snapshot.actorStates.qing.position.status, 'confirmed');
 });
-test('无限读取工具被全回合6调用预算截停，故障不转成剧情沉默', async () => {
+test('人物无限读取在两轮后关闭工具，故障不转成剧情沉默', async () => {
     const h = await harness();
     await assert.rejects(h.run({ kind: 'wechat', conversationId: 'dm-player-qing', text: '你好' }, () => ({ content: null,
-        toolCalls: [{ id: 'lookup', type: 'function', function: { name: 'get_scene_context', arguments: '{}' } }] })), /预算/);
-    assert.equal(h.requests.length, 6);
+        toolCalls: [{ id: 'lookup', type: 'function', function: { name: 'get_scene_context', arguments: '{}' } }] })), /读取已完成/);
+    assert.equal(h.requests.length, 3);
     assert.equal(turnOf(h).status, 'failed');
     assert.equal(turnOf(h).actorResults.qing, undefined);
+});
+
+test('两轮资料读取后仍能提交最终提案，为其他人物与旁白保留预算', async () => {
+    const h = await harness(); let reads = 0;
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '继续自己的场景' }, r => {
+        if (r.purpose === 'narrator') return { content: '卿继续整理书桌。' };
+        if (reads++ < 2) {
+            assert.ok(r.tools.length);
+            return { toolCalls: [{ id: 'lookup-' + reads, type: 'function', function: { name: 'get_scene_context', arguments: '{}' } }] };
+        }
+        assert.equal(r.tools, undefined); assert.match(r.messages.at(-1).content, /读取已结束/);
+        return { decision: 'act', actions: [{ kind: 'act', text: '整理书桌。' }] };
+    });
+    assert.equal(turnOf(h).status, 'complete'); assert.equal(h.requests.length, 4);
+});
+
+test('到期act计划唤醒本人重新决定一次，过去计划不自动成为已完成动作', async () => {
+    const h = await harness();
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '独处' }, () => ({ decision: 'act',
+        actions: [{ kind: 'act', text: '稍后整理书桌。', delayMinutes: 10 }] }));
+    const taskId = h.snapshot.pendingActions[0].pendingActionId;
+    assert.equal(h.snapshot.events.filter(e => e.kind === 'action.committed').length, 0);
+    let reviewed = 0;
+    await h.run({ kind: 'advance', storyTime: '2026-05-12T17:10:00' }, r => {
+        if (r.purpose === 'narrator') return { content: '卿改变了计划。' };
+        const packet = JSON.parse(r.messages[1].content);
+        if (r.actorId === 'qing' && packet.ownPendingActions.some(t => t.pendingActionId === taskId)) reviewed++;
+        return silent();
+    });
+    assert.equal(reviewed, 1); assert.equal(h.snapshot.pendingActions[0].status, 'complete');
+    await h.run({ kind: 'advance', storyTime: '2026-05-12T17:20:00' }, r => {
+        if (r.purpose === 'narrator') return { content: '保持现状。' };
+        assert.equal(JSON.parse(r.messages[1].content).ownPendingActions.some(t => t.pendingActionId === taskId), false);
+        return silent();
+    });
+    assert.equal(h.snapshot.events.filter(e => e.kind === 'action.committed' && /整理书桌/.test(e.payload.text)).length, 0);
+});
+
+test('不存在的移动地点须修复，不生成永远无法结算的路线待办', async () => {
+    const h = await harness({ definition: { map: { places: [{ id: 'library', name: '图书馆' }] } } });
+    await assert.rejects(h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '继续' }, () =>
+        ({ decision: 'act', actions: [{ kind: 'move', placeId: 'made-up-room' }] })), /公共地图/);
+    assert.equal(h.snapshot.pendingActions.length, 0);
 });
 test('RP台词只给在场者观察，未在场者连原文ID也不可读取', async () => {
     const h = await harness();
@@ -266,7 +309,7 @@ test('连发中途调时不调用模型，两条时间分别保留并告知五�
     assert.equal(h.snapshot.events.filter(e => e.kind === 'message.sent' && e.actorId === 'player').length, 2);
 });
 test('全世界RP镜头独立行动，卿先告知林晚再移动，未告知者不知道生日秘密', async () => {
-    const h = await harness({ definition: { map: { places: [] } }, actorStates: { qing: { position: 'dorm' }, linwan: { position: 'library' } } });
+    const h = await harness({ definition: { map: { places: [{ id: 'a109', name: 'A109' }] } }, actorStates: { qing: { position: 'dorm' }, linwan: { position: 'library' } } });
     h.context.window.RPHubGeography.route = () => ({ status: 'ok', duration: { typicalMinutes: 15 } });
     await h.run({ kind: 'wechat', conversationId: 'dm-player-qing', text: '秘密：今晚给苏祈雪办生日惊喜，叫上林晚。' }, () => reply('收到，保密。'));
     await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing', 'linwan', 'suqixue'], witnessActorIds: [], text: '卿继续自己的场景，玩家出门买蛋糕。', inputMode: 'author_premise', apiConfig: { maxWorldCalls: 18 } }, r => {
@@ -358,4 +401,34 @@ test('修改后的RP输入可重新回应一次，保留见证范围且不重复
     const result = await h.Engine.runTurn(options);
     assert.equal(result.events.filter(e => e.kind === 'player.input').length, 1);
     await assert.rejects(h.Engine.runTurn(options), /只能继续尚未重新回应/);
+});
+
+test('作者输入修订后继续所有原场景人物，同时仍无全文见证人', async () => {
+    const h = await harness();
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing', 'linwan', 'suqixue'], witnessActorIds: [],
+        inputMode: 'author_premise', text: '关上窗户。' }, r => r.purpose === 'director' ? { updates: [] } : silent());
+    const input = h.snapshot.events.find(e => e.kind === 'player.input');
+    const revised = await h.Store.reviseRecord({ sessionId: h.snapshot.sessionId, branchId: h.snapshot.branchId,
+        expectedRevision: h.snapshot.revision, eventId: input.eventId, text: '打开窗户。' });
+    const seen = [];
+    await h.Engine.runTurn({ sessionId: revised.sessionId, branchId: revised.branchId, kind: 'rp', conversationId: 'rp-main',
+        existingInputEventId: input.eventId, modelRunner: r => {
+            if (r.purpose === 'director') return { updates: [] };
+            seen.push(r.actorId); assert.doesNotMatch(JSON.stringify(r.messages), /打开窗户/); return silent();
+        } });
+    assert.deepEqual(seen.sort(), ['linwan', 'qing', 'suqixue']);
+});
+
+test('旁白不获得尚未实施的延后动作正文，只有待办元数据', async () => {
+    const h = await harness();
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '独处' }, r => {
+        if (r.purpose === 'narrator') {
+            const packet = JSON.parse(r.messages[1].content);
+            assert.doesNotMatch(JSON.stringify(packet), /以后才洗脸/);
+            assert.equal(packet.unansweredActions[0].status, 'not_performed');
+            return { content: '卿把书放回书架。' };
+        }
+        return { decision: 'act', actions: [{ kind: 'act', text: '把书放回书架。' },
+            { kind: 'act', text: '以后才洗脸。', delayMinutes: 45 }] };
+    });
 });
