@@ -226,14 +226,14 @@
             }
             while (turn.stepIndex < turn.queue.length) {
                 Runtime().abortCheck(signal);
-                const step = turn.queue[turn.stepIndex];
+                const stepIndex = turn.stepIndex, step = turn.queue[stepIndex];
                 if (turn.completedActorIds.includes(step.actorId) && !step.revisit) { turn.stepIndex++; continue; }
                 const isWechat = turn.kind === 'wechat' || (turn.kind === 'advance' && !!step.conversationId
                     && conversationOf(snapshot, step.conversationId)?.kind !== 'rp' && !step.inPerson);
                 if (isWechat && !canReadPhone(snapshot, step.actorId)) {
                     turn.actorResults[step.actorId] = { status: 'unread', reason: 'known_phone_restriction' };
                     turn.completedActorIds.push(step.actorId); turn.stepIndex++;
-                    await commit(`${turn.turnId}:step:${step.actorId}:unread`, [], saveTurn());
+                    await commit(`${turn.turnId}:step:${stepIndex}:${step.actorId}:unread`, [], saveTurn());
                     continue;
                 }
                 const rpPhone = turn.kind === 'rp' && step.conversationId && conversationOf(snapshot, step.conversationId)?.kind !== 'rp'
@@ -281,7 +281,7 @@
                         evidenceStatus: 'subjective_state' }, [step.actorId], cause));
                 for (const [index, action] of proposal.actions.entries()) {
                     if (action.delayMinutes > 0 || action.kind === 'wait') {
-                        tasks.push({ pendingActionId: `${turn.turnId}:${step.actorId}:${index}`, actorId: step.actorId,
+                        tasks.push({ pendingActionId: `${turn.turnId}:${stepIndex}:${step.actorId}:${index}`, actorId: step.actorId,
                             type: action.kind, status: 'pending', dueAt: action.delayMinutes ? advanceTime(snapshot.storyTime, action.delayMinutes) : null,
                             ...action, conversationId: step.conversationId, sourceEvidenceIds: cause, turnId: turn.turnId });
                         continue;
@@ -293,7 +293,7 @@
                     } else if (action.kind === 'tell') {
                         const target = action.targetActorId;
                         if (action.channel !== 'in_person' && !canReadPhone(snapshot, step.actorId)) {
-                            tasks.push({ pendingActionId: `${turn.turnId}:${step.actorId}:${index}`, actorId: step.actorId,
+                            tasks.push({ pendingActionId: `${turn.turnId}:${stepIndex}:${step.actorId}:${index}`, actorId: step.actorId,
                                 type: 'tell', status: 'pending', dueAt: snapshot.actorStates?.[step.actorId]?.phoneRestrictedUntil || null,
                                 ...action, sourceEvidenceIds: cause, reason: 'sender_phone_restriction', turnId: turn.turnId });
                             continue;
@@ -302,7 +302,7 @@
                             const a = snapshot.actorStates?.[step.actorId]?.position, b = snapshot.actorStates?.[target]?.position;
                             const ap = typeof a === 'string' ? a : a?.placeId, bp = typeof b === 'string' ? b : b?.placeId;
                             if (!ap || ap !== bp || a?.status === 'travelling' || b?.status === 'travelling') {
-                                tasks.push({ pendingActionId: `${turn.turnId}:${step.actorId}:${index}`, actorId: step.actorId,
+                                tasks.push({ pendingActionId: `${turn.turnId}:${stepIndex}:${step.actorId}:${index}`, actorId: step.actorId,
                                     type: 'tell', status: 'pending', dueAt: null, ...action, sourceEvidenceIds: cause,
                                     reason: 'no_confirmed_meeting', turnId: turn.turnId });
                                 continue;
@@ -321,7 +321,7 @@
                         }
                     } else if (action.kind === 'move') {
                         const route = routeMove({ ...snapshot, actorStates: { ...snapshot.actorStates, ...changes } }, step.actorId, action.placeId, action.mode);
-                        const task = { pendingActionId: `${turn.turnId}:${step.actorId}:${index}`, actorId: step.actorId,
+                        const task = { pendingActionId: `${turn.turnId}:${stepIndex}:${step.actorId}:${index}`, actorId: step.actorId,
                             type: 'move', status: 'pending', placeId: action.placeId, sourceEvidenceIds: cause, turnId: turn.turnId,
                             routeVerified: !!route, dueAt: route ? advanceTime(snapshot.storyTime, route.minutes) : null,
                             ...(route ? { from: route.from, routeMinutes: route.minutes } : { reason: 'unknown_route_or_position' }) };
@@ -348,8 +348,9 @@
                 turn.actorResults[step.actorId] = { status: proposal.decision, proposal, contextBudget: result.contextBudget };
                 if (!turn.completedActorIds.includes(step.actorId)) turn.completedActorIds.push(step.actorId);
                 turn.stepIndex++;
-                // Commit actions and completed step atomically so retries cannot duplicate a successful actor.
-                await commit(`${turn.turnId}:step:${step.actorId}:accepted`, events,
+                // Scope commits and tasks to the queue step: an actor can react twice in one turn.
+                // Retrying a saved step still uses the same key and cannot duplicate its actions.
+                await commit(`${turn.turnId}:step:${stepIndex}:${step.actorId}:accepted`, events,
                     { ...saveTurn(), ...(newConversations.length ? { conversations: newConversations } : {}),
                         actorStates: changes, pendingActions: tasks });
                 // In-person tell is already heard; add only the actual utterance to the recipient's observation.

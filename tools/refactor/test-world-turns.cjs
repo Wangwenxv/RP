@@ -285,6 +285,43 @@ test('全世界RP镜头独立行动，卿先告知林晚再移动，未告知者
     assert.equal(h.snapshot.actorStates.linwan.position.status, 'travelling');
     assert.equal(h.context.window.RPHubActorContext.searchMemory(h.snapshot, 'suqixue', '生日惊喜').count, 0);
 });
+test('同轮再次收到消息后的行动和待办独立保存，叙述重试不重复人物步骤', async () => {
+    const h = await harness();
+    let qingCalls = 0;
+    await assert.rejects(h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing', 'linwan'],
+        witnessActorIds: [], text: '各自继续安排', apiConfig: { maxWorldCalls: 18 } }, r => {
+        if (r.purpose === 'narrator') throw new Error('模拟叙述网络中断');
+        if (r.actorId === 'linwan') return { decision: 'act', actions: [
+            { kind: 'tell', targetActorId: 'qing', channel: 'dm', text: '收到，带上彩灯。' }
+        ] };
+        qingCalls++;
+        if (qingCalls === 1) return { decision: 'act', actions: [
+            { kind: 'tell', targetActorId: 'linwan', channel: 'dm', text: '来A109布置生日惊喜。' },
+            { kind: 'wait', text: '等十分钟检查布置', delayMinutes: 10 }
+        ] };
+        assert.match(JSON.stringify(JSON.parse(r.messages[1].content).observations), /带上彩灯/);
+        return { decision: 'act', actions: [
+            { kind: 'act', text: '收到回复后把彩灯加入布置清单。', state: { activity: '整理布置清单' } },
+            { kind: 'wait', text: '等二十分钟检查彩灯', delayMinutes: 20 }
+        ] };
+    }), /模拟叙述网络中断/);
+    assert.equal(qingCalls, 2);
+    const actionCount = () => h.snapshot.events.filter(e => e.kind === 'action.committed' && /加入布置清单/.test(e.payload.text)).length;
+    assert.equal(actionCount(), 1);
+    assert.equal(h.snapshot.actorStates.qing.activity, '整理布置清单');
+    const tasks = h.snapshot.pendingActions.filter(t => t.actorId === 'qing');
+    assert.equal(tasks.length, 2);
+    assert.equal(new Set(tasks.map(t => t.pendingActionId)).size, 2);
+    assert.deepEqual(Array.from(tasks, t => t.dueAt), ['2026-05-12T17:10:00', '2026-05-12T17:20:00']);
+    await h.retry(turnOf(h).turnId, r => {
+        assert.equal(r.purpose, 'narrator');
+        assert.match(r.messages[1].content, /加入布置清单/);
+        return { content: '卿和林晚已确认布置安排。' };
+    });
+    assert.equal(actionCount(), 1);
+    assert.equal(turnOf(h).status, 'complete');
+});
+
 test('作者关闭手机只修改明确的玩家状态，各NPC不能读取整段作者输入', async () => {
     const h = await harness();
     await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing', 'linwan', 'suqixue'], witnessActorIds: [], text: '关闭手机，夜晚悄悄到来。', inputMode: 'author_premise' }, r => {
