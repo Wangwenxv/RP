@@ -22,18 +22,20 @@
             idempotencyKey: M.id('wechat-send'), events: [{ kind: 'message.sent', actorId: player, conversationId,
                 access: { principals: members }, payload: { text, type: 'text' }, source: { kind: 'player_input' } }] });
     }
-    async function ensureOpening(snapshot) {
-        if (snapshot.events.some(e => e.kind === 'narration.published' || (e.kind === 'player.input' && e.payload.channel === 'rp'))) return snapshot;
+    function openingEvents(snapshot) {
+        if (snapshot.events.some(e => e.kind === 'narration.published' || (e.kind === 'player.input' && e.payload.channel === 'rp'))) return [];
         const C = window.RPHubActorContext, a = snapshot.definition.actors.find(a => a.actorId === 'suqixue' && a.enabled !== false);
         const raw = a && C.cardOf(a).first_mes;
         const c = snapshot.conversations.find(c => c.kind === 'rp');
-        if (!raw || !c) return snapshot;
-        const text = C.resolveText(raw, snapshot, a), M = window.RPHubWorldModel;
-        return window.RPHubWorldStore.commit({ sessionId: snapshot.sessionId, branchId: snapshot.branchId,
-            expectedRevision: snapshot.revision, idempotencyKey: 'suqixue-opening-v1', events: [
-                { kind: 'narration.published', actorId: snapshot.definition.playerActorId, conversationId: c.conversationId,
-                    access: { principals: [] }, payload: { text, readerOnly: true, opening: true, coveredEventIds: [] }, source: { kind: 'card_opening', actorId: a.actorId } }
-            ] });
+        if (!raw || !c) return [];
+        const text = C.resolveText(raw, snapshot, a);
+        return [{ kind: 'narration.published', actorId: snapshot.definition.playerActorId, conversationId: c.conversationId,
+            access: { principals: [] }, payload: { text, readerOnly: true, opening: true, coveredEventIds: [] }, source: { kind: 'card_opening', actorId: a.actorId } }];
     }
-    window.RPHubWorldChat = Object.freeze({ pendingInputs, send, ensureOpening });
+    async function ensureOpening(snapshot) {
+        const events = openingEvents(snapshot); if (!events.length) return snapshot;
+        return window.RPHubWorldStore.commit({ sessionId: snapshot.sessionId, branchId: snapshot.branchId,
+            expectedRevision: snapshot.revision, idempotencyKey: 'suqixue-opening-v1', events });
+    }
+    window.RPHubWorldChat = Object.freeze({ pendingInputs, send, openingEvents, ensureOpening });
 })();

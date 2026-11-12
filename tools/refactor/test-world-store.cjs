@@ -116,3 +116,45 @@ test('剧情时间校验严格拒绝非法日历日与未来/倒退事件', asyn
   await assert.rejects(commit(S, s, [{ ...sent('future', 'player', 'dm', ['player', 'qing'], '未来'), storyTime: '2026-05-12T18:00:00' }]), /边界/);
   await assert.rejects(commit(S, s, [], { storyTime: '2026-06-31T17:00:00' }), /无效/);
 });
+
+test('开局会话和旁白一次原子保存，旁白不授予人物知识，错误开局整批回滚', async () => {
+  const { S, P, context } = harness(); let writes = 0;
+  const update = context.window.RPHubStorage.updateStoredValue;
+  context.window.RPHubStorage.updateStoredValue = (...args) => { writes++; return update(...args); };
+  const opening = { kind: 'narration.published', actorId: 'player', conversationId: 'rp', access: { principals: [] },
+    payload: { text: '三月的校园。', opening: true, readerOnly: true, coveredEventIds: [] } };
+  const s = await S.create({ definition: definition(), conversations: [conversation('rp', ['player', 'qing'], 'rp')], initialEvents: [opening] });
+  assert.equal(writes, 1); assert.equal(s.events.length, 1); assert.equal(s.conversations.length, 1);
+  assert.equal(P.hasObserved(s, s.events[0].eventId, 'qing'), false);
+  assert.equal((await S.load(s.sessionId)).events[0].payload.text, '三月的校园。');
+  await assert.rejects(S.create({ definition: definition(), initialEvents: [opening] }), /会话/);
+  assert.equal((await S.list()).length, 1);
+});
+
+test('头像原地保存并保留卡哈希、各分支事件与知识，世界包可往返', async () => {
+  const { S, P } = harness(); let s = await S.create({ definition: definition(), conversations: [conversation('dm', ['player', 'qing'])] });
+  s = await commit(S, s, [sent('secret-avatar', 'player', 'dm', ['player', 'qing'], '秘密'), read('read-avatar', 'qing', 'dm', ['secret-avatar'])]);
+  const fork = await S.fork({ sessionId: s.sessionId, branchId: 'main', atSeq: s.events.length, name: '副线' });
+  const before = plain(s), avatar = 'data:image/png;base64,aGVsbG8=';
+  const changed = await S.updateActorAvatar({ sessionId: s.sessionId, branchId: 'main', actorId: 'qing', avatar, expectedDefinitionRevision: s.definition.revision });
+  assert.equal(changed.sessionId, s.sessionId); assert.equal(changed.revision, s.revision);
+  assert.deepEqual(plain(changed.events), before.events);
+  assert.equal(changed.definition.actors[2].cardHash, before.definition.actors[2].cardHash);
+  assert.equal((await S.load(s.sessionId, fork.branchId)).definition.actors[2].avatar, avatar);
+  const imported = await S.importSession(await S.exportSession(s.sessionId));
+  assert.equal(imported.definition.actors[2].avatar, avatar);
+  assert.equal(P.hasObserved(imported, 'secret-avatar', 'qing'), true);
+  assert.equal(P.hasObserved(imported, 'secret-avatar', 'suqixue'), false);
+  const removed = await S.updateActorAvatar({ sessionId: changed.sessionId, actorId: 'qing', avatar: '', expectedDefinitionRevision: changed.definition.revision });
+  assert.equal(removed.definition.actors[2].avatar, '');
+});
+
+test('并发头像更新与旧编辑草稿不能覆盖新资料，拒绝脚本头像', async () => {
+  const { S } = harness(), s = await S.create({ definition: definition() });
+  await assert.rejects(S.updateActorAvatar({ sessionId: s.sessionId, actorId: 'qing', avatar: 'javascript:alert(1)' }), /格式/);
+  const result = await Promise.allSettled(['aGVsbG8=', 'd29ybGQ='].map(data => S.updateActorAvatar({ sessionId: s.sessionId, actorId: 'qing',
+    avatar: 'data:image/png;base64,' + data, expectedDefinitionRevision: s.definition.revision })));
+  assert.equal(result.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(result.find(r => r.status === 'rejected').reason.code, 'WORLD_CONFLICT');
+  await assert.rejects(S.reviseDefinition({ sessionId: s.sessionId, definition: s.definition, expectedDefinitionRevision: s.definition.revision }), /编辑期间/);
+});

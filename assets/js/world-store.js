@@ -12,6 +12,7 @@
         visit(branch);
     };
     const metadata = session => ({ sessionId: session.sessionId, name: session.definition.name,
+        versionLabel: '版本 ' + (session.definition.revision || 1),
         activeBranchId: session.activeBranchId, recordedAt: session.recordedAt,
         branches: Object.values(session.branches).map(b => ({ branchId: b.branchId, name: b.name, revision: b.revision,
             parentBranchId: b.parentBranchId || null, forkAtSeq: b.forkAtSeq ?? null, eventCount: b.events.length, storyTime: b.storyTime })) });
@@ -21,7 +22,7 @@
         return { ...M().clone(branch), schemaVersion: M().SCHEMA_VERSION, sessionId: session.sessionId,
             definition: M().clone(session.definition), branches: metadata(session).branches };
     };
-    const create = async ({ definition, storyTime = '2026-05-12T17:00:00', sessionId, conversations = [], actorStates = {} } = {}) => {
+    const create = async ({ definition, storyTime = '2026-05-12T17:00:00', sessionId, conversations = [], actorStates = {}, initialEvents = [] } = {}) => {
         const normalized = M().normalizeDefinition(definition), sid = sessionId || M().id('session');
         if (!Number.isFinite(M().storyTimeNumber(storyTime))) M().fail('剧情时间无效');
         for (const actor of normalized.actors) if (actor.card) {
@@ -38,6 +39,20 @@
                 branchId: 'main', name: '主线', revision: 0, storyTime, events: [], ...M().clone(baseState), baseState,
                 idempotency: {}, parentBranchId: null, forkAtSeq: null
             } } };
+        // Conversations and the card opening are part of the first atomic write.
+        // Do not rewrite the full map/card snapshot once for each setup step.
+        const snapshot = flatten(session, 'main');
+        for (const draft of initialEvents) {
+            const event = { ...M().clone(draft), eventId: draft.eventId || M().id('event'), seq: snapshot.events.length + 1,
+                sessionId: sid, branchId: 'main', storyTime: draft.storyTime || storyTime, recordedAt: new Date().toISOString() };
+            if (event.storyTime !== storyTime || snapshot.events.some(e => e.eventId === event.eventId)) M().fail('开局事件时间或 ID 无效');
+            M().validateEvent(event, snapshot, { persisted: true }); P().applyEvent(snapshot, event); snapshot.events.push(event);
+        }
+        session.branches.main.events = snapshot.events;
+        session.branches.main.conversations = snapshot.conversations;
+        session.branches.main.actorStates = snapshot.actorStates;
+        session.branches.main.turns = snapshot.turns;
+        session.branches.main.pendingActions = snapshot.pendingActions;
         await S().updateStoredValue(key(sid), old => { if (old) M().fail('世界存档 ID 已存在', 'WORLD_EXISTS'); return session; });
         return flatten(session, 'main');
     };
@@ -51,7 +66,7 @@
         // The fallback is retained for lightweight pure-function test harnesses.
         const entries = S().getStoredEntriesByPrefix ? await S().getStoredEntriesByPrefix(PREFIX)
             : (await S().readStorageSnapshot()).filter(([k]) => k.startsWith(PREFIX));
-        return entries.map(([, session]) => metadata(session));
+        return entries.map(([, session]) => metadata(session)).sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)));
     };
     const patchEvents = (snapshot, patch, turnId) => {
         const result = [], admin = snapshot.definition.playerActorId;
@@ -184,10 +199,13 @@
     };
     // Card/map changes create a separate session. Existing worlds keep the exact
     // definition that generated their history, including every previous branch.
-    const reviseDefinition = async ({ sessionId, definition } = {}) => {
+    const reviseDefinition = async ({ sessionId, definition, expectedDefinitionRevision, branchId, expectedRevision } = {}) => {
         const original = await S().getStoredValue(key(sessionId));
         if (!original) M().fail('世界存档不存在', 'WORLD_NOT_FOUND');
         const old = original.definition;
+        if ((expectedDefinitionRevision != null && expectedDefinitionRevision !== old.revision)
+            || (expectedRevision != null && original.branches[branchId]?.revision !== expectedRevision))
+            M().fail('世界在编辑期间发生变化，请重新打开编辑页', 'WORLD_CONFLICT');
         const oldIds = old.actors.map(a => a.actorId).sort(), nextIds = (definition?.actors || []).map(a => a.actorId).sort();
         if (definition?.playerActorId !== old.playerActorId || JSON.stringify(oldIds) !== JSON.stringify(nextIds)) M().fail('更新卡牌必须保留玩家身份和全部人物 ID；新增或删除人物请另建世界');
         const next = M().normalizeDefinition(definition);
@@ -210,13 +228,29 @@
         const oldKey = key(sessionId), newKey = key(newId);
         await S().updateStoredValues([oldKey, newKey], records => {
             const latest = records[oldKey];
-            if (!latest || JSON.stringify(Object.values(latest.branches).map(b => [b.branchId, b.revision])) !==
+            if (!latest || latest.definition.revision !== old.revision || JSON.stringify(Object.values(latest.branches).map(b => [b.branchId, b.revision])) !==
                 JSON.stringify(Object.values(original.branches).map(b => [b.branchId, b.revision]))) M().fail('原世界在卡牌准备期间发生变化，请重新打开更新界面', 'WORLD_CONFLICT');
             if (records[newKey]) M().fail('新存档 ID 已存在');
             return { [newKey]: copy };
         });
         return flatten(copy);
     };
+    // An avatar change stays in the same save and leaves every event/card hash intact.
+    const updateActorAvatar = async ({ sessionId, branchId, actorId, avatar, expectedDefinitionRevision } = {}) => {
+        if (avatar !== '' && M().normalizeAvatar(avatar) !== avatar) M().fail('头像格式无效，请使用 JPG、PNG、WebP 或 GIF 图片');
+        const session = await S().updateStoredValue(key(sessionId), current => {
+            if (!current) M().fail('世界存档不存在', 'WORLD_NOT_FOUND');
+            if (expectedDefinitionRevision != null && current.definition.revision !== expectedDefinitionRevision)
+                M().fail('世界资料已更新，请重新打开后设置头像', 'WORLD_CONFLICT');
+            const actor = current.definition.actors.find(a => a.actorId === actorId);
+            if (!actor) M().fail('人物不在当前世界');
+            actor.avatar = avatar;
+            current.definition.revision = (current.definition.revision || 1) + 1;
+            current.recordedAt = new Date().toISOString();
+            return current;
+        });
+        return flatten(session, branchId);
+    };
     window.RPHubWorldStore = Object.freeze({ PREFIX, key, create, list, load, commit, fork, selectBranch,
-        validateSession, exportSession, importSession, reviseDefinition });
+        validateSession, exportSession, importSession, reviseDefinition, updateActorAvatar });
 })();

@@ -16,6 +16,10 @@
     const assertId = (value, label = 'ID') => { if (!validId(value)) fail(`${label}无效`); return value; };
     const id = (prefix = 'world') => `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`}`;
     const cardData = card => card?.data && typeof card.data === 'object' ? card.data : card || {};
+    // Avatars are presentation data, never character knowledge or model input.
+    const normalizeAvatar = value => typeof value === 'string' && value.length <= 2000000
+        && (/^data:image\/(?:png|jpe?g|webp|gif|avif);base64,[A-Za-z0-9+/=\r\n]+$/i.test(value)
+            || /^https?:\/\/[^\s<>"']+$/i.test(value)) ? value : '';
     const storyTimeNumber = value => {
         const match = typeof value === 'string' && /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
         if (!match) return NaN;
@@ -68,6 +72,7 @@
             a.bindings = a.bindings || {};
             a.enabled = a.actorId === result.playerActorId ? true : a.enabled !== false;
             a.cardRevision = a.cardRevision || 1;
+            if (a.avatar !== undefined) a.avatar = normalizeAvatar(a.avatar);
             return a;
         });
         if (!seen.has(result.playerActorId)) fail('世界缺少玩家人物');
@@ -164,5 +169,5 @@
         return event;
     };
     window.RPHubWorldModel = Object.freeze({ SCHEMA_VERSION, EVENT_KINDS, clone, fail, validId, assertId, id, hash,
-        cardData, storyTimeNumber, preflightCard, normalizeDefinition, normalizeConversation, activeMembers, eventText, validateEvent });
+        cardData, normalizeAvatar, storyTimeNumber, preflightCard, normalizeDefinition, normalizeConversation, activeMembers, eventText, validateEvent });
 })();

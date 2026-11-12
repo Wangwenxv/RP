@@ -162,7 +162,7 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
             await page.getByRole('button', { name: '发送', exact: true }).click();
             await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldBusy.value);
         }
-        check('连发只保存两个气泡，未请求模型且显示待回应2条', requests.length === burstStart && await page.getByText('待回应 2 条').isVisible());
+        check('连发只保存两个气泡，未请求模型且显示待回应2条', requests.length === burstStart && await page.getByText('2 条消息待回应').isVisible());
         await page.evaluate(() => { window.__WORLD_SCOPE__.worldMemoryEnabled.value = true; });
         await page.getByRole('button', { name: '让对方回复', exact: true }).click();
         await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldBusy.value);
