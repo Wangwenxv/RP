@@ -17,6 +17,8 @@
 
 模型仍根据人设决定是否拍照，不使用关键词硬塞固定饭菜图片。已配置生图时优先生成当前场景；不为了匹配内置沙拉照片改写角色正在吃的饭菜。默认 NAI 偏插画，用户可选择其它适配的模型改善风格。人物自拍当前是文字提示生图，尚无参考图身份锁定。
 
+2026-11-13 补充：原单卡微信已修正“已开生图仍直接发送描述卡片”的缺口。生图可用时不再提供 `describe` 发送格式；模型误用时在发送任何气泡、调用生图之前，最多让聊天模型纠正一次。再次误用则报错，保留待回复消息。主动 RP 工具的提示、schema 和守卫同步限制。未配置/关闭时继续允许描述图片，已保存的旧描述卡片仍可查看。完整实测和维护说明见 [生图格式修正交接](./Multi-Agent-Engineering/14-wechat-image-reliability.md)。
+
 ## 模型协议
 
 原微信与世界微信回复都支持 `messages` 中混排文字和 `image_request`；每个角色的一次决策最多一张图片，最多六个气泡。
@@ -65,6 +67,8 @@
 | `assets/js/world-model.js`、`wechat-media.js` | 图片事件校验、短描述与像素证据边界 |
 
 ## 验证方式
+
+人物固定外貌可在角色卡 `rp_hub_image_identity` 扩展或微信设置中保存，本人入镜的 generate 请求使用 `selfPortrait:true`，程序拼入固定特征；普通饭菜与风景不套用。卡片、工具、存档与验证见 [人物外貌生图交接](./Multi-Agent-Engineering/15-character-image-identity.md)。
 
 ```powershell
 node --test tools/refactor/test-image-generation.cjs tools/refactor/test-world-images.cjs tools/refactor/test-wechat-media.cjs tools/refactor/test-world-turns.cjs tools/refactor/test-world-store.cjs

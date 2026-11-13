@@ -26,10 +26,12 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
   });
   // Use the same worldbook matcher as RP, without replacing the in-memory test storage.
   vm.runInContext(read('built-in-content.js'), context);
+  vm.runInContext(read('core-utils.js'), context);
   context.window.RPHubUtils = { generateUUID: context.generateUUID };
   vm.runInContext(read('data-services.js'), context);
   context.window.RPHubStorage = storage;
   vm.runInContext(read('wechat-media.js'), context);
+  vm.runInContext(read('image-generation.js'), context);
   const original = context.window.RPHubWeChatMedia;
   const images = new Map([['builtin-salad', { id: 'builtin-salad', caption: '一碗沙拉', title: '沙拉', captionSource: 'curated' }]]);
   let readCount = 0;
@@ -375,6 +377,141 @@ test('未配置生图时不联网、不把生图失败降级成描述成功', as
   await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'generate', prompt: 'campus street lamp', description: '北苑楼下的路灯。' } }], signal), /没有开启/);
   assert.equal(h.requests.length, 0);
   await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'album', assetId: 'missing' } }], signal), /不在可用相册/);
+});
+
+function enableGeneration(h, generate = async () => new Blob(['generated pixels'])) {
+  h.s.settings.wechatImageApi = { apiKey: 'fixture-image-key' };
+  h.context.window.RPHubImageGeneration = { ...h.context.window.RPHubImageGeneration, generate };
+}
+const generated = () => ({ type: 'image_request', media: { mode: 'generate',
+  prompt: 'young adult woman, shoulder-length soft hair tucked behind ears, phone selfie, campus corridor, evening light',
+  description: '教学楼走廊里，齐肩头发别在耳后的女生自拍', usage: 'scene_photo' } });
+
+test('本人外貌通过按需工具返回并拼入真实请求，饭菜不套脸，提示词不落历史', async () => {
+  const identity = { prompt: 'slim oval face, dark brown almond eyes', description: '小A外貌', negative: 'anime' };
+  const h = harness(async (_options, count) => count === 1 ? { toolCalls: [loadCall()] }
+    : { content: JSON.stringify({ messages: [{ type: 'image_request', media: { mode: 'generate', selfPortrait: true, prompt: 'phone selfie, campus', description: '走廊里的自拍' } }] }) });
+  h.s.currentCharacter.value.imageIdentity = identity;
+  const calls = [];
+  enableGeneration(h, async (config, prompt) => { calls.push({ config, prompt }); return new Blob(['pixels']); });
+  await h.send('让我看看');
+  const tool = h.requests[1].messages.find(m => m.role === 'tool');
+  assert.ok(tool.content.includes(identity.prompt)); assert.match(tool.content, /"selfPortrait":true/);
+  assert.equal(calls[0].prompt, identity.prompt + ', phone selfie, campus'); assert.equal(calls[0].config.negativePrompt, 'anime');
+  assert.doesNotMatch(JSON.stringify(h.s.wechatTimeline.value), /slim oval face|negativePrompt|selfPortrait|base64,/);
+  await h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'generate', selfPortrait: false, prompt: 'chicken, rice', description: '饭菜' } }], new AbortController().signal);
+  assert.equal(calls[1].prompt, 'chicken, rice'); assert.equal(calls[1].config.negativePrompt, undefined);
+  assert.throws(() => h.original.normalizeIntent({ mode: 'generate', prompt: 'selfie', selfPortrait: 'true' }), /布尔值/);
+  assert.throws(() => h.original.normalizeIntent({ mode: 'album', assetId: 'a', selfPortrait: true }), /布尔值/);
+});
+
+test('已有角色设置保存、禁用、清除外貌；主动发图schema接受本人标记', async () => {
+  const h = harness(); let saves = 0;
+  h.s.saveCharactersNow = async () => { saves++; };
+  h.s.currentCharacter.value.imageIdentity = { prompt: 'oval face', description: '外貌', negative: 'anime', enabled: false };
+  h.s.openWechatSettings();
+  assert.equal(h.s.wechatSettingsDraft.imageIdentityEnabled, false);
+  h.s.wechatSettingsDraft.imageIdentityPrompt = 'dark brown almond eyes';
+  await h.s.saveWechatSettings(); h.s.openWechatSettings();
+  assert.equal(h.s.wechatSettingsDraft.imageIdentityPrompt, 'dark brown almond eyes');
+  assert.equal(h.s.currentCharacter.value.imageIdentity.enabled, false); assert.equal(saves, 1);
+  h.s.wechatSettingsDraft.imageIdentityPrompt = '';
+  await h.s.saveWechatSettings(); h.s.openWechatSettings();
+  assert.equal(h.s.currentCharacter.value.imageIdentity, null); assert.equal(h.s.wechatSettingsDraft.imageIdentityPrompt, '');
+  enableGeneration(h);
+  const media = h.s.normalizeActiveWechatImage({ mode: 'generate', prompt: 'selfie', selfPortrait: true });
+  assert.equal(media.selfPortrait, true);
+  Object.assign(h.context, { ACTIVE_TOOL_WECHAT_TYPE: 'wechat_message' });
+  vm.runInContext(read('app/14-tools-runtime.js'), h.context); h.context.window.RPHubAppSections.toolsRuntime(h.s);
+  assert.equal(h.s.buildActiveToolDefinitions([{ type: 'wechat_message', callName: 'tool_wechat' }])[0].function.parameters.properties.image.properties.selfPortrait.type, 'boolean');
+});
+
+test('真实模型式的漏本人标记在付费前纠正一次；重漏有界失败且非本人明确false', async () => {
+  for (const flag of [true, false, undefined]) {
+    let paid = 0;
+    const h = harness(async (_options, count) => ({ content: JSON.stringify({ messages: [
+      { type: 'text', content: '拍给你' }, { type: 'image_request', media: { mode: 'generate', prompt: 'phone selfie, streetlights',
+        description: '路灯旁的自拍', ...(count > 1 && flag !== undefined ? { selfPortrait: flag } : {}) } }
+    ] }) }));
+    h.s.currentCharacter.value.imageIdentity = { prompt: 'fixed almond eyes', negative: 'anime' };
+    enableGeneration(h, async (_config, prompt) => { paid++; assert.equal(prompt.includes('fixed almond eyes'), flag === true); return new Blob(['pixels']); });
+    await h.send('立刻拍张照');
+    assert.equal(h.requests.length, 2);
+    assert.equal(paid, flag === undefined ? 0 : 1);
+    const correction = h.requests[1].messages.find(m => m.role === 'system' && m.content.includes('刚才的回复尚未发送'));
+    assert.match(correction.content, /遗漏了selfPortrait/);
+    if (flag === undefined) {
+      assert.equal(h.s.wechatTimeline.value.filter(i => i.role === 'assistant').length, 0);
+      assert.equal(h.s.wechatUnansweredCount.value, 1);
+    }
+    assert.throws(() => h.s.normalizeActiveWechatImage({ mode: 'generate', prompt: 'selfie' }), /必须填写selfPortrait/);
+  }
+});
+
+test('生图开启时不提供描述发送格式，旧描述图片不改变当前能力；主动schema同步', async () => {
+  const h = harness(); enableGeneration(h);
+  h.s.wechatTimeline.value = [{ id: 'old', channel: 'wechat', role: 'assistant', type: 'image',
+    media: { descriptionOnly: true, caption: '旧自拍', source: 'description' } }, textItem('user', '现在立刻拍张照给我!')];
+  const prompt = await h.s.buildWechatMediaPrompt();
+  assert.match(prompt, /本轮真实生图/); assert.match(prompt, /"mode":"generate"/);
+  assert.doesNotMatch(prompt, /"mode":"describe"|描述兜底：/);
+  assert.doesNotMatch(await h.s.buildActiveWechatImagePrompt('自拍'), /mode:"describe"/);
+  assert.throws(() => h.s.normalizeActiveWechatImage({ mode: 'describe', description: '新自拍' }), /生图已开启/);
+  Object.assign(h.context, { ACTIVE_TOOL_WECHAT_TYPE: 'wechat_message' });
+  vm.runInContext(read('app/14-tools-runtime.js'), h.context); h.context.window.RPHubAppSections.toolsRuntime(h.s);
+  const image = h.s.buildActiveToolDefinitions([{ type: 'wechat_message', callName: 'tool_wechat' }])[0].function.parameters.properties.image;
+  assert.deepEqual(plain(image.properties.mode.enum), ['album', 'draw', 'generate']);
+  assert.match(image.description, /用 generate/);
+  h.s.currentCharacter.value.wechatImageGenerationEnabled = false;
+  assert.match(await h.s.buildWechatMediaPrompt(), /"mode":"describe"/);
+  assert.doesNotMatch(await h.s.buildWechatMediaPrompt(), /"mode":"generate"/);
+});
+
+test('模型误用描述时仅纠正一次，取得真实像素后才发整批消息；不重复付费', async () => {
+  const h = harness(async (_options, count) => ({ content: JSON.stringify({ messages: [
+    { type: 'text', content: '给你看看' }, count === 1 ? described('教学楼走廊的自拍') : generated()
+  ] }) }));
+  let images = 0; enableGeneration(h, async () => { images++; assert.equal(h.s.wechatTimeline.value.filter(i => i.role === 'assistant').length, 0); return new Blob(['pixels']); });
+  await h.send('现在立刻拍张照给我!');
+  assert.equal(h.requests.length, 2); assert.equal(images, 1);
+  assert.match(h.requests[1].messages.at(-1).content, /尚未发送.*尚未调用生图/);
+  assert.ok(!JSON.stringify(h.requests).includes('fixture-image-key'));
+  const replies = h.s.wechatTimeline.value.filter(i => i.role === 'assistant');
+  assert.equal(replies.length, 2); assert.equal(replies[1].type, 'image');
+  assert.ok(replies[1].media.assetId); assert.equal(replies[1].media.source, 'generate');
+  assert.ok(!replies[1].media.descriptionOnly); assert.equal(h.toasts.length, 0);
+});
+
+test('重复描述误用有界失败，不发前置承诺、不付费、不吞待回复消息', async () => {
+  const h = harness(async () => ({ content: JSON.stringify({ messages: [{ type: 'text', content: '给你看看' }, described('自拍')] }) }));
+  let images = 0; enableGeneration(h, async () => { images++; return new Blob(['pixels']); });
+  await h.send('拍照');
+  assert.equal(h.requests.length, 2); assert.equal(images, 0); assert.equal(h.s.wechatMediaTasks.value.length, 0);
+  assert.equal(h.s.wechatTimeline.value.length, 1); assert.equal(h.s.wechatUnansweredCount.value, 1);
+  assert.match(h.toasts[0][0], /仍未使用/);
+});
+
+test('开启生图不强迫拒绝或沉默的角色发图，生图接口失败不自动纠正或重付费', async () => {
+  for (const messages of [[], [{ type: 'text', content: '现在不想拍' }]]) {
+    const h = harness(async () => ({ content: JSON.stringify({ messages }) }));
+    let images = 0; enableGeneration(h, async () => { images++; return new Blob(['pixels']); });
+    await h.send('拍张照'); assert.equal(h.requests.length, 1); assert.equal(images, 0);
+  }
+  const h = harness(async () => ({ content: JSON.stringify({ messages: [{ type: 'text', content: '给你看看' }, generated()] }) }));
+  let images = 0; enableGeneration(h, async () => { images++; throw new Error('HTTP 503'); });
+  await h.send('拍照'); assert.equal(h.requests.length, 1); assert.equal(images, 1);
+  assert.equal(h.s.wechatTimeline.value.length, 1); assert.equal(h.s.wechatMediaTasks.value[0].status, 'failed');
+});
+
+test('纠正请求返回期间切分支，不生图也不把消息送入新会话', async () => {
+  let resolve;
+  const h = harness(async (_options, count) => count === 1 ? { content: JSON.stringify({ messages: [described('自拍')] }) }
+    : new Promise(done => { resolve = done; }));
+  let images = 0; enableGeneration(h, async () => { images++; return new Blob(['pixels']); });
+  const pending = h.send('自拍'); while (!resolve) await new Promise(done => setTimeout(done, 1));
+  h.s.stopWechatGeneration(); h.s.invalidateWechatMedia(); h.setScope('branch-b'); h.s.wechatTimeline.value = [];
+  resolve({ content: JSON.stringify({ messages: [generated()] }) }); await pending;
+  assert.equal(images, 0); assert.equal(h.s.wechatTimeline.value.length, 0); assert.equal(h.s.wechatMediaTasks.value.length, 0);
 });
 test('描述型图片不暴露识图工具、不附像素；后续历史与RP回灌保留画面边界', async () => {
   const h = harness();

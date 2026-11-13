@@ -4,6 +4,35 @@
         model: 'nai-diffusion-4-5-full:k_dpmpp_2m', protocol: 'sta1n-nai', size: '1024x1024' });
     const config = settings => ({ ...DEFAULTS, ...(settings?.wechatImageApi || {}) });
     const ready = value => value?.enabled !== false && !!String(value?.apiKey || '').trim() && !!String(value?.model || '').trim();
+    const identityOf = card => {
+        const value = card?.data || card || {};
+        const profile = Object.hasOwn(value, 'imageIdentity') ? value.imageIdentity : value.extensions?.rp_hub_image_identity;
+        if (!profile || profile.enabled === false || typeof profile.prompt !== 'string' || !profile.prompt.trim() || profile.prompt.trim().length > 900) return null;
+        return { prompt: profile.prompt.replace(/\s+/g, ' ').trim(),
+            description: typeof profile.description === 'string' ? profile.description.replace(/\s+/g, ' ').trim().slice(0, 240) : '',
+            negative: typeof profile.negative === 'string' ? profile.negative.replace(/\s+/g, ' ').trim().slice(0, 400) : '' };
+    };
+    const identityPrompt = card => {
+        const profile = identityOf(card);
+        return profile ? `【当前角色本人生图外貌｜${String((card?.data || card)?.name || '本人')}】\n${profile.description}\n固定英文特征：${profile.prompt}\n所有generate请求必须明确填写布尔字段selfPortrait：本人自拍或本人入镜填true；饭菜、风景、他人或无本人入镜填false，不可省略。本人图片示例：{"mode":"generate","selfPortrait":true,"prompt":"campus corridor, phone selfie, evening light","description":"走廊里的自拍"}。prompt只写本轮服装、姿势、环境、视角和光线（最多600字符），程序会拼入固定特征，不必复制或改写这段英文。外貌资料只用于画面，不发送为角色台词，不证明曾发送过照片；剧情明确改变发型、妆容或遮挡时，在场景提示中说明。\n` : '';
+    };
+    function assertIdentityIntent(intent, card) {
+        if (intent.mode === 'generate' && identityOf(card) && typeof intent.selfPortrait !== 'boolean')
+            throw new Error('已启用固定外貌，generate必须填写selfPortrait布尔值：当前角色本人入镜为true，饭菜、风景或他人为false；不能省略');
+    }
+    function characterRequest(c, intent, card) {
+        assertIdentityIntent(intent, card);
+        const profile = intent.selfPortrait === true ? identityOf(card) : null;
+        let prompt = String(intent.prompt || '').trim();
+        if (!profile) return { config: c, prompt };
+        // Only remove an exact duplicated prefix. Never rewrite the scene or infer who is pictured.
+        if (prompt.startsWith(profile.prompt)) prompt = prompt.slice(profile.prompt.length).replace(/^[,\s]+/, '');
+        const combined = profile.prompt + (prompt ? ', ' + prompt : '');
+        if (combined.length > 1500) throw new Error('固定外貌与场景提示合计超过1500字符，请缩短本轮场景提示');
+        const config = { ...c };
+        if (profile.negative) config.negativePrompt = [c.negativePrompt, profile.negative].filter(Boolean).join(', ');
+        return { config, prompt: combined };
+    }
     const active = signal => { if (signal?.aborted) throw new DOMException('图片生成已取消', 'AbortError'); };
     function base(value) {
         const url = new URL(String(value || DEFAULTS.baseUrl).trim().replace(/\/+$/, ''));
@@ -21,7 +50,7 @@
         const shape = c.size === '1024x1024' ? '方图' : c.size === '1216x832' ? '横图' : '竖图';
         const content = c.protocol === 'sta1n-nai' ? [
             `提示词:${prompt}`, '画师串:', `尺寸:${shape}`, '提示词引导值:6', '缩放引导值:0',
-            '负面提示词:lowres, blurry, bad anatomy, bad hands, text, signature, watermark',
+            `负面提示词:lowres, blurry, bad anatomy, bad hands, text, signature, watermark${c.negativePrompt ? ', ' + c.negativePrompt : ''}`,
             `采样器:${model.split(':')[1] || 'k_dpmpp_2m'}`
         ].join('\n') : prompt;
         return { endpoint: 'chat/completions', body: { model, stream: false, messages: [{ role: 'user', content }] } };
@@ -106,5 +135,5 @@
         + '返回 {"type":"image_request","media":{"mode":"generate","prompt":"具体画面英文描述或Tag，包含主体、环境、视角、光线；不含API字段","description":"中文简短画面说明","usage":"scene_photo"}}，放在messages原位置；每次决策最多一张，也可与文字混排。'
         + '例如正在吃黄焖鸡而对方说“给我拍拍照，看看你吃啥”，可生成 yellow braised chicken with potatoes and green peppers in a clay pot, bowl of rice, dining table, close-up, warm indoor light。自拍结合本人已知外貌，不凭空借用其他人照片。'
         + '这是图片内容说明，不是角色配文；生成提示不等于识图结果，后续不能据此断言未经核对的细节。可以按人设拒绝拍照，也不要求每轮发图。';
-    window.RPHubImageGeneration = Object.freeze({ DEFAULTS, config, ready, payload, candidates, generate, models, prompt });
+    window.RPHubImageGeneration = Object.freeze({ DEFAULTS, config, ready, payload, candidates, generate, models, prompt, identityOf, identityPrompt, assertIdentityIntent, characterRequest });
 })();

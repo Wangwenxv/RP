@@ -53,3 +53,11 @@ Python 工具会实际调用服务并可能计费，默认输出到忽略目录 
 不要给所有可选生图模型盲目套 NAI 标签。设置页明确区分 `sta1n-nai`（本次默认且已验证）、`chat-image`（普通聊天生图）与 `openai-images`（Images API）。后两者提供格式适配，具体模型能力、尺寸和返回格式仍以供应商为准，不自动猜协议、切换供应商或重复发送。
 
 微信功能与数据交接见 [微信按需生图](./wechat-image-generation.md)。
+
+## 人物参考图与写实风格（2026-11-13 核查）
+
+后续已实现文字外貌资料复用：本人入镜请求拼入角色固定正面特征，STA1N NAI 的“负面提示词:”追加人物负面词；这仍是纯文字生成。更新的苏祈雪 v2 与工具契约见 [人物外貌生图交接](./Multi-Agent-Engineering/15-character-image-identity.md)。
+
+用户提出以本地 `card/suqixue/sqx.png` 作为人物基底，在不同微信场景中生成同一人物的写实照片。目前 RP 的 `image-generation.js` 只发送文字，没有参考图输入。用户给出的 [Nai2API](https://github.com/STA1N156/Nai2API) 在本次核查提交 `c8b23be9315fec97a7997c847763a7a1dc80b199` 中也尚未接入这条能力：`server/index.js` 的 `messageContentText` 只读取文字，`parseOpenAiImageRequest` 不传入图片；`server/providers.js` 的 `reference_image_multiple`、`reference_information_extracted_multiple`、`reference_strength_multiple` 都固定为空，生成请求不携带输入图像。给兼容接口附加 `image_url` 不能证明参考图被使用。
+
+此次确认的是该网关版本的能力，不等于 NovelAI 底层所有接口都不支持图生图。默认 NAI 模型偏插画，单加写实提示词不能保证真实照片风格或固定面孔。要达到用户目标，应引入支持人物参考图/身份保持的写实编辑模型，并在 RP 为各角色保存独立参考资源、人物图片请求携带实际像素；普通低强度图生图主要继承原图构图，不应当作跨场景身份锁定。真实人物一致性需要后续样图验证，不能承诺百分之百保持不变。

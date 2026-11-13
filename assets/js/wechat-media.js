@@ -19,6 +19,10 @@
         const usage = value.usage === undefined ? (value.mode === 'draw' ? 'drawing' : value.mode === 'describe' ? 'scene_photo' : 'reference') : value.usage;
         if (!USAGES.includes(usage)) throw new Error('图片用途无效');
         const result = { mode: value.mode, usage };
+        if (value.selfPortrait !== undefined) {
+            if (value.mode !== 'generate' || typeof value.selfPortrait !== 'boolean') throw new Error('selfPortrait 只能是生图模式的布尔值，表示当前角色本人入镜');
+            result.selfPortrait = value.selfPortrait;
+        }
         if (value.description !== undefined) {
             if (typeof value.description !== 'string' || value.description.trim().length > 240) throw new Error('图片画面描述须为 240 字以内的文字');
             result.description = shortText(value.description, 240);

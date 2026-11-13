@@ -57,6 +57,7 @@
                 if (!['reply', 'tell'].includes(clean.kind) || action.channel === 'in_person' || action.text || action.delayMinutes > 0) throw new Error('图片须为一条立即发送的微信，不能混入文字、线下动作或延后发送');
                 clean.image = window.RPHubWeChatMedia.normalizeIntent(action.image);
                 if (clean.image.mode !== 'generate') throw new Error('世界微信请使用 generate 和画面提示词');
+                window.RPHubImageGeneration?.assertIdentityIntent(clean.image, { imageIdentity: context.imageIdentity });
             }
             for (const key of ['text', 'targetActorId', 'channel', 'placeId', 'delayMinutes', 'mode']) if (action[key] !== undefined) clean[key] = action[key];
             if (action.state !== undefined) {
@@ -151,17 +152,19 @@
         modelRunner, onUsage, maxCharacters }) {
         const context = Context().compile({ snapshot, actorId, conversationId, kind, stimulus, maxCharacters });
         context.imageGenerationEnabled = window.RPHubImageGeneration?.ready(apiConfig?.imageConfig) === true;
+        context.imageIdentity = window.RPHubImageGeneration?.identityOf(Context().cardOf(Context().actorOf(snapshot, actorId)));
         const boundTools = Context().createTools(snapshot, actorId, conversationId);
         const wechatTool = kind === 'rp' && window.RPHubWorldOrchestrator.canReadPhone(snapshot, actorId)
             ? { type: 'function', function: { name: 'tool_wechat',
                 description: '以当前绑定角色身份发一条真实微信。content 是本人纯文本短消息，不能含发送者或JSON消息列表。targetActorId 省略时联系玩家，也可选择已认识的NPC。每次人物决策仅接收一次发送，成功后不再工具续写；联系玩家时等待玩家回答，联系NPC时由收件人独立回应。消息在世界提交成功后才算发送，不虚构已读、回复或约定。',
                 parameters: { type: 'object', properties: { content: { type: 'string', maxLength: window.RPHubWeChatProtocol.MAX_CONTENT_LEN },
                     ...(context.imageGenerationEnabled ? { image: { type: 'object', properties: { mode: { type: 'string', enum: ['generate'] },
-                        prompt: { type: 'string', maxLength: 1500 }, description: { type: 'string', maxLength: 240 }, usage: { type: 'string', enum: ['scene_photo', 'album_photo', 'reference', 'drawing'] } }, required: ['mode', 'prompt'], additionalProperties: false } } : {}),
+                        prompt: { type: 'string', maxLength: 1500 }, selfPortrait: { type: 'boolean', description: '当前绑定角色本人入镜填true；饭菜、风景或他人填false。固定外貌由程序拼入，prompt仅补本轮场景。' }, description: { type: 'string', maxLength: 240 }, usage: { type: 'string', enum: ['scene_photo', 'album_photo', 'reference', 'drawing'] } }, required: ['mode', 'prompt', ...(context.imageIdentity ? ['selfPortrait'] : [])], additionalProperties: false } } : {}),
                     targetActorId: { type: 'string', enum: context.allowedTargetActorIds } }, anyOf: [{ required: ['content'] }, ...(context.imageGenerationEnabled ? [{ required: ['image'] }] : [])], additionalProperties: false } } }
             : null;
         const messages = context.messages.map(item => ({ ...item }));
         if (context.imageGenerationEnabled) messages[0].content += '\n【微信生图】' + window.RPHubImageGeneration.prompt
+            + window.RPHubImageGeneration.identityPrompt(Context().cardOf(Context().actorOf(snapshot, actorId)))
             + (kind === 'rp' ? 'RP中图片通过tool_wechat的image参数发送（与content二选一），不要返回messages。' : '');
         let repaired = false, toolRounds = 0;
         for (;;) {

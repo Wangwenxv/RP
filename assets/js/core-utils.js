@@ -654,6 +654,16 @@ window.RPHubUtils = {
         return parts.map(key => key.trim()).filter(Boolean);
     };
 
+    const normalizeImageIdentity = (value) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)
+            || typeof value.prompt !== 'string' || !value.prompt.trim() || value.prompt.trim().length > 900) return null;
+        return {
+            version: 1, enabled: value.enabled !== false,
+            prompt: value.prompt.replace(/\s+/g, ' ').trim(),
+            description: typeof value.description === 'string' ? value.description.replace(/\s+/g, ' ').trim().slice(0, 240) : '',
+            negative: typeof value.negative === 'string' ? value.negative.replace(/\s+/g, ' ').trim().slice(0, 400) : ''
+        };
+    };
     const parseImportedCharacterCard = (rawData = {}) => {
         const source = rawData && typeof rawData === 'object' ? rawData : {};
         const character = source.data && typeof source.data === 'object' ? source.data : source;
@@ -686,6 +696,8 @@ window.RPHubUtils = {
             first_mes: character.first_mes || '',
             creator_notes: character.creator_notes || character.creatorcomment || character.creator_comment || '',
             geography: cloneJsonValue(character.extensions?.rp_hub_geography || source.extensions?.rp_hub_geography || character.geography, null),
+            imageIdentity: normalizeImageIdentity(Object.hasOwn(character, 'imageIdentity') ? character.imageIdentity
+                : character.extensions?.rp_hub_image_identity ?? source.extensions?.rp_hub_image_identity),
             regexScripts: Array.isArray(regexScripts) ? regexScripts : [],
             uiTemplates: Array.isArray(uiTemplates) ? uiTemplates : [],
             worldInfoEntries
@@ -767,6 +779,7 @@ window.RPHubUtils = {
         const uiTemplates = includeUiTemplates
             ? mapExportItems(character.uiTemplates, uiTemplateMapper)
             : [];
+        const imageIdentity = normalizeImageIdentity(character.imageIdentity);
 
         const data = {
             name: character.name,
@@ -778,6 +791,7 @@ window.RPHubUtils = {
             extensions: {
                 rp_hub_watermark: 'rp-hub',
                 ...(character.geography ? { rp_hub_geography: cloneJsonValue(character.geography, null) } : {}),
+                ...(imageIdentity ? { rp_hub_image_identity: imageIdentity } : {}),
                 regex_scripts: regexScripts,
                 ...(includeUiTemplates ? { rp_hub_ui_templates: uiTemplates } : {})
             },
@@ -930,6 +944,7 @@ window.RPHubUtils = {
         imageUrlToPngBytes,
         injectPngTextChunk,
         normalizeImportedRegexScript,
+        normalizeImageIdentity,
         normalizeRegexScript,
         normalizeRegexModifiers,
         normalizeWorldInfoEntry,

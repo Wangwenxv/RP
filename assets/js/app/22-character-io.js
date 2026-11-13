@@ -73,6 +73,7 @@
                 personality: imported.personality,
                 creator_notes: imported.creator_notes,
                 geography: imported.geography,
+                imageIdentity: imported.imageIdentity,
                 worldInfo: imported.worldInfoEntries
                     .map(entry => normalizeWorldInfoEntry({ ...entry, scope: 'character' }))
                     .filter(entry => entry.scope !== 'global'),

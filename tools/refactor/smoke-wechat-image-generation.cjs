@@ -96,8 +96,10 @@ const ready = page => page.waitForFunction(() => window.__IMAGE_SCOPE__?._initCo
         check('世界包携带图片，事件不内嵌像素', stored.portable && stored.clean);
         if (live) fs.writeFileSync(path.join(OUT, 'meal-live.webp'), Buffer.from(stored.dataUrl.split(',')[1], 'base64'));
         await page.reload(); await ready(page);
-        await page.evaluate(async sessionId => { const s = window.__IMAGE_SCOPE__; s.showUserSetupModal.value = false; s.currentView.value = 'world';
-            await s.worldOpen(sessionId); await s.worldSelectConversation('dm-qing'); }, stored.sessionId);
+        await page.evaluate(async sessionId => { const s = window.__IMAGE_SCOPE__; s.showUserSetupModal.value = false; s.worldMemoryEnabled.value = false;
+            Object.assign(s.settings, { apiUrl: 'https://chat-fixture.local/v1', apiKey: 'fixture-chat-key', model: 'chat-fixture', stream: false });
+            // Load before entering the view so its watcher does not start a competing open.
+            await s.worldOpen(sessionId); s.currentView.value = 'world'; await s.worldSelectConversation('dm-qing'); }, stored.sessionId);
         await page.locator('.world-image-thumb img').waitFor();
         check('刷新恢复原图和设置，不重复生图', imageRequests === 1 && await page.evaluate(async () => window.__IMAGE_SCOPE__.settings.wechatImageApi.model === 'nai-diffusion-4-5-full:k_dpmpp_2m'));
         if (!live) {
@@ -106,7 +108,12 @@ const ready = page => page.waitForFunction(() => window.__IMAGE_SCOPE__?._initCo
             check('接口失败不发伪图片，显示继续回合', await page.locator('.world-image-thumb').count() === 1 && await page.getByRole('button', { name: '继续未完成回合', exact: true }).isVisible());
             imageFailure = false; const before = chatRequests;
             await page.getByRole('button', { name: '继续未完成回合', exact: true }).click();
-            await page.waitForFunction(() => window.__IMAGE_SCOPE__.worldMessages.value.filter(e => e.payload.type === 'image').length === 2);
+            try { await page.waitForFunction(() => window.__IMAGE_SCOPE__.worldMessages.value.filter(e => e.payload.type === 'image').length === 2); }
+            catch (error) {
+                console.log(await page.evaluate(() => { const s = window.__IMAGE_SCOPE__; return { error: s.worldError.value, busy: s.worldBusy.value,
+                    images: s.worldMessages.value.filter(e => e.payload.type === 'image').length, conversation: s.worldConversationId.value }; }));
+                throw error;
+            }
             check('重试沿用角色计划，不重复聊天调用', chatRequests === before);
         }
         check('无页面脚本错误', errors.length === 0);

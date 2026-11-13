@@ -300,6 +300,7 @@
             relation: '',
             scene: '',
             persona: '',
+            imageIdentityPrompt: '', imageIdentityDescription: '', imageIdentityNegative: '', imageIdentityEnabled: true,
             speed: 'normal',
             worldInfoComments: [],
             presetNames: [],
@@ -1311,6 +1312,12 @@
             wechatSettingsDraft.stickerRate = wxProtocol.normalizeStickerTier(char.wechatStickerRate);
             wechatSettingsDraft.imageSearchEnabled = char.wechatImageSearchEnabled === true;
             wechatSettingsDraft.imageGenerationEnabled = char.wechatImageGenerationEnabled !== false;
+            const identity = window.RPHubCardUtils?.normalizeImageIdentity(Object.hasOwn(char, 'imageIdentity')
+                ? char.imageIdentity : char.extensions?.rp_hub_image_identity);
+            wechatSettingsDraft.imageIdentityPrompt = identity?.prompt || '';
+            wechatSettingsDraft.imageIdentityDescription = identity?.description || '';
+            wechatSettingsDraft.imageIdentityNegative = identity?.negative || '';
+            wechatSettingsDraft.imageIdentityEnabled = identity?.enabled !== false;
             __s.openWechatVoiceSettings?.();
             showWechatSettings.value = true;
         };
@@ -1319,6 +1326,7 @@
         const saveWechatSettings = async () => {
             const char = __s.currentCharacter.value;
             if (!char) return;
+            if (String(wechatSettingsDraft.imageIdentityPrompt || '').trim().length > 900) { __s.showToast('固定外貌提示词不能超过900字符', 'warning'); return; }
             if (__s.saveWechatVoiceSettings && !__s.saveWechatVoiceSettings()) return;
             char.wechatPeerName = String(wechatSettingsDraft.peerName || '').trim();
             char.wechatRelation = String(wechatSettingsDraft.relation || '').trim();
@@ -1330,6 +1338,9 @@
             char.wechatStickerRate = wxProtocol.normalizeStickerTier(wechatSettingsDraft.stickerRate);
             char.wechatImageSearchEnabled = wechatSettingsDraft.imageSearchEnabled === true;
             char.wechatImageGenerationEnabled = wechatSettingsDraft.imageGenerationEnabled === true;
+            char.imageIdentity = window.RPHubCardUtils?.normalizeImageIdentity({ prompt: wechatSettingsDraft.imageIdentityPrompt,
+                description: wechatSettingsDraft.imageIdentityDescription, negative: wechatSettingsDraft.imageIdentityNegative,
+                enabled: wechatSettingsDraft.imageIdentityEnabled }) || null;
             showWechatSettings.value = false;
             try {
                 await __s.saveCharactersNow();
@@ -1924,6 +1935,7 @@
             let loadCalls = 0;
             let documentCalls = 0;
             let geographyCalls = 0;
+            let imageCorrections = 0;
             const documentBudget = { used: 0 };
             const geographyBudget = __s.createGeographyBudget?.();
             // Existing image-only turns retain their limit; attachments add four bounded tools.
@@ -1934,7 +1946,15 @@
                 result = await __s.requestTrackedChatCompletion({ model, messages, requestLabel: round > 0 ? '微信工具续写' : '微信回复', ...(tools.length ? { tools, parallelTools: true } : {}), temperature: 0.95, stream: true, signal }, 'chat');
                 assertRequest();
                 if (['length', 'content_filter'].includes(result?.finishReason)) break;
-                if (!result?.toolCalls?.length) break;
+                if (!result?.toolCalls?.length) {
+                    const reply = wxProtocol.parseReplyResult(String(result?.content || ''));
+                    const correction = __s.wechatImageReplyCorrection?.(reply.messages);
+                    if (!correction) break;
+                    if (imageCorrections++ || round === maxRounds - 1) throw new Error('模型仍未使用已开启的微信生图格式，本轮未发送；可以重试');
+                    report({ notice: '正在修正图片请求格式，尚未调用生图服务' });
+                    messages.push({ role: 'assistant', content: result.content }, { role: 'system', content: correction });
+                    continue;
+                }
                 const names = result.toolCalls.map(call => call.function?.name);
                 if (names.some(name => !tools.some(tool => tool.function.name === name))) throw new Error('模型调用了本轮未提供的微信工具');
                 viewCalls += names.filter(name => name === 'tool_view_image').length;
@@ -2151,13 +2171,15 @@
         __s.normalizeActiveWechatImage = raw => {
             if (!window.RPHubWeChatMedia) throw new Error('微信图片模块尚未加载');
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)
-                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations', 'prompt'].includes(key))) {
+                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations', 'prompt', 'selfPortrait'].includes(key))) {
                 throw new Error('图片参数不能包含发送者、消息列表或未知字段');
             }
             const image = window.RPHubWeChatMedia.normalizeIntent(raw);
             if (!['describe', 'album', 'draw', 'generate'].includes(image.mode)) throw new Error('RP 主动图片不支持此来源');
             if (image.mode === 'generate' && (__s.currentCharacter.value?.wechatImageGenerationEnabled === false
                 || !window.RPHubImageGeneration?.ready(window.RPHubImageGeneration.config(__s.settings)))) throw new Error('请先配置并开启微信生图');
+            if (image.mode === 'describe' && __s.isWechatImageGenerationReady?.()) throw new Error('微信生图已开启，请使用 image:{mode:"generate",prompt:"具体英文画面",description:"中文说明"}，不能用描述卡片替代');
+            window.RPHubImageGeneration?.assertIdentityIntent(image, __s.currentCharacter.value);
             return image;
         };
         const deliverActiveWechatMessage = (content, rawImage = null, sendAt) => {

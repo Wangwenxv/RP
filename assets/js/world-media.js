@@ -11,13 +11,14 @@
         if (!value || !validData(value.dataUrl) || !validData(value.thumbUrl)) throw new Error('图片原件已丢失，请从包含图片的世界备份恢复');
         return value;
     };
-    async function prepare({ id, intent, config, signal }) {
+    async function prepare({ id, intent, config, card, signal }) {
         window.RPHubWeChatMedia.assertActive(signal);
         const saved = await storage().getStoredValue(key(id));
         if (saved) { await read(id); return saved.media; }
         const M = window.RPHubWeChatMedia, clean = M.normalizeIntent(intent);
         if (clean.mode !== 'generate') throw new Error('世界图片目前使用 generate 生图模式');
-        const image = await M.rasterize(await window.RPHubImageGeneration.generate(config, clean.prompt, signal), { signal });
+        const G = window.RPHubImageGeneration, request = G.characterRequest(config, clean, card);
+        const image = await M.rasterize(await G.generate(request.config, request.prompt, signal), { signal });
         const media = { assetId: id, source: 'generate', caption: M.shortText(clean.description || '生成的场景图片'),
             captionSource: 'generation_prompt', usage: clean.usage };
         const asset = { media, dataUrl: await M.blobToDataURL(image.blob), thumbUrl: await M.blobToDataURL(image.thumb) };

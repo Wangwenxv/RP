@@ -3461,6 +3461,14 @@
                             <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageGenerationEnabled">允许本角色按需生图（在设置 → 微信生图填写 API Key）</label>
                             <p class="wx-hint">点击顶栏相册可查看素材、加入自己的照片；新图本轮完整识别，历史用短描述，细节按需查看。</p>
                         </div>
+                        <div class="wx-field wx-image-identity-settings">
+                            <span>本人生图外貌 <small>自拍与本人入镜时使用</small></span>
+                            <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageIdentityEnabled">使用固定外貌</label>
+                            <label class="wx-field"><span>外貌说明</span><textarea v-model="wechatSettingsDraft.imageIdentityDescription" rows="2" maxlength="240" placeholder="例如：瘦鹅蛋脸、深棕杏眼、齐肩细软深棕发"></textarea></label>
+                            <label class="wx-field"><span>固定英文提示词</span><textarea v-model="wechatSettingsDraft.imageIdentityPrompt" rows="5" maxlength="900" placeholder="slim oval face, natural-sized almond-shaped dark brown eyes, shoulder-length dark brown hair…"></textarea></label>
+                            <label class="wx-field"><span>本人图片负面提示词</span><textarea v-model="wechatSettingsDraft.imageIdentityNegative" rows="2" maxlength="400" placeholder="anime, doll-like face, oversized eyes, plastic skin…"></textarea></label>
+                            <small class="wx-hint">自动与本轮衣服、姿势和场景拼接；不用于饭菜、风景或他人。固定特征能提高相似度，效果取决于生图模型。负面提示词用于 STA1N NAI 协议。留空英文提示词可清除这份资料。</small>
+                        </div>
                         <div class="wx-field wx-voice-settings">
                             <span>语音消息 <small>BreezeBlue · 中文</small></span>
                             <label class="wx-pick-item"><input type="checkbox" v-model="wechatVoiceDraft.enabled">允许对方自然穿插语音</label>

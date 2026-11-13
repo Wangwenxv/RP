@@ -10,6 +10,41 @@ function harness(respond) {
     return { G, requests, c: { ...G.DEFAULTS, apiKey: 'fixture-secret' } };
 }
 const json = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+const identity = { version: 1, enabled: true, prompt: 'slim oval face, dark brown almond eyes', description: '苏祈雪的固定外貌', negative: 'anime, oversized eyes' };
+
+test('only explicit self portraits compose the bound card identity and NAI negatives', async () => {
+    const h = harness(() => json({ data: [{ b64_json: png }] }));
+    const card = { data: { name: '苏祈雪', extensions: { rp_hub_image_identity: identity } } };
+    const scene = 'campus corridor, phone selfie, evening light';
+    const r = h.G.characterRequest(h.c, { prompt: scene, selfPortrait: true }, card);
+    assert.equal(r.prompt, identity.prompt + ', ' + scene);
+    assert.equal(r.config.negativePrompt, identity.negative);
+    assert.equal(h.c.negativePrompt, undefined, 'shared config must not be mutated');
+    await h.G.generate(r.config, r.prompt);
+    const text = JSON.parse(h.requests[0].options.body).messages[0].content;
+    assert.ok(text.includes('提示词:' + identity.prompt + ', ' + scene));
+    assert.ok(text.includes('watermark, ' + identity.negative));
+    for (const flag of [false]) {
+        const meal = h.G.characterRequest(h.c, { prompt: 'clay pot chicken', selfPortrait: flag }, card);
+        assert.equal(meal.prompt, 'clay pot chicken'); assert.equal(meal.config.negativePrompt, undefined);
+    }
+    assert.match(h.G.identityPrompt(card), /苏祈雪.*】/);
+    assert.match(h.G.identityPrompt(card), /"selfPortrait":true/);
+    assert.throws(() => h.G.characterRequest(h.c, { mode: 'generate', prompt: 'clay pot chicken' }, card), /必须填写selfPortrait/);
+});
+
+test('disabled/cleared identities stay cleared; deduplication and length checks happen before paying', () => {
+    const h = harness(() => { throw new Error('must not pay'); });
+    const r = h.G.characterRequest(h.c, { selfPortrait: true, prompt: identity.prompt + ', phone selfie' }, { imageIdentity: identity });
+    assert.equal(r.prompt, identity.prompt + ', phone selfie');
+    assert.throws(() => h.G.characterRequest(h.c, { selfPortrait: true, prompt: 'x'.repeat(1480) }, { imageIdentity: identity }), /超过1500/);
+    for (const value of [null, { ...identity, enabled: false }, { prompt: 'x'.repeat(901) }]) {
+        const card = { imageIdentity: value, extensions: { rp_hub_image_identity: identity } };
+        assert.equal(h.G.identityPrompt(card), '');
+        assert.equal(h.G.characterRequest(h.c, { selfPortrait: true, prompt: 'phone selfie' }, card).prompt, 'phone selfie');
+    }
+    assert.equal(h.requests.length, 0);
+});
 test('STA1N uses exact sampler model and labeled chat payload, no images endpoint or RP tags', async () => {
     const h = harness(() => json({ choices: [{ message: { content: `![meal](data:image/png;base64,${png})` } }] }));
     const blob = await h.G.generate(h.c, 'yellow braised chicken, rice');

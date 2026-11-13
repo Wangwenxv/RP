@@ -55,11 +55,14 @@
                     properties: {
                         content: { type: 'string', description: `「${__s.currentCharacter.value?.name || '角色'}」本人发给「${__s.user?.name || '用户'}」的一条纯文本消息，表达角色自己的话；不能复制玩家准备发给角色的草稿、属于玩家的引语或其他NPC台词。玩家明确指定由本体角色说的台词按该归属处理。与 image 二选一，不接受JSON消息列表或发送者字段。本RP回合只可调用一次，成功即交给玩家回应。` },
                         image: {
-                            type: 'object', description: '发送一张图片，与 content 二选一。复杂画面或没有匹配素材时用 describe；description 是画面，不是角色的文字配文。',
+                            type: 'object', description: __s.isWechatImageGenerationReady?.()
+                                ? '发送一张真实图片，与 content 二选一。复杂画面、自拍或没有匹配素材时用 generate 并提供具体英文 prompt；description 是中文画面说明，不是角色配文。新图片不能使用 describe。'
+                                : '发送一张图片，与 content 二选一。复杂画面或没有匹配素材时用 describe；description 是画面，不是角色的文字配文。',
                             properties: {
-                                mode: { type: 'string', enum: ['describe', 'album', 'draw', ...(window.RPHubImageGeneration?.ready(window.RPHubImageGeneration.config(__s.settings)) && __s.currentCharacter.value?.wechatImageGenerationEnabled !== false ? ['generate'] : [])] },
+                                mode: { type: 'string', enum: ['album', 'draw', ...(__s.isWechatImageGenerationReady?.() ? ['generate'] : ['describe'])] },
                                 prompt: { type: 'string', maxLength: 1500, description: '生图模式必填，符合当前剧情的具体画面提示词。' },
-                                description: { type: 'string', maxLength: 240, description: '描述模式必填；其它模式可填作资源不可用时的画面兜底。' },
+                                selfPortrait: { type: 'boolean', description: '仅generate使用。有固定外貌时不可省略：当前角色本人入镜填true，饭菜、风景或他人填false；程序拼入本角色固定外貌，prompt仅补当前场景（最多600字符）。' },
+                                description: { type: 'string', maxLength: 240, description: '中文画面说明，不是角色配文。未配置生图时才可用于描述兜底。' },
                                 assetId: { type: 'string', description: '相册模式使用本轮目录里的真实 ID。' },
                                 usage: { type: 'string', enum: ['scene_photo', 'album_photo', 'reference', 'drawing'] },
                                 template: { type: 'string', enum: ['note', 'doodle'] },

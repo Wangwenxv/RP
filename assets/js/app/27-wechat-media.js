@@ -154,7 +154,22 @@
 
         const capabilities = () => {
             const char = __s.currentCharacter.value || {};
-            return ['album', 'draw', 'describe', ...(char.wechatImageSearchEnabled && navigator.onLine !== false ? ['search'] : []), ...(char.wechatImageGenerationEnabled !== false && window.RPHubImageGeneration?.ready(window.RPHubImageGeneration.config(__s.settings)) ? ['generate'] : [])];
+            const generating = char.wechatImageGenerationEnabled !== false && window.RPHubImageGeneration?.ready(window.RPHubImageGeneration.config(__s.settings));
+            return ['album', 'draw', ...(generating ? ['generate'] : ['describe']), ...(char.wechatImageSearchEnabled && navigator.onLine !== false ? ['search'] : [])];
+        };
+        __s.isWechatImageGenerationReady = () => capabilities().includes('generate');
+        // Validate new model decisions only; historical description cards remain readable.
+        __s.wechatImageReplyCorrection = messages => {
+            if (!__s.isWechatImageGenerationReady()) return '';
+            const G = window.RPHubImageGeneration, card = __s.currentCharacter.value;
+            const description = messages.some(message => message.type === 'image_request' && message.media?.mode === 'describe');
+            const missingIdentity = G.identityOf(card) && messages.some(message => message.type === 'image_request'
+                && message.media?.mode === 'generate' && typeof message.media.selfPortrait !== 'boolean');
+            if (!description && !missingIdentity) return '';
+            return '本轮微信生图已配置并开启，mode:"describe" 不可用于新图片。刚才的回复尚未发送，也尚未调用生图服务。若角色愿意发照片，请保留当前场景和发图位置，使用 mode:"generate"，补充具体英文 prompt 与中文 description；程序取得真实像素后才发送。'
+                + (missingIdentity ? '刚才的generate遗漏了selfPortrait，必须明确补为true或false。' : '')
+                + G.identityPrompt(card)
+                + '仍可按原处境拒绝或沉默。重新输出完整 messages JSON，不解释接口，不把图片改成文字动作或 [图片]。';
         };
         // Internal capability entry: reuse RP's matcher without adding to user-owned worldbooks.
         // Scan only unhandled user text. Old image captions, presets and RP prose cannot keep it active.
@@ -193,11 +208,11 @@
             check();
             const sources = capabilities();
             return `【图片能力｜本轮按需加载】\n这只是可用能力，不是发图指令。先遵守能否、愿否、是否需要回复的判断；可以拒绝或空回，不为收尾补图。当前可用来源：${sources.join('、')}。一轮最多一张图片；表情频率不约束照片。图片请求放在 messages 数组的原位置，不输出源码/URL/base64。\n`
+                + (sources.includes('generate') ? `【本轮真实生图】已配置并开启。决定拍照或分享当前画面时使用 generate，程序会调用生图服务、保存真实像素并发送图片；新图片不使用 describe，不沿用历史描述卡片的发送方式。\n${window.RPHubImageGeneration.prompt}\n${window.RPHubImageGeneration.identityPrompt(__s.currentCharacter.value)}` : '')
                 + `相册：{"type":"image_request","media":{"mode":"album","assetId":"下方真实ID","usage":"scene_photo"}}；usage 另可用 album_photo（旧图）、reference（参考）。素材可配合虚构场景，但须符合已建立的饭菜、地点和人物，不能把陌生人当本人，不能凭图片元数据改写剧情。\n`
                 + `绘图：{"type":"image_request","media":{"mode":"draw","template":"note","text":"纸条文字","tone":"warm","decorations":["heart"]}}；template 也可为 doodle，subject 为 heart/cat/flower/meal，tone 为 warm/cool/plain；这是手绘，不冒充照片。\n`
-                + `描述兜底：{"type":"image_request","media":{"mode":"describe","description":"240字以内的画面内容","usage":"scene_photo"}}。未配置生图时，复杂照片、人物自拍或没有匹配素材时可用它，仍是一条图片分享，画面描述不是角色发送的配文；不必编造图片无法发送的台词。只描写当前剧情允许出现的画面，不改写玩家动作或既定事实。相册/绘图请求也可带 description，资源不可用时显示描述卡片；不要用不匹配素材或简笔画充当照片。\n`
+                + (!sources.includes('generate') ? `描述兜底：{"type":"image_request","media":{"mode":"describe","description":"240字以内的画面内容","usage":"scene_photo"}}。未配置生图时，复杂照片、人物自拍或没有匹配素材时可用它，仍是一条图片分享，画面描述不是角色发送的配文；不必编造图片无法发送的台词。只描写当前剧情允许出现的画面，不改写玩家动作或既定事实。相册/绘图请求也可带 description，资源不可用时显示描述卡片；不要用不匹配素材或简笔画充当照片。\n` : '')
                 + (sources.includes('search') ? '搜索：media 为 {"mode":"search","query":"具体图片主题","usage":"reference"}。找参考图，不冒充本人自拍。\n' : '')
-                + (sources.includes('generate') ? window.RPHubImageGeneration.prompt + '已配置生图时，复杂画面优先生图，describe只用于用户明确接受描述卡片时。\n' : '')
                 + `【可选相册图片】\n${candidates.map(item => `- ${item.id}｜${item.title}｜${item.caption}`).join('\n')}`;
         };
         __s.buildActiveWechatImagePrompt = async query => {
@@ -208,8 +223,9 @@
             return '【RP 主动图片分享】想给玩家发照片、截图或画作时也调用 tool_wechat：image 与 content 二选一。'
                 + (capabilities().includes('generate') ? '已配置生图，优先 image:{mode:"generate",prompt:"符合当前剧情的具体英文画面",description:"中文画面说明",usage:"scene_photo"}。' : '')
                 + '有准确匹配的图片可用 image:{mode:"album",assetId:"目录ID",description:"画面兜底"}；简单纸条可用 draw。'
-                + '未配置生图时，复杂照片或无匹配素材可用 image:{mode:"describe",description:"240字以内的画面内容"}，仍是图片气泡而不是配文，不需要额外API。'
+                + (capabilities().includes('generate') ? '新图片不使用 describe，不能用描述卡片替代实际生图。' : '未配置生图时，复杂照片或无匹配素材可用 image:{mode:"describe",description:"240字以内的画面内容"}，仍是图片气泡而不是配文，不需要额外API。')
                 + '新发生的分享必须通过工具进入微信，不在旁白里假称已经发过；回忆已记录的旧消息不用重发，不补造过去未记录的联系。只发当前角色自己的消息，不替玩家拍照、回答或标记已读。成功后交给玩家。\n'
+                + (capabilities().includes('generate') ? window.RPHubImageGeneration.identityPrompt(__s.currentCharacter.value) : '')
                 + candidates.map(item => `- ${item.id}｜${item.title}｜${item.caption}`).join('\n');
         };
         __s.buildWechatMediaPrompt = async (context = __s.resolveWechatMediaContext()) => {
@@ -292,14 +308,19 @@
         };
         const generateImage = async (intent, signal) => {
             const G = window.RPHubImageGeneration;
-            const blob = await G.generate(G.config(__s.settings), intent.prompt, signal);
+            const request = G.characterRequest(G.config(__s.settings), intent, __s.currentCharacter.value);
+            const blob = await G.generate(request.config, request.prompt, signal);
             return { image: await M.rasterize(blob, { signal }), info: { source: 'generate',
                 caption: M.shortText(intent.description || '生成的场景图片'), captionSource: 'generation_prompt' } };
         };
         const resolveIntent = async (raw, signal) => {
             const check = snapshotGuard(signal); const intent = M.normalizeIntent(raw);
             const description = () => ({ descriptionOnly: true, caption: intent.description, captionSource: 'narrative', source: 'description', usage: intent.usage });
-            if (intent.mode === 'describe') { check(); return description(); }
+            if (intent.mode === 'describe') {
+                check();
+                if (__s.isWechatImageGenerationReady()) throw new Error('微信生图已开启，新图片请使用 mode:"generate" 并提供 prompt，不能用描述卡片替代');
+                return description();
+            }
             try {
                 if (!capabilities().includes(intent.mode)) throw new Error('当前没有开启这种图片来源');
                 if (intent.mode === 'album') {
@@ -317,7 +338,7 @@
                 return { assetId: item.id, caption: item.caption, captionSource: item.captionSource, source: item.source, usage: intent.usage };
             } catch (error) {
                 check();
-                if (intent.mode === 'generate' || !intent.description || error.name === 'AbortError' || /Quota|Transaction|Abort|InvalidState/.test(error.name || '')) throw error;
+                if (__s.isWechatImageGenerationReady() || intent.mode === 'generate' || !intent.description || error.name === 'AbortError' || /Quota|Transaction|Abort|InvalidState/.test(error.name || '')) throw error;
                 return description();
             }
         };
