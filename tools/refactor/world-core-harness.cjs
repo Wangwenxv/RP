@@ -27,7 +27,7 @@ function harness() {
   };
   const context = vm.createContext({ window: { RPHubStorage: storage }, Date, Math, JSON, Set, Map, TextEncoder,
     Uint8Array, crypto: webcrypto, console, setTimeout });
-  for (const file of ['world-model.js', 'world-projections.js', 'world-store.js'])
+  for (const file of ['world-model.js', 'world-projections.js', 'world-store.js', 'actor-context.js', 'world-chat.js'])
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../../assets/js', file), 'utf8'), context, { filename: file });
   return { M: context.window.RPHubWorldModel, P: context.window.RPHubWorldProjections,
     S: context.window.RPHubWorldStore, data, context };

@@ -75,10 +75,9 @@ const check = (label, value) => { assert.ok(value, label); console.log('PASS ' +
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ query: { pages: { 1: { title: 'Cat', imageinfo: [{ thumburl: `http://127.0.0.1:${server.address().port}/assets/images/wechat/cat.jpg`, descriptionurl: 'https://commons.wikimedia.org/wiki/File:fixture', extmetadata: { LicenseShortName: { value: 'CC0' }, ImageDescription: { value: '黑白猫' } } }] } } } }) });
     });
     await page.route('https://nai.sta1n.cn/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
-    await page.route(/^https:\/\/nai\.sta1n\.cn\/api\/jobs(?:\/|\?|$)/, route => {
-      const submit = route.request().method() === 'POST';
-      providerRequests.push({ provider: 'generate', submit, body: submit ? route.request().postDataJSON() : null });
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'fixture-job', status: submit ? 'queued' : 'done', imageUrl: `http://127.0.0.1:${server.address().port}/assets/images/wechat/cat.jpg` }) });
+    await page.route('https://sta1n.ai/v1/chat/completions', route => {
+      providerRequests.push({ provider: 'generate', body: route.request().postDataJSON(), authorization: route.request().headers().authorization });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: `![image](http://127.0.0.1:${server.address().port}/assets/images/wechat/cat.jpg)` } }] }) });
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__MEDIA_TEST_BOOTED__ && window.__APP_PROXY__?.characters, { timeout: 60000 });
@@ -150,7 +149,7 @@ const check = (label, value) => { assert.ok(value, label); console.log('PASS ' +
     });
     check('重试成功只补图片批次', await page.evaluate(() => window.__APP_PROXY__.wechatTimeline.at(-1).media?.assetId === 'builtin-cat'));
     check('默认来源没有触发联网搜索或生图', providerRequests.length === 0);
-    await page.evaluate(() => { const r = window.__APP_PROXY__; r.currentCharacter.wechatImageSearchEnabled = true; r.currentCharacter.wechatImageGenerationEnabled = true; r.settings.imageGenKey = 'fixture-key'; });
+    await page.evaluate(() => { const r = window.__APP_PROXY__; r.currentCharacter.wechatImageSearchEnabled = true; r.currentCharacter.wechatImageGenerationEnabled = true; r.settings.wechatImageApi.apiKey = 'fixture-key'; });
     fixture = 'search'; await send('找张猫的参考图');
     check('可选搜索通过适配器保存真实图片与来源信息', await page.evaluate(async () => {
       const item = window.__APP_PROXY__.wechatTimeline.at(-1);
@@ -158,8 +157,8 @@ const check = (label, value) => { assert.ok(value, label); console.log('PASS ' +
       return item.media?.source === 'search' && index.find(asset => asset.id === item.media.assetId)?.license === 'CC0';
     }));
     fixture = 'generate'; await send('按需生成一张图');
-    check('可选 RP 生图适配器提交、轮询并保存图片', await page.evaluate(() => window.__APP_PROXY__.wechatTimeline.at(-1).media?.source === 'generate')
-      && providerRequests.some(request => request.submit && request.body.token === 'fixture-key') && providerRequests.some(request => request.provider === 'generate' && !request.submit));
+    check('微信 STA1N 生图使用标签格式提交并保存图片', await page.evaluate(() => window.__APP_PROXY__.wechatTimeline.at(-1).media?.source === 'generate')
+      && providerRequests.some(request => request.provider === 'generate' && request.authorization === 'Bearer fixture-key' && request.body.model === 'nai-diffusion-4-5-full:k_dpmpp_2m' && request.body.messages[0].content.startsWith('提示词:cat at a wooden desk')));
     fixture = 'late';
     const late = send('晚到图片');
     while (!delayReply) await new Promise(resolve => setTimeout(resolve, 50));

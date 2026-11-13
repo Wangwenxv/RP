@@ -22,20 +22,26 @@
             idempotencyKey: M.id('wechat-send'), patch: storyTime ? { storyTime } : {}, events: [{ kind: 'message.sent', actorId: player, conversationId,
                 access: { principals: members }, payload: { text, type: 'text' }, source: { kind: 'player_input' } }] });
     }
+    function openingSource(snapshot) {
+        const C = window.RPHubActorContext, definition = snapshot.definition;
+        if (typeof definition.openingText === 'string') return { text: definition.openingText.trim(), actorId: null };
+        const eligible = definition.actors.filter(a => a.actorId !== definition.playerActorId && a.enabled !== false && String(C.cardOf(a).first_mes || '').trim());
+        const a = eligible.find(a => a.actorId === 'suqixue') || eligible[0];
+        return { text: a ? C.resolveText(C.cardOf(a).first_mes, snapshot, a).trim() : '', actorId: a?.actorId || null };
+    }
     function openingEvents(snapshot) {
         if (snapshot.events.some(e => e.kind === 'narration.published' || (e.kind === 'player.input' && e.payload.channel === 'rp'))) return [];
-        const C = window.RPHubActorContext, a = snapshot.definition.actors.find(a => a.actorId === 'suqixue' && a.enabled !== false);
-        const raw = a && C.cardOf(a).first_mes;
+        const opening = openingSource(snapshot);
         const c = snapshot.conversations.find(c => c.kind === 'rp');
-        if (!raw || !c) return [];
-        const text = C.resolveText(raw, snapshot, a);
+        if (!opening.text || !c) return [];
         return [{ kind: 'narration.published', actorId: snapshot.definition.playerActorId, conversationId: c.conversationId,
-            access: { principals: [] }, payload: { text, readerOnly: true, opening: true, coveredEventIds: [] }, source: { kind: 'card_opening', actorId: a.actorId } }];
+            access: { principals: [] }, payload: { text: opening.text, readerOnly: true, opening: true, coveredEventIds: [] },
+            source: { kind: opening.actorId ? 'card_opening' : 'world_opening', ...(opening.actorId ? { actorId: opening.actorId } : {}) } }];
     }
     async function ensureOpening(snapshot) {
         const events = openingEvents(snapshot); if (!events.length) return snapshot;
         return window.RPHubWorldStore.commit({ sessionId: snapshot.sessionId, branchId: snapshot.branchId,
-            expectedRevision: snapshot.revision, idempotencyKey: 'suqixue-opening-v1', events });
+            expectedRevision: snapshot.revision, idempotencyKey: 'world-opening-v2:' + snapshot.definition.revision, events });
     }
-    window.RPHubWorldChat = Object.freeze({ pendingInputs, send, openingEvents, ensureOpening });
+    window.RPHubWorldChat = Object.freeze({ pendingInputs, send, openingSource, openingEvents, ensureOpening });
 })();

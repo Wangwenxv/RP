@@ -190,18 +190,35 @@ test('RP修订保持每位明确见证者的观察，回退后时间不倒退，
   await commit(S, s, [], { actorStates: { qing: { activity: '新变化' } } });
   await assert.rejects(S.reviseRecord(d), /编辑期间发生变化/);
 });
-test('清空全世界记录新建可恢复分支，群成员与时间保留且可重新发送', async () => {
+test('清空全世界记录恢复开场白，群成员与时间保留且可重新发送', async () => {
   const { S, P } = harness(); const def = definition(); def.actors.find(a => a.actorId === 'qing').initialState = { activity: '开局', phoneAccess: 'available' };
-  let s = await S.create({ definition: def, conversations: [conversation('dm', ['player', 'qing'])] });
+  def.actors.find(a => a.actorId === 'qing').card.first_mes = '{{user}}，这是保留在世界设定中的开场。';
+  let s = await S.create({ definition: def, conversations: [conversation('dm', ['player', 'qing']), conversation('rp', ['player', 'qing'], 'rp')] });
   s = await commit(S, s, [sent('secret', 'player', 'dm', ['player', 'qing'], '旧秘密'), read('read', 'qing', 'dm', ['secret'])],
     { storyTime: '2026-05-12T19:00:00', conversations: [conversation('group', ['player', 'qing', 'linwan'], 'group')], actorStates: { qing: { activity: '变更', position: 'court' } }, pendingActions: [{ actionId: 'p', actorId: 'qing', type: 'wait' }] });
   const next = await S.clearHistory({ sessionId: s.sessionId, branchId: s.branchId, expectedRevision: s.revision });
-  assert.equal(next.events.length, 0); assert.equal(next.pendingActions.length, 0); assert.equal(next.storyTime, s.storyTime);
+  assert.equal(next.events.length, 1); assert.equal(next.events[0].payload.opening, true);
+  assert.equal(next.events[0].payload.text, '玩家，这是保留在世界设定中的开场。');
+  assert.equal(next.pendingActions.length, 0); assert.equal(next.storyTime, s.storyTime);
   assert.equal(next.actorStates.qing.activity, '开局'); assert.equal(P.hasObserved(next, 'secret', 'qing'), false);
   assert.deepEqual(plain(next.conversations.find(c => c.conversationId === 'group').participantActorIds), ['player', 'qing', 'linwan']);
-  const sentAgain = await commit(S, next, [sent('new', 'player', 'group', ['player', 'qing', 'linwan'], '新剧情')]); assert.equal(sentAgain.events.length, 1);
+  const sentAgain = await commit(S, next, [sent('new', 'player', 'group', ['player', 'qing', 'linwan'], '新剧情')]); assert.equal(sentAgain.events.length, 2);
   assert.equal((await S.load(s.sessionId, 'main')).events.some(e => e.eventId === 'secret'), true);
   assert.equal((await S.importSession(await S.exportSession(s.sessionId))).branches.length, 2);
+});
+test('自定义开场白与直接开始都随世界定义保存并参与清空', async () => {
+  const { S } = harness(), rp = conversation('rp', ['player', 'qing'], 'rp');
+  const custom = definition(); custom.openingText = '自定义世界序章。';
+  let s = await S.create({ definition: custom, conversations: [rp] });
+  s = await commit(S, s, [{ kind: 'player.input', actorId: 'player', conversationId: 'rp', access: { principals: ['player', 'qing'] }, payload: { text: '继续', channel: 'rp' } }]);
+  const reset = await S.clearHistory({ sessionId: s.sessionId, branchId: s.branchId, expectedRevision: s.revision });
+  assert.equal(reset.events.length, 1); assert.equal(reset.events[0].payload.text, '自定义世界序章。');
+  const none = definition(); none.openingText = '';
+  s = await S.create({ definition: none, conversations: [rp] });
+  s = await commit(S, s, [{ kind: 'player.input', actorId: 'player', conversationId: 'rp', access: { principals: ['player', 'qing'] }, payload: { text: '继续', channel: 'rp' } }]);
+  assert.equal((await S.clearHistory({ sessionId: s.sessionId, branchId: s.branchId, expectedRevision: s.revision })).events.length, 0);
+  const invalid = definition(); invalid.openingText = 'x'.repeat(30001);
+  await assert.rejects(S.create({ definition: invalid, conversations: [rp] }), /开场白/);
 });
 test('版本移入回收站可恢复，全部分支卡牌历史不受损', async () => {
   const { S } = harness(); let s = await S.create({ definition: definition(), conversations: [conversation('dm', ['player', 'qing'])] });

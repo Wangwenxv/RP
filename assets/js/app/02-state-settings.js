@@ -86,6 +86,7 @@
             fontFamilyVersion: 4,
             fontSize: window.innerWidth > 768 ? 16 : 14,
             imageGenKey: '',
+            wechatImageApi: { ...window.RPHubImageGeneration.DEFAULTS },
             imageStyle: 'vertical',
             customImageArtists: '',
             imageModel: 'nai-diffusion-4-5-full',
@@ -97,6 +98,24 @@
             visionModel: ''
         });
         __s.settings = settings;
+        __s.wechatImageModels = ref([{ value: window.RPHubImageGeneration.DEFAULTS.model, label: window.RPHubImageGeneration.DEFAULTS.model }]);
+        __s.wechatImageModelsLoading = ref(false);
+        __s.wechatImageModelStatus = ref('');
+        __s.wechatImageProtocols = [{ value: 'sta1n-nai', label: 'STA1N · NAI 标签格式（默认）' },
+            { value: 'chat-image', label: 'Chat Completions 生图' }, { value: 'openai-images', label: 'OpenAI Images 生图' }];
+        __s.wechatImageSizes = [{ value: '1024x1024', label: '方图' }, { value: '1216x832', label: '横图' }, { value: '832x1216', label: '竖图' }];
+        __s.loadWechatImageModels = async () => {
+            if (__s.wechatImageModelsLoading.value) return;
+            __s.wechatImageModelsLoading.value = true; __s.wechatImageModelStatus.value = '';
+            const config = window.RPHubImageGeneration.config(settings);
+            try {
+                const ids = await window.RPHubImageGeneration.models(config);
+                if (JSON.stringify(config) !== JSON.stringify(window.RPHubImageGeneration.config(settings))) return;
+                __s.wechatImageModels.value = [...new Set([config.model, ...ids])].filter(Boolean).map(value => ({ value, label: value }));
+                __s.wechatImageModelStatus.value = `已读取 ${ids.length} 个模型，请选择支持生图的模型；读取列表不会生成图片。`;
+            } catch (e) { __s.wechatImageModelStatus.value = e.message; }
+            finally { __s.wechatImageModelsLoading.value = false; }
+        };
         const v5UnsupportedImageStyles = new Set(['r18', 'lolita25d', 'anime']);
         __s.v5UnsupportedImageStyles = v5UnsupportedImageStyles;
         const availableImageStyleOptions = computed(() => settings.imageModel === 'nai-diffusion-5-full'

@@ -370,10 +370,10 @@ test('相册资源不存在时有描述可兜底，描述不替代成功读取�
   assert.equal(real[0].media.assetId, 'builtin-salad'); assert.equal(real[0].media.descriptionOnly, undefined);
   assert.equal(real[0].media.caption, '一碗沙拉');
 });
-test('未配置生图时描述兜底不联网；没有提供描述仍报告资源失败', async () => {
+test('未配置生图时不联网、不把生图失败降级成描述成功', async () => {
   const h = harness(), signal = new AbortController().signal;
-  const result = await h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'generate', prompt: 'campus street lamp', description: '北苑楼下的路灯。' } }], signal);
-  assert.equal(result[0].media.descriptionOnly, true); assert.equal(h.requests.length, 0);
+  await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'generate', prompt: 'campus street lamp', description: '北苑楼下的路灯。' } }], signal), /没有开启/);
+  assert.equal(h.requests.length, 0);
   await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'album', assetId: 'missing' } }], signal), /不在可用相册/);
 });
 test('描述型图片不暴露识图工具、不附像素；后续历史与RP回灌保留画面边界', async () => {
@@ -440,11 +440,11 @@ test('RP主动照片通过独立image参数发送并交给玩家，仍只接受�
   assert.equal(item.type, 'image'); assert.equal(item.role, 'assistant'); assert.equal(item.content, '');
   assert.equal(item.media.descriptionOnly, true); assert.equal(h.reads, 0); assert.equal(h.requests.length, 0);
 });
-test('RP主动图片也能选实际相册，目录按需提供且不能经主动工具调用生图', async () => {
+test('RP主动图片也能选实际相册，未配置时不能调用生图', async () => {
   const h = harness();
   const prompt = await h.s.buildActiveWechatImagePrompt('吃饭');
   assert.match(prompt, /builtin-salad/); assert.match(prompt, /新发生的分享必须通过工具/); assert.match(prompt, /不补造过去未记录/);
-  assert.throws(() => h.s.normalizeActiveWechatImage({ mode: 'generate', prompt: 'x' }), /仅支持描述|未知字段/);
+  assert.throws(() => h.s.normalizeActiveWechatImage({ mode: 'generate', prompt: 'x' }), /配置并开启微信生图/);
   h.s.deliverActiveWechatMessage('', { mode: 'album', assetId: 'builtin-salad', description: '沙拉' });
   await h.s.flushActiveWechatMessages();
   assert.equal(h.s.wechatTimeline.value.at(-1).media.assetId, 'builtin-salad');

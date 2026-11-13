@@ -144,7 +144,7 @@
             else if (/^chat_/.test(key)) result.rp += value.length;
             else if (/^wechat_timeline_/.test(key)) result.wechat += value.filter(item => item?.channel === 'wechat').length;
             else if (/^classic_memories_/.test(key)) result.memories += value.length;
-            else if (/^wechat_media_blob_/.test(key)) result.images++;
+            else if (/^(?:wechat_media_blob_|world_media_)/.test(key)) result.images++;
             else if (/^wechat_voice_blob_/.test(key)) result.voices++;
             else if (/^wechat_document_blob_/.test(key)) result.documents++;
             else if (key === 'geographyMaps') result.maps = value.length;

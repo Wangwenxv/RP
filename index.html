@@ -1888,7 +1888,7 @@
                                                     d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4">
                                                 </path>
                                             </svg>
-                                            生图设置
+                                            RP 自动插图设置
                                         </h4>
                                         <a href="https://www.qianxun1688.com/links/D07F549B" target="_blank"
                                             rel="noopener noreferrer"
@@ -1904,7 +1904,7 @@
                                                 class="settings-label">自动生图密钥</label>
                                             <input v-model="settings.imageGenKey" type="password"
                                                 class="settings-control font-mono"
-                                                placeholder="STA1N密钥/NAI官方密钥">
+                                                placeholder="原自动插图服务密钥">
                                         </div>
 
                                         <!-- Image Model -->
@@ -1957,6 +1957,24 @@
                                 </div>
 
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card" id="wechat-image-settings">
+                        <div class="settings-card__header"><div class="settings-card__title">微信生图</div></div>
+                        <div class="p-5 space-y-4">
+                            <p class="text-sm text-gray-500">角色可以按聊天内容拍照、分享饭菜或生成场景图片。默认使用 STA1N，填写 API Key 后即可使用；每次实际生图由服务商计费。</p>
+                            <label class="wx-pick-item"><input type="checkbox" v-model="settings.wechatImageApi.enabled">允许微信角色按需生图（原微信与世界微信）</label>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <label class="min-w-0"><span class="settings-label">图片 API 地址</span><input class="settings-control" v-model="settings.wechatImageApi.baseUrl" placeholder="https://sta1n.ai/v1"></label>
+                                <label class="min-w-0"><span class="settings-label">图片 API Key</span><input class="settings-control" v-model="settings.wechatImageApi.apiKey" type="password" autocomplete="off" placeholder="填写你的 STA1N API Key"></label>
+                                <div class="min-w-0"><label class="settings-label">接口协议</label><custom-select v-model="settings.wechatImageApi.protocol" :options="wechatImageProtocols" button-class="settings-control"></custom-select></div>
+                                <div class="min-w-0"><label class="settings-label">图片比例</label><custom-select v-model="settings.wechatImageApi.size" :options="wechatImageSizes" button-class="settings-control"></custom-select></div>
+                                <div class="min-w-0"><label class="settings-label">生图模型</label><custom-select v-model="settings.wechatImageApi.model" :options="wechatImageModels" button-class="settings-control"></custom-select></div>
+                                <label class="min-w-0"><span class="settings-label">模型名称（可手动填写）</span><input class="settings-control" v-model="settings.wechatImageApi.model" placeholder="nai-diffusion-4-5-full:k_dpmpp_2m"></label>
+                            </div>
+                            <button class="wx-ghost" @click="loadWechatImageModels" :disabled="wechatImageModelsLoading || !settings.wechatImageApi.apiKey">{{ wechatImageModelsLoading ? '读取中…' : '读取可用模型' }}</button>
+                            <p class="text-sm text-gray-500" role="status">{{ wechatImageModelStatus || '默认模型为 NAI，偏插画风格。选择其它生图模型时，请匹配其接口协议。' }}</p>
                         </div>
                     </div>
 
@@ -3440,7 +3458,7 @@
                         <div class="wx-field">
                             <span>图片来源 <small>相册与手绘默认可用</small></span>
                             <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageSearchEnabled">联网找参考图（需网络）</label>
-                            <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageGenerationEnabled">允许按需生图（需已配置生图密钥）</label>
+                            <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageGenerationEnabled">允许本角色按需生图（在设置 → 微信生图填写 API Key）</label>
                             <p class="wx-hint">点击顶栏相册可查看素材、加入自己的照片；新图本轮完整识别，历史用短描述，细节按需查看。</p>
                         </div>
                         <div class="wx-field wx-voice-settings">
@@ -3518,6 +3536,8 @@
         document.write('<script src="assets/js/world-data.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/map-packages.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-media.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/image-generation.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/world-media.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/history-retrieval.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-document-search.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/wechat-documents.js?v=' + new Date().getTime() + '"><\/script>');

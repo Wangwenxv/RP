@@ -4,7 +4,7 @@
     const actors = snapshot => snapshot.definition.actors || [];
     const actorOf = (snapshot, actorId) => actors(snapshot).find(actor => actor.actorId === actorId);
     const cardOf = actor => actor?.card?.data || actor?.card || {};
-    const textOf = event => String(event.payload?.text || event.payload?.description || event.payload?.proposition || '');
+    const textOf = event => event.payload?.type === 'image' ? window.RPHubWorldModel.eventText(event) : String(event.payload?.text || event.payload?.description || event.payload?.proposition || '');
     const projection = () => window.RPHubWorldProjections;
     function observed(snapshot, actorId) {
         return projection().observedEvents(snapshot, actorId).filter(event =>
@@ -151,7 +151,7 @@
             `引用来源时复制observations中的evidenceId（如E40）或资料的entryId，不要生成UUID。没有必要引用时referencedEvidenceIds返回空数组。\n` +
             (kind === 'wechat' ? (window.RPHubWeChatProtocol?.PROTOCOL || '返回JSON：{"messages":[{"type":"text","content":"短消息"}]}。不回复时返回{"messages":[]}。') +
                 '\n' + (window.RPHubWeChatProtocol?.REPLY_DECISION_RULE || '') +
-                '\n本世界微信目前只用type=text，最多6条气泡。不输出actions或来源引用。群聊时只发送本人的消息，对方既可能是玩家也可能是群内另一人物。收到问候、问题或新的安排，若没有明确的通信限制，按人设正常回应；资料缺失不意味着无法回复。'
+                '\n本世界微信用type=text；只有本轮提供生图能力时可用image_request。最多6条气泡。不输出actions或来源引用。群聊时只发送本人的消息，对方既可能是玩家也可能是群内另一人物。收到问候、问题或新的安排，若没有明确的通信限制，按人设正常回应；资料缺失不意味着无法回复。'
                 : `返回 JSON：{"decision":"reply|silent|wait|act","actions":[{"kind":"tell|speak|act|move|wait|remember","text":"本人短台词/动作","targetActorId":"仅tell可用","channel":"dm|in_person","placeId":"仅move可用","delayMinutes":0}],"referencedEvidenceIds":[],"needsPlayerResponse":false}。\n` +
                     `silent的actions为空。RP可用speak/act/remember表达自己的选择；remember只记自己的意图，不确认客观事实。tell是实际通信提案，需有渠道和可接收机会。\n` +
                     `需要新发微信时优先调用本轮提供的tool_wechat，content是本人一条文字消息，targetActorId是收件人，省略时为玩家。每次人物决策只接受一次发送；成功后结束本人的工具续写。联系其他NPC后由对方独立读取与回应，联系玩家后把回答交给玩家，不能虚构收到玩家回复。不要用正文或HTML聊天面板假称已发送，不冒充别人发消息；回忆旧微信无需重发。工具未提供时仍须遵守手机限制，可保持现状或提出待办。\n` +

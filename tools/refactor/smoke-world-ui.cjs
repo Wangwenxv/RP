@@ -104,12 +104,19 @@ const fits = page => page.evaluate(() => document.documentElement.scrollWidth <=
         await page.getByRole('button', { name: '编辑世界', exact: true }).click();
         check('已保存世界能回到完整编辑页，保留人物卡与头像', await page.getByRole('button', { name: '保存并继续', exact: true }).isVisible()
             && await page.locator('.world-card-slot').filter({ hasText: '卿' }).locator('.world-avatar img').count() === 1);
+        check('世界编辑提供开场来源、内容和预览', await page.getByRole('radio', { name: /角色卡开场/ }).isChecked()
+            && await page.locator('.world-opening-preview').isVisible());
+        await page.getByRole('radio', { name: /自定义开场/ }).check();
+        await page.getByLabel('开场内容', { exact: true }).fill('【自定义开场】三月晚风从语心湖吹来，故事重新开始。');
         await page.getByLabel('世界名称', { exact: true }).fill('江南大学 · 三月晚风');
         await page.getByLabel('公共世界设定', { exact: true }).fill('三月，江南大学南校区。每个人都有自己的生活。');
         await page.getByRole('button', { name: '保存并继续', exact: true }).click();
         await page.waitForFunction(() => !window.__WORLD_SCOPE__.worldBusy.value && !window.__WORLD_SCOPE__.worldShowSetup.value);
         const revisedId = await page.evaluate(() => { const s = window.__WORLD_SCOPE__; if (s.worldError.value) throw Error(s.worldError.value); return s.worldSnapshot.value.sessionId; });
-        check('世界编辑保存为新版本，保留已有剧情与头像', revisedId !== originalId && await page.evaluate(ids => ids.every(id => window.__WORLD_SCOPE__.worldSnapshot.value.events.some(e => e.eventId === id)) && !!window.__WORLD_SCOPE__.worldAvatar('qing'), historyIds));
+        check('世界编辑保存自定义开场并建立新版本，保留已有剧情与头像', revisedId !== originalId && await page.evaluate(ids => {
+            const s = window.__WORLD_SCOPE__; return s.worldSnapshot.value.definition.openingText.startsWith('【自定义开场】')
+                && ids.every(id => s.worldSnapshot.value.events.some(e => e.eventId === id)) && !!s.worldAvatar('qing');
+        }, historyIds));
         check('旧世界原设置与历史仍可打开', await page.evaluate(async id => (await RPHubWorldStore.load(id)).definition.name === '江南大学', originalId));
         await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 }); await ready(page);
         await page.locator('.entry-transition').waitFor({ state: 'hidden' });
@@ -153,14 +160,23 @@ const fits = page => page.evaluate(() => document.documentElement.scrollWidth <=
         check('保存修订建立分支，私聊显示修正文本', await page.evaluate(source => window.__WORLD_SCOPE__.worldSnapshot.value.branchId !== source, editSource)
             && (await page.locator('.world-transcript').innerText()).includes('五分钟后再问一遍'));
         await page.getByRole('button', { name: '清空世界记录', exact: true }).click();
+        check('清空确认明确开场白不属于聊天记录', (await page.getByRole('dialog').innerText()).includes('世界开场白不属于聊天记录'));
         await page.getByRole('button', { name: '清空并重新开始', exact: true }).click();
         await page.getByRole('dialog').waitFor({ state: 'hidden' });
-        check('清空全世界聊天保留联系人头像和旧分支', await page.evaluate(() => {
-            const s = window.__WORLD_SCOPE__; return s.worldSnapshot.value.events.length === 0 && s.worldSnapshot.value.branches.length >= 3 && !!s.worldAvatar('qing');
+        check('清空聊天恢复自定义开场并保留联系人头像和旧分支', await page.evaluate(() => {
+            const s = window.__WORLD_SCOPE__, events = s.worldSnapshot.value.events;
+            return events.length === 1 && events[0].payload.opening === true && events[0].payload.text.startsWith('【自定义开场】')
+                && s.worldSnapshot.value.branches.length >= 3 && !!s.worldAvatar('qing');
         }));
         await page.waitForFunction(() => !document.querySelector('.toast-item'));
-        await page.screenshot({ path: path.join(SHOTS, 'world-private-empty-redesign.png') });
-        await page.evaluate(async source => { const s = window.__WORLD_SCOPE__; await s.worldOpen(s.worldSnapshot.value.sessionId, source); }, editSource);
+        await page.evaluate(async () => window.__WORLD_SCOPE__.worldSelectConversation('rp-main'));
+        check('清空后的开场可从正文直接进入世界开场编辑', (await page.locator('.world-transcript').innerText()).includes('故事重新开始'));
+        await page.screenshot({ path: path.join(SHOTS, 'world-clear-opening-redesign.png') });
+        await page.getByRole('button', { name: '编辑世界开场白', exact: true }).click();
+        check('正文开场编辑会定位到自定义开场字段', await page.getByRole('radio', { name: /自定义开场/ }).isChecked()
+            && (await page.getByLabel('开场内容', { exact: true }).inputValue()).startsWith('【自定义开场】'));
+        await page.getByRole('button', { name: '返回世界', exact: true }).click();
+        await page.evaluate(async source => { const s = window.__WORLD_SCOPE__; await s.worldOpen(s.worldSnapshot.value.sessionId, source); await s.worldSelectConversation('dm-qing'); }, editSource);
         check('清空后可恢复旧分支的全部记录', (await page.locator('.world-transcript').innerText()).includes('喂喂喂，老婆人呢'));
 
         await page.locator('.world-file-menu > summary').click();

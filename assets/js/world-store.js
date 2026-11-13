@@ -156,6 +156,7 @@
             if (snapshot.revision !== expectedRevision) M().fail('世界在编辑期间发生变化，请重新打开记录编辑', 'WORLD_CONFLICT');
             const event = snapshot.events.find(e => e.eventId === eventId);
             if (!event || !['player.input', 'message.sent', 'narration.published'].includes(event.kind)) M().fail('请选择可编辑的聊天或剧情记录');
+            if (event.payload?.type === 'image') M().fail('图片不能按文字编辑，请回退后重新发送');
             if (event.kind === 'message.sent' && !P().canAccess(snapshot, event, snapshot.definition.playerActorId)) M().fail('不能修改玩家无权查看的私聊');
             const copy = P().replay(snapshot, { throughSeq: event.seq });
             copy.branchId = target; copy.parentBranchId = branchId; copy.forkAtSeq = event.seq;
@@ -209,6 +210,14 @@
                 storyTime: snapshot.storyTime, turns: {}, pendingActions: [] };
             current.branches[target] = { branchId: target, name: '清空后的故事', parentBranchId: branchId, forkAtSeq: 0,
                 revision: 0, events: [], idempotency: {}, ...M().clone(baseState), baseState };
+            // Restore the configured start in the same transaction as the reset.
+            const reset = flatten(current, target);
+            for (const draft of window.RPHubWorldChat?.openingEvents(reset) || []) {
+                const event = { ...draft, eventId: M().id('event'), seq: reset.events.length + 1,
+                    sessionId, branchId: target, storyTime: reset.storyTime, recordedAt: new Date().toISOString() };
+                M().validateEvent(event, reset, { persisted: true }); P().applyEvent(reset, event); reset.events.push(event);
+            }
+            current.branches[target].events = reset.events;
             current.activeBranchId = target;
             return current;
         });
@@ -259,13 +268,15 @@
     const exportSession = async sessionId => {
         const session = await S().getStoredValue(key(sessionId));
         if (!session) M().fail('世界存档不存在');
-        return { format: 'rphub-world', schemaVersion: M().SCHEMA_VERSION, exportedAt: new Date().toISOString(), session: M().clone(session) };
+        return { format: 'rphub-world', schemaVersion: M().SCHEMA_VERSION, exportedAt: new Date().toISOString(), session: M().clone(session),
+            ...(window.RPHubWorldMedia ? { media: await window.RPHubWorldMedia.exportAssets(session) } : {}) };
     };
     const importSession = async (pkg, options = {}) => {
         if (pkg?.format !== 'rphub-world' || pkg.schemaVersion !== M().SCHEMA_VERSION) M().fail('请选择兼容的世界存档包');
         const session = validateSession(M().clone(pkg.session));
         for (const actor of session.definition.actors) if (actor.card && actor.cardHash && actor.cardHash !== await M().hash(actor.card, actor.cardHash.split(':')[0])) M().fail('世界包角色卡校验失败');
         if (session.definition.map && session.definition.mapHash && session.definition.mapHash !== await M().hash(session.definition.map, session.definition.mapHash.split(':')[0])) M().fail('世界包地图校验失败');
+        if (window.RPHubWorldMedia) await window.RPHubWorldMedia.importAssets(session, pkg.media);
         if (options.asNew !== false) {
             const oldId = session.sessionId;
             session.sessionId = M().id('session');

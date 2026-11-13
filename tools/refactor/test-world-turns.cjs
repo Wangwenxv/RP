@@ -152,6 +152,30 @@ test('两轮资料读取后仍能提交最终提案，为其他人物与旁白�
     assert.equal(turnOf(h).status, 'complete'); assert.equal(h.requests.length, 4);
 });
 
+test('本轮活动实时报告并持久化模型、工具、失败和 token 计数', async () => {
+    const h = await harness(), reports = []; let actorCalls = 0;
+    await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '先查场景，再继续。',
+        apiConfig: { model: 'fixture-main', memoryEnabled: false, onActivity: (event, snapshot, turnId) => reports.push({ event, snapshot, turnId }) } }, request => {
+        if (request.purpose === 'narrator') return { content: '卿看过场景资料，继续整理书桌。', usage: { prompt_tokens: 30, completion_tokens: 12 } };
+        if (!actorCalls++) return { toolCalls: [{ id: 'scene', type: 'function', function: { name: 'get_scene_context', arguments: '{}' } }],
+            usage: { prompt_tokens: 10, completion_tokens: 3 } };
+        return { ...reply('继续整理书桌。'), usage: { prompt_tokens: 20, completion_tokens: 7 } };
+    });
+    const activity = turnOf(h).activity;
+    assert.equal(activity.modelRequests, 3); assert.equal(activity.toolCalls, 1); assert.equal(activity.failedRequests, 0);
+    assert.equal(activity.usageReports, 3); assert.equal(activity.promptTokens, 60); assert.equal(activity.completionTokens, 22);
+    assert.equal(activity.phases.find(p => p.purpose === 'actor' && p.actorId === 'qing').requests, 2);
+    assert.equal(activity.phases.find(p => p.purpose === 'actor' && p.actorId === 'qing').tools, 1);
+    assert.equal(activity.phases.find(p => p.purpose === 'narrator').requests, 1);
+    assert.ok(activity.elapsedMs >= 0); assert.ok(reports.some(r => r.event.type === 'tool-start' && r.event.toolName === 'get_scene_context'));
+    assert.ok(reports.every(r => r.turnId === turnOf(h).turnId));
+    const failed = await harness(), failures = [];
+    await assert.rejects(failed.run({ kind: 'wechat', conversationId: 'dm-player-qing', text: '失败计数',
+        apiConfig: { model: 'fixture-main', onActivity: (event, snapshot) => failures.push({ event, snapshot }) } }, () => { throw new Error('fixture failed'); }), /fixture failed/);
+    assert.equal(turnOf(failed).activity.modelRequests, 1); assert.equal(turnOf(failed).activity.failedRequests, 1);
+    assert.ok(failures.some(r => r.event.type === 'request-end' && r.event.outcome === 'failed' && r.snapshot.failedRequests === 1));
+});
+
 test('到期act计划唤醒本人重新决定一次，过去计划不自动成为已完成动作', async () => {
     const h = await harness();
     await h.run({ kind: 'rp', conversationId: 'rp-main', actorIds: ['qing'], text: '独处' }, () => ({ decision: 'act',

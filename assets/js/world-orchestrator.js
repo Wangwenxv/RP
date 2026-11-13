@@ -76,11 +76,16 @@
         } catch (_) { return null; }
     }
     async function execute(options, retry) {
-        const { sessionId, branchId, signal, onUpdate, apiConfig, modelRunner } = options;
+        const { sessionId, branchId, signal, onUpdate, modelRunner } = options;
+        const apiConfig = { ...options.apiConfig }, report = apiConfig.onActivity;
         const lockKey = JSON.stringify([sessionId, branchId]);
         if (locks.has(lockKey)) throw new Error('这个世界分支正在生成，请先等待或停止当前回合');
         locks.add(lockKey);
-        let snapshot, turn, budget;
+        let snapshot, turn, budget, activity;
+        apiConfig.onActivity = event => {
+            activity?.report(event);
+            report?.(event, activity?.snapshot(), turn?.turnId);
+        };
         const maxSteps = Number(apiConfig?.maxWorldCalls) > 6 ? 6 : 3;
         const usage = [];
         const publish = () => { try { onUpdate?.(clone(snapshot)); } catch (_) { } };
@@ -92,7 +97,9 @@
             return snapshot;
         }
         function saveTurn(status) {
+            activity ||= Runtime().createActivityTracker(turn.activity);
             if (status) turn.status = status;
+            turn.activity = activity.snapshot();
             turn.callsUsed = budget.callsUsed;
             turn.usage = [...(turn.usage || []), ...usage.splice(0)];
             turn.sceneEventIds = deriveSceneIds(snapshot, turn.turnId);
@@ -271,11 +278,30 @@
                     : (turn.witnessActorIds.includes(step.actorId) ? `${turn.inputMode === 'author_premise' ? '【作者剧情前提】' : '【玩家明确输入】'}\n${turn.text}`
                         : turn.kind === 'advance' ? `世界时间从 ${turn.previousStoryTime || snapshot.storyTime} 推进到 ${snapshot.storyTime}。根据你实际获知的信息与当前状态继续自己的生活；你可以保持现状，不必强行行动。`
                             : '根据你实际获知的信息，继续自己的场景。');
-                const beforeRevision = snapshot.revision;
-                const result = await Runtime().runActor({ snapshot, actorId: step.actorId, conversationId: step.conversationId,
+                let beforeRevision = snapshot.revision;
+                const result = turn.preparedActor?.stepIndex === stepIndex ? clone(turn.preparedActor.result) : await Runtime().runActor({ snapshot, actorId: step.actorId, conversationId: step.conversationId,
                     kind: isWechat ? 'wechat' : 'rp', stimulus, apiConfig, signal, budget, modelRunner,
                     onUsage: record => usage.push(record), maxCharacters: apiConfig?.contextBudget || undefined });
                 Runtime().abortCheck(signal);
+                if (result.proposal.actions.some(a => a.image)) {
+                    if (!turn.preparedActor || turn.preparedActor.stepIndex !== stepIndex) {
+                        turn.preparedActor = { stepIndex, result: clone(result), imageIds: {} };
+                        for (const [i, a] of result.proposal.actions.entries()) if (a.image) turn.preparedActor.imageIds[i] = 'worldimg-' + crypto.randomUUID();
+                        await commit(`${turn.turnId}:image-plan:${stepIndex}`, [], saveTurn());
+                    }
+                    beforeRevision = snapshot.revision;
+                    for (const [i, action] of result.proposal.actions.entries()) if (action.image) {
+                        const activityMeta = { purpose: 'image', actorId: step.actorId, model: apiConfig.imageConfig?.model || '' };
+                        apiConfig.onPhase?.('image', step.actorId);
+                        apiConfig.onActivity?.({ type: 'request-start', ...activityMeta });
+                        let outcome = 'failed';
+                        try {
+                            action.media = await window.RPHubWorldMedia.prepare({ id: turn.preparedActor.imageIds[i], intent: action.image,
+                                config: apiConfig.imageConfig, signal });
+                            outcome = 'complete';
+                        } finally { apiConfig.onActivity?.({ type: 'request-end', ...activityMeta, outcome }); }
+                    }
+                }
                 // Re-read only to reject a stale proposal, never to rebase and submit it.
                 const current = await Store().load(sessionId, snapshot.branchId);
                 if (current.revision !== beforeRevision) throw Object.assign(new Error('世界分支已变化，旧角色提案已丢弃'), { name: 'WorldConflictError' });
@@ -304,7 +330,7 @@
                     if (action.kind === 'reply') {
                         if (!c || !visibleParticipants.includes(step.actorId)) throw new Error('回复者不属于这个会话');
                         events.push(eventDraft(turn, snapshot, 'message.sent', step.actorId, c.conversationId,
-                            { text: action.text, type: 'text' }, visibleParticipants, cause));
+                            action.media ? { type: 'image', media: action.media } : { text: action.text, type: 'text' }, visibleParticipants, cause));
                     } else if (action.kind === 'tell') {
                         const target = action.targetActorId;
                         if (action.channel !== 'in_person' && !canReadPhone(snapshot, step.actorId)) {
@@ -334,7 +360,7 @@
                                 newConversations.push({ conversationId, kind: 'dm', name: `${actor(snapshot, step.actorId).name} · ${actor(snapshot, target).name}`,
                                     participantActorIds: [step.actorId, target], memberships: [step.actorId, target].map(actorId => ({ actorId, joinedAtSeq: 0 })) });
                             events.push(eventDraft(turn, snapshot, 'message.sent', step.actorId, conversationId,
-                                { text: action.text, type: 'text', targetActorId: target }, [step.actorId, target], cause));
+                                { ...(action.media ? { type: 'image', media: action.media } : { text: action.text, type: 'text' }), targetActorId: target }, [step.actorId, target], cause));
                             enqueueReaction(target, conversationId, step.depth + 1);
                         }
                     } else if (action.kind === 'move') {
@@ -363,15 +389,19 @@
                                 { eventIds: [event.eventId] }, [observer], [event.eventId]));
                     }
                 }
+                const beforeAcceptedTurn = clone(turn);
                 turn.actorResults[step.actorId] = { status: proposal.decision, proposal, contextBudget: result.contextBudget,
                     ...(result.wechatToolReceipts ? { wechatToolReceipts: result.wechatToolReceipts } : {}) };
                 if (!turn.completedActorIds.includes(step.actorId)) turn.completedActorIds.push(step.actorId);
                 turn.stepIndex++;
+                delete turn.preparedActor;
                 // Scope commits and tasks to the queue step: an actor can react twice in one turn.
                 // Retrying a saved step still uses the same key and cannot duplicate its actions.
-                await commit(`${turn.turnId}:step:${stepIndex}:${step.actorId}:accepted`, events,
-                    { ...saveTurn(), ...(newConversations.length ? { conversations: newConversations } : {}),
-                        actorStates: changes, pendingActions: tasks });
+                try {
+                    await commit(`${turn.turnId}:step:${stepIndex}:${step.actorId}:accepted`, events,
+                        { ...saveTurn(), ...(newConversations.length ? { conversations: newConversations } : {}),
+                            actorStates: changes, pendingActions: tasks });
+                } catch (error) { turn = beforeAcceptedTurn; throw error; }
                 // In-person tell is already heard; add only the actual utterance to the recipient's observation.
                 const tells = snapshot.events.filter(event => event.turnId === turn.turnId && event.actorId === step.actorId
                     && event.kind === 'action.committed' && event.payload.type === 'tell' && event.payload.channel === 'in_person');
@@ -417,11 +447,14 @@
                     }
                 }
             }
+            // Include post-reply summaries and stopped summary requests in the report.
+            await commit(`${turn.turnId}:activity:${turn.retryCount || 0}:${snapshot.revision}`, [], saveTurn('complete'), false);
             return snapshot;
         } catch (error) {
             if (snapshot && turn && budget && turn.status !== 'complete') {
                 turn.error = { name: error.name || 'Error', message: error.message };
                 turn.status = error.name === 'AbortError' ? 'paused' : 'failed';
+                if (activity) turn.activity = activity.snapshot();
                 turn.callsUsed = budget.callsUsed;
                 turn.sceneEventIds = deriveSceneIds(snapshot, turn.turnId);
                 turn.usage = [...(turn.usage || []), ...usage];

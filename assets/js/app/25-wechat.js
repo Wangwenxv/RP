@@ -1310,7 +1310,7 @@
             wechatSettingsDraft.presetNames = [...selectedWechatPresetNames()];
             wechatSettingsDraft.stickerRate = wxProtocol.normalizeStickerTier(char.wechatStickerRate);
             wechatSettingsDraft.imageSearchEnabled = char.wechatImageSearchEnabled === true;
-            wechatSettingsDraft.imageGenerationEnabled = char.wechatImageGenerationEnabled === true;
+            wechatSettingsDraft.imageGenerationEnabled = char.wechatImageGenerationEnabled !== false;
             __s.openWechatVoiceSettings?.();
             showWechatSettings.value = true;
         };
@@ -2151,11 +2151,13 @@
         __s.normalizeActiveWechatImage = raw => {
             if (!window.RPHubWeChatMedia) throw new Error('微信图片模块尚未加载');
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)
-                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations'].includes(key))) {
+                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations', 'prompt'].includes(key))) {
                 throw new Error('图片参数不能包含发送者、消息列表或未知字段');
             }
             const image = window.RPHubWeChatMedia.normalizeIntent(raw);
-            if (!['describe', 'album', 'draw'].includes(image.mode)) throw new Error('RP 主动图片仅支持描述、本地相册或绘图');
+            if (!['describe', 'album', 'draw', 'generate'].includes(image.mode)) throw new Error('RP 主动图片不支持此来源');
+            if (image.mode === 'generate' && (__s.currentCharacter.value?.wechatImageGenerationEnabled === false
+                || !window.RPHubImageGeneration?.ready(window.RPHubImageGeneration.config(__s.settings)))) throw new Error('请先配置并开启微信生图');
             return image;
         };
         const deliverActiveWechatMessage = (content, rawImage = null, sendAt) => {

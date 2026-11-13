@@ -243,6 +243,7 @@
                         if (!legacyProvider && savedSettings.apiUrl) __s.settings.customApiUrl = savedSettings.apiUrl;
                     }
                     __s.normalizeApiProviderSettings(savedSettings);
+                    __s.settings.wechatImageApi = window.RPHubImageGeneration.config(__s.settings);
                 } else {
                     __s.normalizeApiProviderSettings();
                 }

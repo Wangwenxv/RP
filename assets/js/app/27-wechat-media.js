@@ -154,7 +154,7 @@
 
         const capabilities = () => {
             const char = __s.currentCharacter.value || {};
-            return ['album', 'draw', 'describe', ...(char.wechatImageSearchEnabled && navigator.onLine !== false ? ['search'] : []), ...(char.wechatImageGenerationEnabled && String(__s.settings.imageGenKey || '').trim() ? ['generate'] : [])];
+            return ['album', 'draw', 'describe', ...(char.wechatImageSearchEnabled && navigator.onLine !== false ? ['search'] : []), ...(char.wechatImageGenerationEnabled !== false && window.RPHubImageGeneration?.ready(window.RPHubImageGeneration.config(__s.settings)) ? ['generate'] : [])];
         };
         // Internal capability entry: reuse RP's matcher without adding to user-owned worldbooks.
         // Scan only unhandled user text. Old image captions, presets and RP prose cannot keep it active.
@@ -195,9 +195,9 @@
             return `【图片能力｜本轮按需加载】\n这只是可用能力，不是发图指令。先遵守能否、愿否、是否需要回复的判断；可以拒绝或空回，不为收尾补图。当前可用来源：${sources.join('、')}。一轮最多一张图片；表情频率不约束照片。图片请求放在 messages 数组的原位置，不输出源码/URL/base64。\n`
                 + `相册：{"type":"image_request","media":{"mode":"album","assetId":"下方真实ID","usage":"scene_photo"}}；usage 另可用 album_photo（旧图）、reference（参考）。素材可配合虚构场景，但须符合已建立的饭菜、地点和人物，不能把陌生人当本人，不能凭图片元数据改写剧情。\n`
                 + `绘图：{"type":"image_request","media":{"mode":"draw","template":"note","text":"纸条文字","tone":"warm","decorations":["heart"]}}；template 也可为 doodle，subject 为 heart/cat/flower/meal，tone 为 warm/cool/plain；这是手绘，不冒充照片。\n`
-                + `描述兜底：{"type":"image_request","media":{"mode":"describe","description":"240字以内的画面内容","usage":"scene_photo"}}。复杂照片、人物自拍或没有匹配素材时直接用它，仍是一条图片分享，画面描述不是角色发送的配文；不必编造图片无法发送的台词。只描写当前剧情允许出现的画面，不改写玩家动作或既定事实。相册/绘图请求也可带 description，资源不可用时显示描述卡片；不要用不匹配素材或简笔画充当照片。\n`
+                + `描述兜底：{"type":"image_request","media":{"mode":"describe","description":"240字以内的画面内容","usage":"scene_photo"}}。未配置生图时，复杂照片、人物自拍或没有匹配素材时可用它，仍是一条图片分享，画面描述不是角色发送的配文；不必编造图片无法发送的台词。只描写当前剧情允许出现的画面，不改写玩家动作或既定事实。相册/绘图请求也可带 description，资源不可用时显示描述卡片；不要用不匹配素材或简笔画充当照片。\n`
                 + (sources.includes('search') ? '搜索：media 为 {"mode":"search","query":"具体图片主题","usage":"reference"}。找参考图，不冒充本人自拍。\n' : '')
-                + (sources.includes('generate') ? '生图：media 为 {"mode":"generate","prompt":"英文画面Tag","usage":"scene_photo"}，仅在本地素材/绘图不够时按需用。\n' : '')
+                + (sources.includes('generate') ? window.RPHubImageGeneration.prompt + '已配置生图时，复杂画面优先生图，describe只用于用户明确接受描述卡片时。\n' : '')
                 + `【可选相册图片】\n${candidates.map(item => `- ${item.id}｜${item.title}｜${item.caption}`).join('\n')}`;
         };
         __s.buildActiveWechatImagePrompt = async query => {
@@ -206,8 +206,9 @@
             try { candidates = await library.candidates(String(query || '').slice(-1000), owner()); } catch (_) { /* 描述能力不依赖图库读取。 */ }
             if (scopeId !== scope() || epoch !== __s.wechatMediaEpoch) return '';
             return '【RP 主动图片分享】想给玩家发照片、截图或画作时也调用 tool_wechat：image 与 content 二选一。'
+                + (capabilities().includes('generate') ? '已配置生图，优先 image:{mode:"generate",prompt:"符合当前剧情的具体英文画面",description:"中文画面说明",usage:"scene_photo"}。' : '')
                 + '有准确匹配的图片可用 image:{mode:"album",assetId:"目录ID",description:"画面兜底"}；简单纸条可用 draw。'
-                + '复杂照片或无匹配素材时用 image:{mode:"describe",description:"240字以内的画面内容"}，仍是图片气泡而不是配文，不需要额外API。'
+                + '未配置生图时，复杂照片或无匹配素材可用 image:{mode:"describe",description:"240字以内的画面内容"}，仍是图片气泡而不是配文，不需要额外API。'
                 + '新发生的分享必须通过工具进入微信，不在旁白里假称已经发过；回忆已记录的旧消息不用重发，不补造过去未记录的联系。只发当前角色自己的消息，不替玩家拍照、回答或标记已读。成功后交给玩家。\n'
                 + candidates.map(item => `- ${item.id}｜${item.title}｜${item.caption}`).join('\n');
         };
@@ -290,18 +291,10 @@
             return { image, info: { source: 'search', caption: `网络参考图：${text}`, captionSource: 'source_metadata', sourceUrl: info.descriptionurl, license: info.extmetadata.LicenseShortName.value } };
         };
         const generateImage = async (intent, signal) => {
-            const base = IMAGE_GEN_BASE_URL.replace(/\/+$/, '');
-            const token = __s.settings.imageGenKey.trim();
-            let job = await fetchJson(`${base}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, tag: intent.prompt, model: __s.settings.imageModel, size: __s.settings.imageSize, steps: '40', scale: '6', nocache: '0' }) }, signal);
-            const start = Date.now();
-            while (!['done', 'failed'].includes(job.status)) {
-                if (Date.now() - start > 180000) throw new Error('生图等待超时');
-                await new Promise(resolve => setTimeout(resolve, 1000)); M.assertActive(signal);
-                job = await fetchJson(`${base}/api/jobs/${encodeURIComponent(job.id)}?token=${encodeURIComponent(token)}`, {}, signal);
-            }
-            if (job.status !== 'done') throw new Error(job.error || '生成图片失败');
-            const url = job.imageUrl ? new URL(job.imageUrl, base).href : `${base}/api/jobs/${encodeURIComponent(job.id)}/content?token=${encodeURIComponent(token)}`;
-            return { image: await M.rasterize(url, { signal }), info: { source: 'generate', caption: '生成的场景图片，画面细节尚未核对，可通过查看图片工具确认。', captionSource: 'unknown' } };
+            const G = window.RPHubImageGeneration;
+            const blob = await G.generate(G.config(__s.settings), intent.prompt, signal);
+            return { image: await M.rasterize(blob, { signal }), info: { source: 'generate',
+                caption: M.shortText(intent.description || '生成的场景图片'), captionSource: 'generation_prompt' } };
         };
         const resolveIntent = async (raw, signal) => {
             const check = snapshotGuard(signal); const intent = M.normalizeIntent(raw);
@@ -324,7 +317,7 @@
                 return { assetId: item.id, caption: item.caption, captionSource: item.captionSource, source: item.source, usage: intent.usage };
             } catch (error) {
                 check();
-                if (!intent.description || error.name === 'AbortError' || /Quota|Transaction|Abort|InvalidState/.test(error.name || '')) throw error;
+                if (intent.mode === 'generate' || !intent.description || error.name === 'AbortError' || /Quota|Transaction|Abort|InvalidState/.test(error.name || '')) throw error;
                 return description();
             }
         };
@@ -357,7 +350,7 @@
                         catch (error) {
                             check();
                             const intent = M.normalizeIntent(message.media);
-                            if (!intent.description || error.name === 'AbortError' || /Quota|Transaction|InvalidState/.test(error.name || '')) throw error;
+                            if (intent.mode === 'generate' || !intent.description || error.name === 'AbortError' || /Quota|Transaction|InvalidState/.test(error.name || '')) throw error;
                             task.media = { descriptionOnly: true, caption: intent.description, captionSource: 'narrative', source: 'description', usage: intent.usage };
                         }
                     }

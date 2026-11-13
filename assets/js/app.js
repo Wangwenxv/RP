@@ -277,6 +277,9 @@ const app = createApp({
         __sections.worldSession(__s);
 
         return {
+            wechatImageModels: __s.wechatImageModels, wechatImageModelsLoading: __s.wechatImageModelsLoading,
+            wechatImageModelStatus: __s.wechatImageModelStatus, loadWechatImageModels: __s.loadWechatImageModels,
+            wechatImageProtocols: __s.wechatImageProtocols, wechatImageSizes: __s.wechatImageSizes,
             ...__s.worldExports,
             worldUi: __s.worldUi,
             fullBackupBusy: __s.fullBackupBusy, fullBackupProgress: __s.fullBackupProgress, fullBackupError: __s.fullBackupError,

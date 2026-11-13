@@ -48,6 +48,7 @@
     function imageRecordText(item) {
         const caption = shortText(item?.media?.caption || item?.caption, item?.media?.descriptionOnly ? 240 : 120);
         if (item?.media?.descriptionOnly) return `[图片${item?.id ? ` #${item.id}` : ''}｜画面描述：${caption}｜叙述画面，无实际像素；不是发送者的文字配文]`;
+        if (item?.media?.captionSource === 'generation_prompt') return `[图片${item?.id ? ` #${item.id}` : ''}｜生成画面：${caption}｜依据生图提示，像素细节尚未核对；不是文字配文]`;
         return `[图片${item?.id ? ` #${item.id}` : ''}｜${caption || '画面尚未识别，可用查看图片工具核对'}]`;
     }
 

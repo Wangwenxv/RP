@@ -57,7 +57,8 @@
                         image: {
                             type: 'object', description: '发送一张图片，与 content 二选一。复杂画面或没有匹配素材时用 describe；description 是画面，不是角色的文字配文。',
                             properties: {
-                                mode: { type: 'string', enum: ['describe', 'album', 'draw'] },
+                                mode: { type: 'string', enum: ['describe', 'album', 'draw', ...(window.RPHubImageGeneration?.ready(window.RPHubImageGeneration.config(__s.settings)) && __s.currentCharacter.value?.wechatImageGenerationEnabled !== false ? ['generate'] : [])] },
+                                prompt: { type: 'string', maxLength: 1500, description: '生图模式必填，符合当前剧情的具体画面提示词。' },
                                 description: { type: 'string', maxLength: 240, description: '描述模式必填；其它模式可填作资源不可用时的画面兜底。' },
                                 assetId: { type: 'string', description: '相册模式使用本轮目录里的真实 ID。' },
                                 usage: { type: 'string', enum: ['scene_photo', 'album_photo', 'reference', 'drawing'] },

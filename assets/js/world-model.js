@@ -61,6 +61,10 @@
         result.name = String(result.name || '新世界').trim().slice(0, 120);
         result.revision = Number.isSafeInteger(result.revision) ? result.revision : 1;
         result.playerActorId = assertId(result.playerActorId || 'player', '玩家 ID');
+        if (result.openingText !== undefined) {
+            if (typeof result.openingText !== 'string' || result.openingText.length > 30000) fail('世界开场白须为不超过 30000 字的文字');
+            result.openingText = result.openingText.trim();
+        }
         const seen = new Set();
         result.actors = result.actors.map(actor => {
             if (!actor || typeof actor !== 'object') fail('人物定义无效');
@@ -107,12 +111,16 @@
         return c;
     };
     const activeMembers = (conversation, seq) => (conversation?.memberships || []).filter(m => m.joinedAtSeq <= seq && (m.leftAtSeq == null || seq < m.leftAtSeq)).map(m => m.actorId);
-    const eventText = event => String(event?.payload?.text || event?.payload?.content || event?.payload?.proposition || '');
+    const eventText = event => event?.payload?.type === 'image'
+        ? (window.RPHubWeChatMedia?.imageRecordText({ id: event.eventId, media: event.payload.media }) || `[图片：${event.payload.media?.caption || '未描述'}]`)
+        : String(event?.payload?.text || event?.payload?.content || event?.payload?.proposition || '');
     const validateEvent = (event, snapshot, { persisted = false } = {}) => {
         if (!event || typeof event !== 'object' || !EVENT_KINDS.includes(event.kind)) fail('未知或无效的世界事件类型');
         const actors = new Set(snapshot.definition.actors.map(a => a.actorId));
         if (!actors.has(event.actorId)) fail('事件人物不在本世界');
         if (!event.payload || typeof event.payload !== 'object' || Array.isArray(event.payload)) fail('事件内容无效');
+        if (event.kind === 'message.sent' && event.payload.type === 'image'
+            && (!/^worldimg-[\w-]+$/.test(event.payload.media?.assetId || '') || event.payload.text)) fail('世界图片必须引用已保存资源，不能混入文字');
         if (!event.access || !Array.isArray(event.access.principals) || event.access.principals.some(a => !actors.has(a))) fail('事件访问权限无效');
         if (new Set(event.access.principals).size !== event.access.principals.length) fail('事件权限人物重复');
         if (event.conversationId) {

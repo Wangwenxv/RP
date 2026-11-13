@@ -44,7 +44,8 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
             const actorId = packet?.actorId, record = { stage, actorId: actorId || 'narrator', body, packet }; requests.push(record);
             if (stage === 'native-wx' && actorId === 'qing') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
                 choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'fixture-active-wx', type: 'function',
-                    function: { name: 'tool_wechat', arguments: JSON.stringify({ content: '蛋糕拿到了吗？我在109。' }) } }] }, finish_reason: 'tool_calls' }] }) });
+                    function: { name: 'tool_wechat', arguments: JSON.stringify({ content: '蛋糕拿到了吗？我在109。' }) } }] }, finish_reason: 'tool_calls' }],
+                usage: { prompt_tokens: 30, completion_tokens: 8, total_tokens: 38 } }) });
             if (stage === 'late') { lateResolve?.(); await new Promise(done => setTimeout(done, 400)); }
             if (stage === 'group-retry' && actorId === 'linwan' && failLin) { failLin = false; return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":{"message":"fixture timeout"}}' }); }
             let content;
@@ -100,11 +101,20 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
             const s = window.__WORLD_SCOPE__, b = s.worldSnapshot.value, msgs = s.worldMessages.value, P = window.RPHubWorldProjections;
             return msgs.map(e => e.actorId).join(',') === 'player,qing,linwan' && !P.hasObserved(b, msgs[0].eventId, 'suqixue');
         }));
+        check('完成后保留本轮模型请求次数和人物阶段明细', await page.locator('.world-activity').isVisible() && await page.evaluate(() => {
+            const a = window.__WORLD_SCOPE__.worldDisplayedActivity.value;
+            return a.status === 'complete' && a.modelRequests === 2 && a.toolCalls === 0
+                && a.phases.filter(p => p.purpose === 'actor').length === 2;
+        }));
         stage = 'group-retry'; failLin = true; const failedStart = requests.length;
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; s.worldInput.value = '再问一次'; await s.worldSend(); });
         check('部分失败保留卿的成功回复，界面显示恢复按钮', await page.locator('.world-recovery button').filter({ hasText: '继续未完成回合' }).count() === 1 && await page.evaluate(() => window.__WORLD_SCOPE__.worldMessages.value.filter(e => e.actorId === 'qing').length) === 2);
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__, turn = s.worldRetryable.value[0]; await s.worldRetry(turn.turnId); if (s.worldError.value) throw new Error(s.worldError.value); });
         check('恢复只重试林晚，没有重复卿的气泡', requests.slice(failedStart).map(r => r.actorId).join(',') === 'qing,linwan,linwan' && await page.evaluate(() => window.__WORLD_SCOPE__.worldMessages.value.filter(e => e.actorId === 'qing').length) === 2);
+        check('继续未完成回合累计模型与失败次数', await page.evaluate(() => {
+            const a = window.__WORLD_SCOPE__.worldDisplayedActivity.value;
+            return a.modelRequests === 3 && a.failedRequests === 1 && a.status === 'complete';
+        }));
         stage = 'rp'; const rpStart = requests.length;
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; await s.worldSelectConversation('rp-main'); s.worldActorSelection.value = ['suqixue', 'qing']; s.worldInput.value = '同一时段，继续他们各自的安排，不替我决定'; await s.worldSend(); if (s.worldError.value) throw new Error(s.worldError.value); });
         const rp = requests.slice(rpStart);
@@ -155,6 +165,9 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
             await s.worldSelectConversation('dm-qing'); s.worldInput.value = '切会话时的晚到探针'; window.__LATE_SEND__ = s.worldSend();
         });
         await pending;
+        check('模型等待期间像聊天状态一样显示耗时、调用数和停止入口', await page.locator('.world-activity.is-running').isVisible()
+            && await page.getByRole('button', { name: '停止本轮', exact: true }).isVisible()
+            && await page.evaluate(() => window.__WORLD_SCOPE__.worldDisplayedActivity.value.modelRequests === 1));
         await page.evaluate(async () => { const s = window.__WORLD_SCOPE__; await s.worldSelectConversation('rp-main'); await window.__LATE_SEND__; });
         check('生成时切会话保持原会话，完成后的回复正常保存', await page.evaluate(() => {
             const s = window.__WORLD_SCOPE__, b = s.worldSnapshot.value, t = Object.values(b.turns).find(t => t.text === '切会话时的晚到探针');
@@ -182,6 +195,10 @@ const proposal = (decision, actions = [], ids = []) => JSON.stringify({ decision
             if (s.worldError.value) throw new Error(s.worldError.value); });
         check('实际HTTP请求提供原生微信工具，发送后没有演员工具续写', requests.slice(wxStart).map(r => r.actorId).join(',') === 'qing,narrator'
             && requests[wxStart].body.tools.some(t => t.function.name === 'tool_wechat'));
+        check('原生工具回合显示两次模型请求和一次工具调用', await page.evaluate(() => {
+            const a = window.__WORLD_SCOPE__.worldDisplayedActivity.value;
+            return a.status === 'complete' && a.modelRequests === 2 && a.toolCalls === 1 && a.usageReports === 2;
+        }) && (await page.locator('.world-activity').innerText()).includes('工具调用 1 次'));
         check('RP来信自动打开原联系人，单条气泡按当前世界时间保存', await page.evaluate(() => {
             const s = window.__WORLD_SCOPE__, b = s.worldSnapshot.value, message = b.events.find(e => e.kind === 'message.sent' && e.payload.text === '蛋糕拿到了吗？我在109。');
             return s.worldConversationId.value === 'dm-qing' && message?.actorId === 'qing' && message.storyTime === b.storyTime
