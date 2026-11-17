@@ -99,3 +99,80 @@ test('RP本轮current绑定真实正文，微信原句更新共用同一状态',
     assert.equal(h.s.wechatTimeline.value.length, 1);
     assert.equal(G.project(world, [msg('{"messages":[{"type":"image","content":"我在图书馆。"}]}')], bindings).character.status, 'unknown');
 });
+
+const wx = (content, role = 'assistant', id = 'wx') => msg(content, role, { id, channel: 'wechat' });
+test('真实微信省略主语的到达和地点加活动无需补工具也即时定位', () => {
+    for (const [text, place] of [['在图书馆看书', 'library'], ['现在在图书馆', 'library'], ['刚回北苑3栋', 'dorm-3'], ['已经到宿舍了', 'dorm-3'], ['我已经到宿舍了', 'dorm-3'], ['刚回宿舍', 'dorm-3']]) {
+        assert.equal(G.project(world, [wx(text)], bindings).character.placeId, place, text);
+    }
+    assert.equal(G.project(world, [wx('已经到宿舍了')], bindings).user.status, 'unknown');
+    assert.equal(G.project(world, [wx('我在图书馆，准备去食堂')], bindings).character.placeId, 'library');
+    assert.equal(G.project(world, [msg('已经到宿舍了')], bindings).character.status, 'unknown');
+    assert.equal(G.verifyLocationUpdate(world, wx('已经到宿舍了'), args('已经到宿舍了', { query: 'dorm-3' }), bindings).placeId, 'dorm-3');
+});
+
+test('刚才吃饭不推定食堂；仅北苑保留歧义提示而不猜住址', () => {
+    assert.equal(G.project(world, [wx('刚才在吃饭')], bindings).character.status, 'unknown');
+    const partial = G.project(world, [wx('刚回北苑')], bindings).character;
+    assert.equal(partial.status, 'ambiguous_place'); assert.equal(partial.placeId, undefined);
+    assert.match(G.briefState({ character: partial }, world).character.note, /北苑.*待确认/);
+});
+
+test('裸地点只回答当前位置问题时定位，计划和疑问不能借口语解析定位', () => {
+    assert.equal(G.project(world, [wx('北苑哪一栋？', 'user', 'question'), wx('3栋')], bindings).character.placeId, 'dorm-3');
+    for (const question of ['等会儿想去哪？', '明天你在哪一栋？']) {
+        assert.equal(G.project(world, [wx(question, 'user', 'question'), wx('图书馆')], bindings).character.status, 'unknown');
+    }
+    for (const text of ['图书馆', '准备回宿舍', '刚才在图书馆', '已经到宿舍了吗', '已经到宿舍了没', '到宿舍以后再说', '在图书馆的话', '“已经到宿舍了”']) {
+        assert.equal(G.project(world, [wx(text)], bindings).character.placeId, undefined, text);
+    }
+});
+
+test('微信口语离开使旧位置在途，撤销或编辑到达原文后自动回退', () => {
+    const arrival = wx('已经到宿舍了', 'assistant', 'arrival');
+    for (const acknowledgement of ['到啦', '到了', '在呢', '回来了']) {
+        assert.equal(G.project(world, [arrival, wx(acknowledgement)], bindings).character.placeId, 'dorm-3');
+        assert.equal(G.project(world, [wx(acknowledgement)], bindings).character.placeId, undefined);
+    }
+    assert.equal(G.project(world, [arrival, wx('刚离开了宿舍')], bindings).character.status, 'in_transit');
+    arrival.content = '准备到宿舍';
+    assert.equal(G.project(world, [arrival], bindings).character.status, 'unknown');
+});
+
+test('模型自主场景不需要对玩家公开地点，也不按住址或用户位置代填', () => {
+    const source = wx('刚回北苑', 'assistant', 'own');
+    source.geographyPosition = { worldId: world.id, storyAt: 1000, sourceContent: source.content, decision: { action: 'present', placeId: 'dorm-4', detail: '一楼门口台阶' } };
+    const follow = wx('吃过了', 'assistant', 'follow'); follow.geographyPositionRef = 'own';
+    const result = G.project(world, [source, follow], bindings);
+    assert.equal(result.character.placeId, 'dorm-4'); assert.equal(result.character.subLocation.detail, '一楼门口台阶'); assert.equal(result.user.status, 'unknown');
+    const restored = JSON.parse(JSON.stringify([source, follow]));
+    assert.equal(G.project(world, restored, bindings).character.placeId, 'dorm-4');
+    restored[0].content = '准备回北苑';
+    assert.equal(G.project(world, restored, bindings).character.status, 'unknown');
+    assert.equal(G.project(world, [follow], bindings).character.status, 'unknown');
+});
+
+test('自身移动尊重路程与剧情时间；计划和原地回复不导致瞬移', () => {
+    const initial = G.decidePosition(world, null, { action: 'present', placeId: 'dorm-13', detail: '宿舍楼门口' }, 1000);
+    const move = G.decidePosition(world, initial, { action: 'depart', to: 'lab-A', mode: 'walk' }, 1000);
+    assert.equal(move.status, 'in_transit'); assert.equal(move.arrivalAt, 1000 + 35 * 60000);
+    assert.throws(() => G.decidePosition(world, move, { action: 'present', placeId: 'lab-A' }, 1000));
+    assert.equal(G.decidePosition(world, move, { action: 'continue' }, 1000).status, 'in_transit');
+    assert.equal(G.decidePosition(world, move, { action: 'present', placeId: 'lab-A', detail: '一楼实验室门口' }, move.arrivalAt).placeId, 'lab-A');
+    assert.throws(() => G.decidePosition(world, initial, { action: 'present', placeId: 'library' }, 1000));
+    assert.equal(G.decidePosition(world, initial, { action: 'stay' }, 1000).placeId, 'dorm-13');
+    assert.throws(() => G.decidePosition(world, null, { action: 'present', placeId: '北苑' }, 1000));
+    assert.throws(() => G.decidePosition(world, null, { action: 'present', placeId: 'library' }, 1000));
+    assert.throws(() => G.decidePosition(world, null, { action: 'present', placeId: 'library', actor: 'user' }, 1000));
+});
+
+test('自主位置工具绑定RP正文，微信工具先提案，失败不写入玩家或分支', async () => {
+    const h = adapter(); h.s.wechatClock = { value: { time: 1000 } }; h.s.chatHistory.value = [msg('今晚有点冷。')];
+    const request = { operation: 'set_position', action: 'present', placeId: 'dorm-4', sceneDetail: '门口台阶' };
+    await h.s.executeGeographyTool(call(request), undefined, { sourceMessageId: 'a1' });
+    assert.equal(h.s.getChatGeographyState().character.placeId, 'dorm-4'); assert.equal(h.s.getChatGeographyState().user.status, 'unknown');
+    const budget = h.s.createGeographyBudget();
+    await h.s.executeGeographyTool(call({ operation: 'set_position', action: 'stay' }), budget, { channel: 'wechat', storyAt: 1000 });
+    assert.equal(budget.positionDecision.action, 'stay'); assert.equal(h.saved(), 1);
+    h.switchBranch(); assert.equal(h.s.getChatGeographyState().character.status, 'unknown');
+});

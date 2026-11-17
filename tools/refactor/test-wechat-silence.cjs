@@ -63,6 +63,19 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
   context.window.RPHubAppSections.wechat(state);
   return {
     state, protocol: context.window.RPHubWeChatProtocol, stored, requests, toasts,
+    async loadGeography() {
+      Object.assign(state, {
+        getEnabledActiveTools: () => [], buildActiveToolDefinitions: () => [],
+        parseNativeActiveToolCall: () => ({}), shouldRequireActiveToolCall: () => false,
+        getActiveToolInvocationReminder: () => '', buildActiveToolSystemPrompt: () => ''
+      });
+      state.currentCharacter.value.geography = { enabled: true, worldId: 'jiangnan-south-campus', bindings: { character: { home: 'dorm-3' } } };
+      for (const file of ['geography.js', 'world-data.js', 'app/30-geography.js']) {
+        vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js', file), 'utf8'), context);
+      }
+      context.window.RPHubAppSections.geography(state);
+      await state.openWechat();
+    },
     loadRpTools(tools) {
       Object.assign(context, {
         BUILTIN_PROMPTS: context.window.RPHubBuiltinContent.prompts,
@@ -673,4 +686,49 @@ test('切换分支后连续沉默和归因不继承旧 scope', async () => {
   assert.equal(h.requests[1].messages.slice(1).some(m => m.content.startsWith('【此前连续沉默')), false);
   assert.ok(h.state.buildWechatSilenceState().content.includes('连续 1 轮'));
   assert.equal(h.stored.get('wechat_timeline/branch-a')[0].replySilence.summary, '在赌气');
+});
+
+test('微信自主位置缺失时只修正一次，内部场景保存且不生成额外气泡', async () => {
+  const h = harness(async (_options, n) => ({ content: JSON.stringify({ messages: [{ type: 'text', content: '晚点聊' }],
+    ...(n === 2 ? { position: { action: 'present', placeId: 'dorm-4', detail: '一楼门口台阶' } } : {}) }) }));
+  await h.loadGeography(); await h.send('你忙你的');
+  assert.equal(h.requests.length, 2); assert.equal(h.toasts.length, 0);
+  assert.equal(h.state.wechatTimeline.value.length, 2);
+  assert.equal(h.state.getChatGeographyState().character.placeId, 'dorm-4');
+  assert.equal(h.state.getChatGeographyState().user.status, 'unknown');
+  assert.equal(h.stored.get('wechat_timeline/branch-a')[1].geographyPosition.decision.detail, '一楼门口台阶');
+  assert.match(h.requests[0].messages[0].content, /应该知道自己的身体具体在哪里/);
+});
+
+test('微信空回仍保存角色自身位置，重新打开恢复且玩家位置保持未知', async () => {
+  const h = harness(async () => ({ content: JSON.stringify({ messages: [], position: { action: 'present', placeId: 'library', detail: '二楼靠窗座位' } }) }));
+  await h.loadGeography(); await h.send('好的，你忙');
+  assert.equal(h.state.wechatTimeline.value.length, 1);
+  assert.equal(h.state.wechatTimeline.value[0].replyDecision, 'silent');
+  assert.equal(h.stored.get('wechat_timeline/branch-a')[0].geographyReplyPosition.decision.placeId, 'library');
+  await h.state.closeWechat(); await h.state.openWechat();
+  assert.equal(h.state.getChatGeographyState().character.subLocation.detail, '二楼靠窗座位');
+  assert.equal(h.state.getChatGeographyState().user.status, 'unknown');
+});
+
+test('两次无效位置不发送、不消费玩家消息、不保留假坐标', async () => {
+  const h = harness(async () => ({ content: '{"messages":[{"type":"text","content":"好"}],"position":{"action":"present","placeId":"北苑"}}' }));
+  await h.loadGeography(); await h.send('随便聊聊');
+  assert.equal(h.requests.length, 2); assert.equal(h.toasts.length, 1);
+  assert.equal(h.state.wechatTimeline.value.length, 1);
+  assert.equal(h.state.wechatUnansweredCount.value, 1);
+  assert.equal(h.state.wechatTimeline.value[0].geographyReplyPosition, undefined);
+  assert.equal(h.state.getChatGeographyState().character.status, 'unknown');
+});
+
+test('微信工具先确定位置但最终API失败时，不持久化暂定场景', async () => {
+  const h = harness(async (_options, n) => {
+    if (n === 2) throw new Error('连接断开');
+    return { toolCalls: [nativeCall('own-position', { operation: 'set_position', action: 'present', placeId: 'dorm-4', sceneDetail: '一楼门口' }, 'tool_geo')] };
+  });
+  await h.loadGeography(); await h.send('晚点聊');
+  assert.equal(h.requests.length, 2); assert.equal(h.toasts.length, 1);
+  assert.equal(h.state.wechatTimeline.value.length, 1);
+  assert.equal(h.state.getChatGeographyState().character.status, 'unknown');
+  assert.equal(h.stored.get('wechat_timeline/branch-a')[0].geographyReplyPosition, undefined);
 });

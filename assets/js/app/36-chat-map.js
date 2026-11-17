@@ -99,6 +99,12 @@
             return query === 'unknown' ? '📍 我的位置：未知' : `📍 我的位置：${__s.chatMapWorld.value?.places.find(p => p.id === query)?.name || query}`;
         };
         watch(__s.currentView, () => { __s.showChatMap.value = false; });
+        watch([__s.showChatMap, () => __s.getCurrentStoryBranchScopeId(), __s.storyBranchSwitching, __s.switchingCharacterIndex], async () => {
+            if (!__s.showChatMap.value || __s.chatMapWorldMode.value || __s.storyBranchSwitching.value || __s.switchingCharacterIndex.value >= 0) return;
+            if (!__s.currentCharacter.value?.wechatEnabled) return;
+            try { await __s.ensureWechatTimelineLoaded(false, true); }
+            catch (error) { __s.showToast(`地图微信位置读取失败：${error.message}`, 'error'); }
+        });
         watch(() => __s.worldConversationId.value, () => {
             const c = __s.worldConversation.value;
             if (c?.kind === 'dm') __s.chatMapFocusActor.value = __s.worldConversationActor(c);

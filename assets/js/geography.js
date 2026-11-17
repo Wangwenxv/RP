@@ -174,6 +174,8 @@
             const s = state[key] || { status: 'unknown' };
             const place = placeOf(world, s.placeId);
             return [key, { status: s.status, ...(s.placeId ? { placeId: s.placeId, name: s.name } : {}),
+                ...(s.note ? { note: s.note } : {}),
+                ...(s.arrivalAt ? { arrivalAt: s.arrivalAt, departureAt: s.departureAt, fromId: s.fromId, destinationId: s.destinationId } : {}),
                 ...(s.subLocation ? { subLocation: s.subLocation } : {}),
                 ...(place ? { zone: world.districts?.[place.district]?.label || place.district || '', point: place.point } : {}),
                 ...(s.messageId ? { source: { messageId: s.messageId, channel: s.channel } } : {}), ...(s.candidates?.length ? { candidates: s.candidates.slice(0, 5) } : {}) }];
@@ -336,7 +338,7 @@
         if (msg.role === 'user' && !/^\/geo\s+character\s+/i.test(sentence) && !subject) throw new Error('玩家位置只能由玩家决定');
         if (msg.role === 'user' && !namedHuman && !/^\/geo\s+character\s+/i.test(sentence)) throw new Error('不能把玩家自述当成角色位置');
         sentence = sentence.replace(/^我(?:推门)?(?:走进|进入)(?:了)?/, '我到了');
-        const inferred = project(world, [{ role: /^\/geo/.test(sentence) ? 'user' : 'assistant', content: sentence, id: msg.id }], bindings).character;
+        const inferred = project(world, [{ role: /^\/geo/.test(sentence) ? 'user' : 'assistant', content: sentence, id: msg.id, channel: msg.channel }], bindings).character;
         if (!inferred.messageId || inferred.status !== args.locationStatus) throw new Error('依据未确认这个位置状态；计划、疑问和猜测不能更新位置');
         if (args.locationStatus === 'last_confirmed') {
             const hit = resolve(world, args.query);
@@ -346,16 +348,66 @@
     };
     // Conservative evidence replay. Commands are accepted only in HUMAN messages.
     // No memory summaries, attachments, tools, CoT, quotations or future plans are location evidence.
+    const decidePosition = (world, previous, decision, storyAt) => {
+        if (!decision || typeof decision !== 'object' || Array.isArray(decision)
+            || Object.keys(decision).some(k => !['action', 'placeId', 'to', 'mode', 'detail'].includes(k))
+            || !['present', 'stay', 'depart', 'continue'].includes(decision.action)
+            || !Number.isFinite(storyAt)) throw new Error('自身位置需要合法position对象和剧情时间');
+        for (const value of Object.values(decision)) if (typeof value !== 'string' || value.length > 100) throw new Error('位置字段须为不超过100字的字符串');
+        const before = previous || { status: 'unknown' };
+        if (Number.isFinite(before.confirmedAt) && storyAt < before.confirmedAt || Number.isFinite(before.departureAt) && storyAt < before.departureAt) throw new Error('自身位置不能倒退剧情时间');
+        if (decision.action === 'continue') {
+            if (before.status !== 'in_transit' || decision.placeId || decision.to || decision.mode) throw new Error('continue仅保持已记录的在途行程');
+            return { ...before, ...(decision.detail?.trim() ? { subLocation: { detail: decision.detail.trim() } } : {}) };
+        }
+        const placeId = decision.placeId || (decision.action !== 'present' ? before.placeId : '');
+        const place = world.places.find(p => p.id === placeId && p.kind !== 'junction');
+        if (!place) throw new Error('请选择地图中具体的自身地点placeId，不能用片区或住址自动代填');
+        if (decision.action === 'stay' && (before.status !== 'last_confirmed' || before.placeId !== place.id)) throw new Error('尚未确认自身位置，先自主建立present场景；在途不能stay成在场');
+        if (decision.action === 'present' && before.status === 'in_transit') {
+            if (before.destinationId !== place.id || !Number.isFinite(before.arrivalAt) || storyAt < before.arrivalAt) throw new Error('尚未走完路程，不能提前到达；保持在途');
+        } else if (decision.action === 'present' && before.status === 'last_confirmed' && before.placeId !== place.id) {
+            const cost = route(world, before.placeId, place.id, { mode: decision.mode || 'walk' });
+            if (cost.status !== 'ok' || !Number.isFinite(before.confirmedAt) || storyAt - before.confirmedAt < cost.duration.typicalMinutes * 60000) throw new Error('切换地点必须先depart，或有足够已推进的剧情时间，不能瞬移');
+        }
+        if (decision.action === 'depart') {
+            if (before.status !== 'last_confirmed' || before.placeId !== place.id) throw new Error('出发必须从自己已确认的位置开始');
+            if (!decision.to || decision.to === place.id) throw new Error('出发需要不同的明确目的地to');
+            const cost = route(world, place.id, decision.to, { mode: decision.mode || 'walk' });
+            if (cost.status !== 'ok') throw new Error('目的地或通行路程尚未确认，不能提交移动');
+            const destination = resolve(world, decision.to).place;
+            if (destination.kind === 'junction') throw new Error('目的地需要地图中具体地点，不能用路网节点');
+            return { status: 'in_transit', fromId: place.id, destinationId: resolve(world, decision.to).place.id, departureAt: storyAt,
+                arrivalAt: storyAt + cost.duration.typicalMinutes * 60000, ...(decision.detail?.trim() ? { subLocation: { detail: decision.detail.trim() } } : {}),
+                note: `已从${place.name}前往${destination.name}，预计${cost.duration.typicalMinutes}分钟；到达待剧情时间确认`, origin: 'model_position' };
+        }
+        if (decision.to || decision.mode) throw new Error('在场/停留不应附带行程；计划不作为已出发');
+        const sceneDetail = decision.detail?.trim() || (before.placeId === place.id ? before.subLocation?.detail : '');
+        if (!sceneDetail) throw new Error('请决定自己在这个地点的具体场景detail，如楼门口、房间或座位');
+        return { status: 'last_confirmed', placeId: place.id, name: place.name, confirmedAt: storyAt,
+            subLocation: { detail: sceneDetail }, origin: 'model_position' };
+    };
     const project = (world, messages, bindings = {}) => {
         const state = { user: { status: 'unknown' }, character: { status: 'unknown' } };
+        let locationQuestion = false;
+        let positionOwner = null;
         for (const [index, msg] of messages.entries()) {
             for (const update of (Array.isArray(msg.geographyUpdates) ? msg.geographyUpdates : []).slice(-4)) {
                 if (update.worldId !== world.id) continue;
                 try { state.character = verifyLocationUpdate(world, msg, update, bindings); } catch (_) { /* Edited/deleted evidence invalidates the annotation. */ }
             }
+            const ownPosition = msg.role === 'assistant' ? msg.geographyPosition : msg.role === 'user' ? msg.geographyReplyPosition : null;
+            if (ownPosition?.worldId === world.id && ownPosition.sourceContent === msg.content) {
+                try {
+                    state.character = { ...decidePosition(world, state.character, ownPosition.decision, ownPosition.storyAt), messageId: msg.id || String(index), channel: msg.channel || 'rp' };
+                    positionOwner = msg.id || String(index);
+                } catch (_) { /* Invalid decisions or edited source messages do not resurrect a position. */ }
+            }
+            if (msg.role === 'assistant' && (ownPosition && positionOwner === (msg.id || String(index)) || msg.geographyPositionRef && msg.geographyPositionRef === positionOwner)) continue;
             if (!['user', 'assistant'].includes(msg.role) || (msg.type && msg.type !== 'text')) continue;
             const text = messageText(msg);
             if (!text) continue;
+            if (msg.role === 'user') locationQuestion = /你(?:现在|目前)?在哪|哪一栋|在哪栋|在哪个(?:地方|位置)/.test(text) && !/明天|后天|打算|准备|想去|要去/.test(text);
             const source = { messageId: msg.id || String(index), channel: msg.channel || 'rp', evidence: '' };
             const command = msg.role === 'user' && /^\/geo\s+(user|character)\s+([^\n]+)$/i.exec(text);
             const speaker = command ? command[1].toLowerCase() : msg.role === 'user' ? 'user' : 'character';
@@ -363,7 +415,7 @@
             if (!command) {
                 const sentences = text.match(/[^。！？!?\n]+[。！？!?]?/g) || [];
                 for (const raw of sentences) {
-                    let sentence = raw.trim();
+                    let sentence = raw.trim().replace(/^\*+|\*+$/g, '').trim();
                     if (/^[>“"「『]/.test(sentence)) continue;
                     if (/[？?]$/.test(sentence)) {
                         const compound = /^([^，,]+)[，,]\s*(?:你|能|可以|要不要)/.exec(sentence);
@@ -372,6 +424,12 @@
                     }
                     sentence = sentence.replace(/[。！!]$/, '');
                     if (msg.role === 'assistant' && bindings.character?.name) sentence = sentence.replace(new RegExp('^' + bindings.character.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), '我');
+                    // A single-card WeChat bubble commonly omits its first-person subject.
+                    // Keep this restricted to that channel; bare destinations require a current-location question.
+                    const spoken = msg.channel === 'wechat' && msg.role === 'assistant';
+                    if (spoken && /^(?:现在|目前|还|已经|刚刚|刚)?(?:在|到|回|走进|进入|离开|出发)/.test(sentence)) sentence = '我' + sentence;
+                    const factClause = sentence.split(/[，,；;]/)[0];
+                    if (/[？?]/.test(sentence) || /(?:吗|么|了没|是不是|是否|会不会|要不要|如果|假如|可能|也许|大概在|打算|准备|想去|要去|要回|才到|到时候|的话|以后|之后)/.test(factClause)) continue;
                     if (/^(?:第二天|次日|翌日|(?:几|半|一|两|三|四|五|六|七|八|九|十|\d+)个?小时后|(?:几|一|两|三|\d+)天后)/.test(sentence)) {
                         state.user = { status: 'unknown', ...source, evidence: '剧情时间跳跃，需重新确认' };
                         state.character = { status: 'unknown', ...source, evidence: '剧情时间跳跃，需重新确认' };
@@ -379,16 +437,26 @@
                     }
                     if (/^我不在/.test(sentence)) { state[speaker] = { status: 'unknown', ...source, evidence: sentence.slice(0, 80) }; continue; }
                     if (/^我在(?:去|前往).*(?:路上|途中)/.test(sentence)) { state[speaker] = { status: 'in_transit', ...source, evidence: sentence.slice(0, 80) }; continue; }
-                    if (/^(?:我)?(?:已经)?(?:出发了|离开了|在路上|走出)/.test(sentence)) { state[speaker] = { status: 'in_transit', ...source, evidence: sentence.slice(0, 80) }; continue; }
-                    const hit = /^(?:我现在在|我目前在|我还在|我在|我已经到了|我走到了|我来到|我到了|我到)([^，,；;]+)/.exec(sentence);
+                    if (/^(?:我)?(?:已经|刚刚|刚)?(?:出发了|离开了|在路上|走出)/.test(sentence)) { state[speaker] = { status: 'in_transit', ...source, evidence: sentence.slice(0, 80) }; continue; }
+                    const hit = /^我(?:现在|目前|还|已经|刚刚|刚)?(?:在|走到了?|来到了?|到了?|回到了?|回|走进了?|进入了?)([^，,；;]+)/.exec(sentence);
+                    if (!hit && spoken && locationQuestion && sentence.length <= 40) {
+                        const answer = resolve(world, sentence.replace(/[呢啦啊哦呀]+$/, ''));
+                        if (answer.status === 'ok') state.character = { status: 'last_confirmed', placeId: answer.place.id, name: answer.place.name,
+                            ...(answer.subLocation ? { subLocation: answer.subLocation } : {}), ...source, evidence: raw.trim().slice(0, 80) };
+                        continue;
+                    }
                     if (!hit) continue;
                     if (/^我到[^，,；;]*(?:就|再|以后|之后)/.test(sentence)) continue;
                     location = hit[1].replace(/(?:等你|等着|呢|啦|了|啊|哦|呀|这边|这里).*$/, '').trim();
+                    // Activity text can follow a stated place, but cannot itself identify one.
+                    location = location.replace(/(?:看书|看小说|自习|写作业|吃饭|吃晚饭|吃午饭|吃早饭)$/, '').trim();
+                    if (!location || /^[来回]+$/.test(location)) continue;
                     source.evidence = sentence.slice(0, 80);
                     // Resolve at most one statement; never use substring containment to guess a building.
                     if (location === '宿舍' || location === '寝室') location = bindings[speaker]?.home || '';
                     const result = resolve(world, location);
-                    state[speaker] = result.status === 'ok' ? { status: 'last_confirmed', placeId: result.place.id, name: result.place.name, ...(result.subLocation ? { subLocation: result.subLocation } : {}), ...source } : { status: result.status, ...source, candidates: result.candidates || [] };
+                    state[speaker] = result.status === 'ok' ? { status: 'last_confirmed', placeId: result.place.id, name: result.place.name, ...(result.subLocation ? { subLocation: result.subLocation } : {}), ...source } : { status: result.status, ...source, candidates: result.candidates || [],
+                        note: result.status === 'ambiguous_place' ? `只确认了${location}，具体地点待确认` : '提到的地点未能在地图中确认' };
                 }
                 continue;
             }
@@ -400,7 +468,10 @@
         return state;
     };
     const properties = {
-        operation: { type: 'string', enum: ['context', 'search', 'place', 'route', 'status', 'update_location'], description: '查询地点/路程；update_location仅按正文事实更新当前角色的位置，不能决定玩家位置' },
+        operation: { type: 'string', enum: ['context', 'search', 'place', 'route', 'status', 'update_location', 'set_position'], description: '查询地点/路程；set_position自主维护角色自身位置，update_location核对已有原文；均不能决定玩家位置' },
+        action: { type: 'string', enum: ['present', 'stay', 'depart', 'continue'], description: 'set_position：自主确定当前实际场景present，停留stay，实际出发depart，保持在途continue；计划不是出发' },
+        placeId: { type: 'string', description: 'set_position：自身当前地图地点ID，不能填玩家位置' },
+        sceneDetail: { type: 'string', description: 'set_position：具体场景位置，如314室书桌前；不发送给用户' },
         locationStatus: { type: 'string', enum: ['last_confirmed', 'in_transit', 'unknown'], description: 'update_location必填：已确认在场、已经离开在途、位置未知；到达才带query' },
         sourceMessageId: { type: 'string', description: 'update_location必填：位置依据原文消息ID；RP本轮已写出的正文用current，微信用已有正文ID' },
         evidence: { type: 'string', description: 'update_location必填：逐字复制该消息里不超过200字的完整事实原句；禁止推理、引用、疑问、计划' },
@@ -410,7 +481,7 @@
         weather: { type: 'string', enum: ['normal', 'rain'] }, time: { type: 'string', description: '剧情出发时间HH:MM，不能用系统时间' },
         detail: { type: 'string', enum: ['brief', 'full'], description: '默认brief只取行动需要的短结果；要丰富场景描写才选full' }
     };
-    const definition = { type: 'function', function: { name: 'tool_geo', description: '本地地图：search检索用途候选，context查询环境、双方位置与通行耗时；已有速查不重复查，多地点可batch。update_location用当前分支正文中的完整事实原句更新当前角色位置（query地点、locationStatus、sourceMessageId、evidence），只确认已在场/已离开，不能按计划或住址瞬移，不能替玩家更新位置。不提供取件码、库存等未知事实。', parameters: { type: 'object', properties: {
+    const definition = { type: 'function', function: { name: 'tool_geo', description: '本地地图：search检索用途候选，context查询环境、双方位置与通行耗时；已有速查不重复查，多地点可batch。set_position自主维护角色自身实际场景（action、placeId、sceneDetail；depart用to和mode），即使对外未告知地点也应知道自己在哪。update_location用当前分支正文中的完整事实原句核对位置（query地点、locationStatus、sourceMessageId、evidence）。两者均不能按计划或住址瞬移，不能替玩家更新位置。不提供取件码、库存等未知事实。', parameters: { type: 'object', properties: {
         ...properties, operation: { ...properties.operation, enum: [...properties.operation.enum, 'batch'] },
         requests: { type: 'array', minItems: 1, maxItems: 4, description: 'batch最多4个独立查询，一次返回；不许嵌套batch', items: { type: 'object', properties, required: ['operation'], additionalProperties: false } }
     }, required: ['operation'], additionalProperties: false } } };
@@ -426,6 +497,7 @@
         }
         if (!args.operation || (!allowBatch && args.operation === 'batch') || (args.operation === 'batch' && !args.requests)) throw new Error('需要合法operation；batch不可嵌套且必须有requests');
         if (args.operation === 'route' && args.mode === 'compare') throw new Error('比较两种交通请用context');
+        if (args.operation === 'set_position' && (!allowBatch || !args.action || args.requests)) throw new Error('set_position需要action且不能放入batch');
         if (args.operation === 'update_location' && (!allowBatch || !args.sourceMessageId || !args.evidence || !args.locationStatus)) throw new Error('位置更新需要sourceMessageId、完整原句evidence和locationStatus，不能放入batch');
     };
     const execute = (world, state, args) => {
@@ -447,5 +519,5 @@
         }
         throw new Error('需要 operation: search/place/route/status');
     };
-    window.RPHubGeography = { validate, validateArgs, messageText, verifyLocationUpdate, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, needs, search, everydayContext, project, definition, execute, compass, relation, reachability };
+    window.RPHubGeography = { validate, validateArgs, messageText, verifyLocationUpdate, decidePosition, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, needs, search, everydayContext, project, definition, execute, compass, relation, reachability };
 })();

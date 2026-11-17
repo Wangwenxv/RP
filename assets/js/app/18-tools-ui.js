@@ -351,6 +351,7 @@
                 }
                 return false;
             } finally {
+                if (assistantMessage.geographyPosition) assistantMessage.geographyPosition.sourceContent = assistantMessage.content;
                 if (__s.activeToolQueueAbortController === toolAbort) __s.activeToolQueueAbortController = null;
                 __s.activeToolHandoffPending.value = false;
                 __s.activeToolQueueRunning.value = false;

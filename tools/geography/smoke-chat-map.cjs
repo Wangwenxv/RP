@@ -35,8 +35,8 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
             const body = route.request().postDataJSON(); requests.push(body);
             const done = body.messages.some(m => m.role === 'tool');
             const tool = (id, args) => ({ id, type: 'function', function: { name: 'tool_geo', arguments: JSON.stringify(args) } });
-            const content = fixture === 'wechat' ? '{"messages":[{"type":"text","content":"到啦。"}]}' : '到啦，先等你。';
-            const message = done ? { role: 'assistant', content } : { role: 'assistant', content: fixture === 'rp' ? '她走进了图书馆。' : '', tool_calls: [
+            const content = fixture === 'spoken' ? '{"messages":[{"type":"text","content":"刚回北苑"},{"type":"text","content":"吃过了"}],"position":{"action":"present","placeId":"dorm-4","detail":"一楼门口台阶"}}' : fixture === 'wechat' ? '{"messages":[{"type":"text","content":"到啦。"}],"position":{"action":"stay","detail":"四楼靠窗书桌"}}' : '到啦，先等你。';
+            const message = done || fixture === 'spoken' ? { role: 'assistant', content } : { role: 'assistant', content: fixture === 'rp' ? '她走进了图书馆。' : '', tool_calls: [
                 tool('map-update', { operation: 'update_location', locationStatus: 'last_confirmed', query: 'library', sourceMessageId: fixture === 'rp' ? 'current' : 'wx-location', evidence: '她走进了图书馆。' }),
                 tool('map-status', { operation: 'status' })
             ] };
@@ -133,6 +133,24 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
         await drawer.getByRole('button', { name: '关闭地理地图', exact: true }).focus(); await page.keyboard.press('Escape');
         await drawer.waitFor({ state: 'hidden' });
         check('微信可随时打开地图，Escape关闭并恢复入口焦点', await page.evaluate(() => document.activeElement.getAttribute('aria-label') === '微信地理地图'));
+        await page.getByRole('button', { name: '微信地理地图', exact: true }).click();
+        fixture = 'spoken';
+        await page.evaluate(async () => { const r = window.__APP_PROXY__; r.wechatTimeline = []; r.wechatBurstMode = true;
+            r.wechatInput = '北苑哪一栋？你已经到楼里了吗，还是在路上？'; await r.sendWechatMessage(); await r.requestWechatReplyNow(); });
+        await page.waitForFunction(() => window.__APP_PROXY__.chatMapLocations.character.placeId === 'dorm-4');
+        check('只说刚回北苑，内部自主选择4栋和门口台阶，不按住址3栋代填', await drawer.getByTestId('map-marker-character').count() === 1 && (await drawer.textContent()).includes('一楼门口台阶'));
+        await page.waitForFunction(async () => {
+            const r = window.__APP_PROXY__;
+            if (r.isWechatGenerating) return false;
+            const scope = window.RPHubStoryBranches.getStoryBranchScopeId(r.currentCharacter.uuid, r.activeStoryBranchId);
+            const saved = await window.RPHubStorage.getScopedStoredValue('wechat_timeline', scope);
+            return saved?.some(m => m.geographyPosition?.decision.placeId === 'dorm-4');
+        });
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => window.__CHAT_MAP_BOOTED__ && window.__APP_PROXY__?.currentCharacter?.uuid === 'chat-map-test', { timeout: 60000 });
+        await page.getByRole('button', { name: '打开地理地图', exact: true }).click();
+        await page.waitForFunction(() => window.__APP_PROXY__.chatMapLocations.character.placeId === 'dorm-4');
+        check('刷新重放内部自身场景，对外模糊措辞不抹掉模型决定的位置', await drawer.getByTestId('map-marker-character').count() === 1);
         await page.evaluate(() => { const r = window.__APP_PROXY__; r.closeWechat(); r.currentCharacter.geography.enabled = false; r.openChatMap(); });
         await drawer.waitFor();
         check('未绑定地图有明确设置入口', (await drawer.textContent()).includes('尚未绑定可用地图') && await drawer.getByRole('button', { name: '设置角色地理环境' }).count() === 1);

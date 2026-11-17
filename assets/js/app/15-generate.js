@@ -526,6 +526,8 @@
                     if (__s.currentCharacter.value.wechatEnabled) await __s.ensureWechatTimelineLoaded();
                     const geographyPrompt = __s.buildGeographyPrompt?.();
                     if (geographyPrompt) messages.unshift({ role: 'system', content: geographyPrompt });
+                    const positionPrompt = __s.buildCharacterPositionPrompt?.();
+                    if (positionPrompt) messages.unshift({ role: 'system', content: positionPrompt });
                 }
                 messages.push(...__s.activeToolMessages);
                 // 输出开关只保留短协议；放在正则之后的 system，不混入玩家发言或重复文风/本体边界。

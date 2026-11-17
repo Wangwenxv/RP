@@ -152,7 +152,7 @@
                         <div class="geo-actor-grid" aria-live="polite">
                             <button v-for="a in actors" :key="a.key" class="geo-actor-card bg-gray-50 border border-gray-200 text-left" :class="a.key === 'user' ? 'text-blue-600' : 'text-primary-600'" @click="focusActor(a)" :title="a.place ? '在地图上定位' : statusLabel(a.location.status)">
                                 <img v-if="a.avatar" :src="a.avatar" class="geo-card-avatar" alt=""><span v-else class="geo-card-avatar bg-white border border-gray-200">{{ a.name.charAt(0) }}</span>
-                                <span class="min-w-0"><strong class="block text-xs truncate">{{ a.name }}{{ a.key === 'user' ? ' · 我' : '' }}</strong><span class="block text-sm text-gray-800 font-semibold mt-1 truncate">{{ a.place?.name || statusLabel(a.location.status) }}</span><small class="block text-gray-500 mt-1">{{ a.place ? statusLabel(a.location.status) : '' }}{{ a.location.subLocation?.room ? ' · ' + a.location.subLocation.room + '室' : '' }}</small></span>
+                                <span class="min-w-0"><strong class="block text-xs truncate">{{ a.name }}{{ a.key === 'user' ? ' · 我' : '' }}</strong><span class="block text-sm text-gray-800 font-semibold mt-1 truncate">{{ a.place?.name || statusLabel(a.location.status) }}</span><small class="block text-gray-500 mt-1">{{ a.place ? a.location.subLocation?.detail || statusLabel(a.location.status) : a.location.note || (worldMode ? '世界状态尚未确认地点' : '自身场景尚未建立') }}{{ a.location.subLocation?.room ? ' · ' + a.location.subLocation.room + '室' : '' }}</small></span>
                             </button>
                         </div>
                         <section class="geo-map-section border border-gray-200 rounded-2xl overflow-hidden">
