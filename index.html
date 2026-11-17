@@ -196,14 +196,15 @@
             :memory-processing="isActiveBatchExtracting"
             :ui-template-running="uiTemplateUpdateStatus.state === 'running'" :user="user"
             @update:current-view="currentView = $event"
+            @open-chat-map="openChatMap"
             @close="closeNavigation"></app-navigation>
 
-        <div class="app-main flex-1 flex flex-col h-full overflow-hidden bg-gray-50 relative" :inert="isNavigationOpen">
+        <div class="app-main flex-1 flex flex-col h-full overflow-hidden bg-gray-50 relative" :class="{ 'geo-map-chat-offset': showChatMap && chatMapPinned }" :inert="isNavigationOpen">
 
 
 
             <!-- Chat View -->
-            <world-session-view v-if="currentView === 'world'" :hub="worldUi" :characters="characters" :maps="geographyMapOptions" @navigate="toggleNavigation"></world-session-view>
+            <world-session-view v-if="currentView === 'world'" :hub="worldUi" :characters="characters" :maps="geographyMapOptions" @navigate="toggleNavigation" @open-map="openChatMap"></world-session-view>
             <div v-show="currentView === 'chat'" class="chat-view-root flex flex-col h-full relative">
 
                 <!-- Character Background Layer -->
@@ -338,6 +339,9 @@
                             <div v-else class="text-white/60 italic drop-shadow-sm">未选择角色卡</div>
                         </div>
                         <div class="flex items-center gap-0">
+                            <button @click="showChatMap ? showChatMap = false : openChatMap()" class="p-1.5 text-white/70 hover:text-white rounded-full hover:bg-white/10 transition-colors" :aria-expanded="showChatMap" aria-label="打开地理地图" title="地理地图 · 查看双方位置">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="m9 18-6 3V6l6-3 6 3 6-3v15l-6 3-6-3ZM9 3v15M15 6v15" stroke-width="1.7" stroke-linejoin="round"/></svg>
+                            </button>
                             <button v-if="currentCharacter && currentCharacter.wechatEnabled" @click="openWechat"
                                 class="p-1.5 text-white/70 hover:text-white rounded-full hover:bg-white/10 transition-colors"
                                 title="打开微信">
@@ -629,7 +633,8 @@
                                             </div>
                                             <!-- CoT Part -->
                                             <!-- Main Part -->
-                                            <template v-if="parseCot(msg.content).main">
+                                            <div v-if="msg.geographySceneSetting && msg.role === 'user'" class="markdown-body text-sm" v-text="formatPlayerMapSetting(msg)"></div>
+                                            <template v-else-if="parseCot(msg.content).main">
                                                 <template
                                                     v-if="index === chatHistory.length - 1 && (isGenerating || isRemoteGenerating)">
                                                     <div v-if="processMainContent(parseCot(msg.content).main, true).text"
@@ -3025,8 +3030,10 @@
         <retry-confirm-modal :state="globalConfirmModal"></retry-confirm-modal>
 
         <!-- ============ 微信子系统：全屏覆盖层（独立 App 观感） ============ -->
+        <chat-map-drawer :open="showChatMap" v-model:pinned="chatMapPinned" :world="chatMapWorld" :locations="chatMapLocations" :user="chatMapPlayer" :character="chatMapCharacter" :get-image="getChatMapImage" :disabled="chatMapDisabled" :saving="chatMapSaving" :world-mode="chatMapWorldMode" :actor-list="chatMapActors" :actor-options="chatMapActorOptions" v-model:focused-actor="chatMapFocusActor"
+            @close="showChatMap = false" @set-player="setPlayerMapLocation" @configure="configureChatMap" @manage="openChatMapManager"></chat-map-drawer>
         <div v-if="showWechatPanel && currentCharacter" class="wx-root"
-            :class="{ 'is-file-dragging': wechatAttachmentDragging }"
+            :class="{ 'geo-map-chat-offset': showChatMap && chatMapPinned, 'is-file-dragging': wechatAttachmentDragging }"
             @dragenter="handleWechatDragEnter" @dragover="handleWechatDragOver"
             @dragleave="handleWechatDragLeave" @drop="handleWechatDrop" @keydown.esc="resetWechatAttachmentDrag">
             <svg class="wx-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -3051,6 +3058,7 @@
                     </div>
                 </div>
                 <div class="wx-bar-right">
+                    <button class="wx-icon-btn" @click="showChatMap ? showChatMap = false : openChatMap()" title="地理地图" aria-label="微信地理地图"><svg class="wx-icon" viewBox="0 0 24 24"><path d="m9 18-6 3V6l6-3 6 3 6-3v15l-6 3-6-3ZM9 3v15M15 6v15"/></svg></button>
                     <button class="wx-icon-btn" @click="openWechatMediaGallery" title="相册" aria-label="相册"><svg class="wx-icon"><use href="#wx-i-album"/></svg></button>
                     <button class="wx-icon-btn" @click="openWechatSettings" title="设置" aria-label="微信设置"><svg class="wx-icon"><use href="#wx-i-settings"/></svg></button>
                     <button class="wx-icon-btn wx-clear" @click="clearWechatTimeline" title="清空本段 / 全部 RP + 微信" aria-label="清空微信记录" :disabled="isConversationClearing"><svg class="wx-icon"><use href="#wx-i-trash"/></svg></button>
@@ -3571,6 +3579,7 @@
         document.write('<script src="assets/js/ui-components.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/map-atlas.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/map-components.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/chat-map.js?v=' + new Date().getTime() + '"><\/script>');
         // App 模块（原 app.js setup() 的拆分），必须按序号加载、且都在 app.js 之前
         document.write('<script src="assets/js/app/01-state-app-shell.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/02-state-settings.js?v=' + new Date().getTime() + '"><\/script>');
@@ -3607,6 +3616,7 @@
         document.write('<script src="assets/js/app/33-conversation-clear.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/34-history-retrieval.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app/35-world-session.js?v=' + new Date().getTime() + '"><\/script>');
+        document.write('<script src="assets/js/app/36-chat-map.js?v=' + new Date().getTime() + '"><\/script>');
         document.write('<script src="assets/js/app.js?v=' + new Date().getTime() + '"><\/script>');
     </script>
 </body>

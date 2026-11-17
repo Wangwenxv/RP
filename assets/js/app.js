@@ -206,6 +206,7 @@ const app = createApp({
         AddCharacterModal,
         AppNavigation,
         MapsView,
+        ChatMapDrawer: window.RPHubChatMap,
         WorldSessionView: window.RPHubWorldSessionView,
         AutoImageGenModal,
         CharacterExportModal,
@@ -275,8 +276,10 @@ const app = createApp({
         __sections.conversationClear(__s);
         __sections.historyRetrieval(__s);
         __sections.worldSession(__s);
+        __sections.chatMap(__s);
 
         return {
+            ...__s.chatMapExports,
             wechatImageModels: __s.wechatImageModels, wechatImageModelsLoading: __s.wechatImageModelsLoading,
             wechatImageModelStatus: __s.wechatImageModelStatus, loadWechatImageModels: __s.loadWechatImageModels,
             wechatImageProtocols: __s.wechatImageProtocols, wechatImageSizes: __s.wechatImageSizes,

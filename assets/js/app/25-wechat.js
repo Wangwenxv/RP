@@ -1963,12 +1963,13 @@
                 geographyCalls += names.filter(name => name === 'tool_geo').length;
                 if (round === maxRounds - 1 || viewCalls > 2 || loadCalls > 1 || documentCalls > 4 || geographyCalls > 4) throw new Error('微信工具调用次数达到本轮上限，请下一轮继续');
                 messages.push(result.assistantMessage || { role: 'assistant', content: result.content || '', tool_calls: result.toolCalls });
-                // All independent geography reads share one snapshot and one continuation.
-                // Keep document/image pipelines sequential: they have mutable budgets and side effects.
-                const geographyResults = new Map(await Promise.all(result.toolCalls.filter(call => call.function.name === 'tool_geo').map(async call => {
-                    try { return [call.id, { content: JSON.stringify(__s.executeGeographyTool(call, geographyBudget)) }]; }
-                    catch (error) { return [call.id, { content: `地理查询失败：${error.message}。未取得资料，不得编造，应澄清。` }]; }
-                })));
+                // Updates and reads run in model order so subsequent status queries see the committed location.
+                const geographyResults = new Map();
+                for (const call of result.toolCalls.filter(call => call.function.name === 'tool_geo')) {
+                    assertRequest();
+                    try { geographyResults.set(call.id, { content: JSON.stringify(await __s.executeGeographyTool(call, geographyBudget)) }); }
+                    catch (error) { if (error.name === 'AbortError') throw error; geographyResults.set(call.id, { content: `地理处理失败：${error.message}。未取得资料，不得编造，应澄清。` }); }
+                }
                 const attachments = [];
                 for (const call of result.toolCalls) {
                     let viewed;

@@ -1,5 +1,7 @@
 # 地理能力 v2：位置、距离表与角色卡剥离
 
+2026-11-17 更新：当前已增加聊天右侧地图抽屉、玩家手动定位及 `tool_geo update_location` 事实位置更新，见[聊天地图交接](./Multi-Agent-Engineering/16-chat-geography-map.md)。下文保留 v2 的历史实现说明。
+
 日期：2026-11-06。工程：`D:\aiops_wwx\test\RP-Hub`。前置文档：[地理能力试点交接](./geography-pilot.md)、[地理工具与上下文优化](./geography-tools-cost.md)。本文只记录本次改动，不重复试点已经说明的协议细节。
 
 ## 一、这次要解决的具体失败

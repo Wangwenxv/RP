@@ -263,6 +263,15 @@
             try {
                 if (activeToolDepth >= ACTIVE_TOOL_MAX_AUTO_CONTINUE) throw new Error('已达到本轮工具调用次数上限');
                 __s.activeToolMessages.push(response.assistantMessage);
+                let geographyQueue = Promise.resolve();
+                const runGeography = call => {
+                    const task = geographyQueue.then(() => {
+                        if (toolAbort.signal.aborted) throw __s.createAbortReason();
+                        return __s.executeGeographyTool(call, undefined, { sourceMessageId: assistantMessage.id });
+                    });
+                    geographyQueue = task.catch(() => {});
+                    return task;
+                };
                 // 即使接口一次返回多个调用，也逐一配对结果；并发执行，按原始调用顺序追加。
                 const records = await Promise.all(response.toolCalls.map(async (call, position) => {
                     const toolUi = requestUis.get(call.index ?? position);
@@ -279,7 +288,7 @@
                         const results = toolCall.tool.type === 'history_retrieval'
                             ? [await __s.executeHistoryRetrievalTool(call, toolAbort.signal)]
                             : toolCall.tool.type === 'geography'
-                            ? [__s.executeGeographyTool(call)]
+                            ? [await runGeography(call)]
                             : isWechat
                             ? [__s.deliverActiveWechatMessage(toolCall.content, toolCall.image, toolCall.sendAt)]
                             : isRandom

@@ -312,15 +312,50 @@
                     ...(origin ? { costs: { walk: cost(id, 'walk'), bike: cost(id, 'bike') } } : {}) };
             }), note: '只是可能相关的地点，不代表请求代办、已经出发或到达。往返只含通行，不含活动、楼内时间和排队；库存与临时占用未知，营业按剧情时间核对。' };
     };
+    const messageText = msg => {
+        if (!['user', 'assistant'].includes(msg?.role) || (msg.type && msg.type !== 'text')) return '';
+        let text = String(msg.content || '').replace(/<(think|thinking|cot)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi, '').trim();
+        if (text.startsWith('{')) {
+            try { text = (JSON.parse(text).messages || []).filter(p => p.type === 'text').map(p => p.content).join('\n'); }
+            catch (_) { return ''; }
+        }
+        return text;
+    };
+    // A model may annotate an actual sentence, but cannot supply its own location evidence.
+    const verifyLocationUpdate = (world, msg, args, bindings = {}) => {
+        const text = messageText(msg), quote = String(args.evidence || '').trim();
+        const unwrap = s => s.replace(/^\*+|\*+$/g, '').trim();
+        const sentences = unwrap(text).match(/[^。！？!?\n]+[。！？!?]?/g) || [];
+        if (!quote || !text.includes(quote) || !sentences.some(s => s.trim() === unwrap(quote)) || /^[>“"「『]/.test(unwrap(quote))) throw new Error('依据必须是当前分支正文中的完整原句，不能来自推理、引用或附件');
+        let sentence = unwrap(quote);
+        const name = String(bindings.character?.name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const subject = msg.role === 'assistant' ? [name, '她', '他'].filter(Boolean).join('|') : name;
+        const namedHuman = msg.role === 'user' && name && new RegExp('^(?:' + name + ')').test(sentence);
+        if (subject) sentence = sentence.replace(new RegExp('^(?:' + subject + ')'), '我');
+        // Human first-person text always belongs to the player, except an explicit /geo character command.
+        if (msg.role === 'user' && !/^\/geo\s+character\s+/i.test(sentence) && !subject) throw new Error('玩家位置只能由玩家决定');
+        if (msg.role === 'user' && !namedHuman && !/^\/geo\s+character\s+/i.test(sentence)) throw new Error('不能把玩家自述当成角色位置');
+        sentence = sentence.replace(/^我(?:推门)?(?:走进|进入)(?:了)?/, '我到了');
+        const inferred = project(world, [{ role: /^\/geo/.test(sentence) ? 'user' : 'assistant', content: sentence, id: msg.id }], bindings).character;
+        if (!inferred.messageId || inferred.status !== args.locationStatus) throw new Error('依据未确认这个位置状态；计划、疑问和猜测不能更新位置');
+        if (args.locationStatus === 'last_confirmed') {
+            const hit = resolve(world, args.query);
+            if (hit.status !== 'ok' || inferred.placeId !== hit.place.id) throw new Error('目标地点必须唯一且与原文确认的地点一致');
+        } else if (args.query) throw new Error('在途或未知状态不能带到达地点');
+        return { ...inferred, channel: msg.channel || 'rp', evidence: quote, origin: 'model_tool' };
+    };
     // Conservative evidence replay. Commands are accepted only in HUMAN messages.
     // No memory summaries, attachments, tools, CoT, quotations or future plans are location evidence.
     const project = (world, messages, bindings = {}) => {
         const state = { user: { status: 'unknown' }, character: { status: 'unknown' } };
         for (const [index, msg] of messages.entries()) {
+            for (const update of (Array.isArray(msg.geographyUpdates) ? msg.geographyUpdates : []).slice(-4)) {
+                if (update.worldId !== world.id) continue;
+                try { state.character = verifyLocationUpdate(world, msg, update, bindings); } catch (_) { /* Edited/deleted evidence invalidates the annotation. */ }
+            }
             if (!['user', 'assistant'].includes(msg.role) || (msg.type && msg.type !== 'text')) continue;
-            let text = String(msg.content || '').replace(/<(think|thinking|cot)\b[^>]*>[\s\S]*?<\/\1>/gi, '').trim();
-            // WeChat RP replay stores narrative JSON; extract only text bubbles, not image captions.
-            if (text.startsWith('{')) { try { const data = JSON.parse(text); text = (data.messages || []).filter(p => p.type === 'text').map(p => p.content).join('\n'); } catch (_) { continue; } }
+            const text = messageText(msg);
+            if (!text) continue;
             const source = { messageId: msg.id || String(index), channel: msg.channel || 'rp', evidence: '' };
             const command = msg.role === 'user' && /^\/geo\s+(user|character)\s+([^\n]+)$/i.exec(text);
             const speaker = command ? command[1].toLowerCase() : msg.role === 'user' ? 'user' : 'character';
@@ -365,14 +400,17 @@
         return state;
     };
     const properties = {
-        operation: { type: 'string', enum: ['context', 'search', 'place', 'route', 'status'], description: '不知道目的地时先search用途（如取快递、吃饭、打印）；已知地点用context一次查用途/环境、位置与交通耗时' },
+        operation: { type: 'string', enum: ['context', 'search', 'place', 'route', 'status', 'update_location'], description: '查询地点/路程；update_location仅按正文事实更新当前角色的位置，不能决定玩家位置' },
+        locationStatus: { type: 'string', enum: ['last_confirmed', 'in_transit', 'unknown'], description: 'update_location必填：已确认在场、已经离开在途、位置未知；到达才带query' },
+        sourceMessageId: { type: 'string', description: 'update_location必填：位置依据原文消息ID；RP本轮已写出的正文用current，微信用已有正文ID' },
+        evidence: { type: 'string', description: 'update_location必填：逐字复制该消息里不超过200字的完整事实原句；禁止推理、引用、疑问、计划' },
         query: { type: 'string', description: '地点名称或用途，如快递、取包裹、吃饭、买日用品；search返回多个候选及简介，context中作为目的地，省略使用user最近位置' },
         from: { type: 'string', description: '地点名/ID或user、character；context默认character' }, to: { type: 'string' },
         mode: { type: 'string', enum: ['walk', 'bike', 'compare'], description: 'context默认同时比较walk和bike' },
         weather: { type: 'string', enum: ['normal', 'rain'] }, time: { type: 'string', description: '剧情出发时间HH:MM，不能用系统时间' },
         detail: { type: 'string', enum: ['brief', 'full'], description: '默认brief只取行动需要的短结果；要丰富场景描写才选full' }
     };
-    const definition = { type: 'function', function: { name: 'tool_geo', description: '本地地图检索：不知道去哪就search用途关键词（快递、吃饭、打印等），返回候选地点、简介、开放规则与匹配原因；名称歧义或无结果应澄清，不用缺少对应业务资料的地点代替。已知地点用context一查取齐环境、双方位置、步行/骑车路程。已有本轮速查不重复查，多地点可batch。只读，不改变位置，不提供取件码、库存等未知事实。', parameters: { type: 'object', properties: {
+    const definition = { type: 'function', function: { name: 'tool_geo', description: '本地地图：search检索用途候选，context查询环境、双方位置与通行耗时；已有速查不重复查，多地点可batch。update_location用当前分支正文中的完整事实原句更新当前角色位置（query地点、locationStatus、sourceMessageId、evidence），只确认已在场/已离开，不能按计划或住址瞬移，不能替玩家更新位置。不提供取件码、库存等未知事实。', parameters: { type: 'object', properties: {
         ...properties, operation: { ...properties.operation, enum: [...properties.operation.enum, 'batch'] },
         requests: { type: 'array', minItems: 1, maxItems: 4, description: 'batch最多4个独立查询，一次返回；不许嵌套batch', items: { type: 'object', properties, required: ['operation'], additionalProperties: false } }
     }, required: ['operation'], additionalProperties: false } } };
@@ -388,6 +426,7 @@
         }
         if (!args.operation || (!allowBatch && args.operation === 'batch') || (args.operation === 'batch' && !args.requests)) throw new Error('需要合法operation；batch不可嵌套且必须有requests');
         if (args.operation === 'route' && args.mode === 'compare') throw new Error('比较两种交通请用context');
+        if (args.operation === 'update_location' && (!allowBatch || !args.sourceMessageId || !args.evidence || !args.locationStatus)) throw new Error('位置更新需要sourceMessageId、完整原句evidence和locationStatus，不能放入batch');
     };
     const execute = (world, state, args) => {
         validateArgs(args);
@@ -408,5 +447,5 @@
         }
         throw new Error('需要 operation: search/place/route/status');
     };
-    window.RPHubGeography = { validate, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, needs, search, everydayContext, project, definition, execute, compass, relation, reachability };
+    window.RPHubGeography = { validate, validateArgs, messageText, verifyLocationUpdate, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, needs, search, everydayContext, project, definition, execute, compass, relation, reachability };
 })();
