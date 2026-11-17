@@ -61,4 +61,6 @@ node tools/geography/smoke-chat-map.cjs
 
 真实模型验收：在苏祈雪开场白处创建「分支 2」，双方位置初始未知，微信记录为空；保持已有 `qwen3.7-plus`，发送「忙完了，今天累死了。你忙你的，我晚点再聊。」她仅回复「嗯 去休息」「记得吃点东西」「晚点说」，没有透露地点；地图却显示她自主建立的「图书馆 · 四楼靠窗的座位」，玩家仍未知。没有把角色住址自动代填成当前位置，也没有读取或复制 API Key。
 
-线上复现截图：`.refactor-tmp/chat-map/live-before-location-fix.jpg`（忽略目录）。最终刷新恢复与验收截图在本轮完成后补记。另同步修正地图说明文字，明确角色自主维护自身场景和玩家位置由用户决定。
+刷新线上页面后，仅打开 RP 地图、未先进入微信，成功恢复「图书馆 · 四楼靠窗的座位」，玩家仍未知。最终验收截图：`.refactor-tmp/chat-map/live-autonomous-position.jpg`；复现截图：`.refactor-tmp/chat-map/live-before-location-fix.jpg`（均在忽略目录）。浏览器保留在苏祈雪「分支 2」的地图，用户可继续体验。
+
+界面说明同步明确角色自主维护自身场景；玩家未知提示改为「由你设置或说明当前位置」。补充提交 `3ff8f3b9f14c997cb1c3d9ec250ccb3573c92c29` 的 [Pages 部署 44059684664](https://github.com/Wangwenxv/RP/actions/runs/44059684664) 成功，已在刷新后的真实页面看到新说明。最后补录验收结果仅修改本文档。
