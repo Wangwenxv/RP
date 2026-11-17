@@ -57,4 +57,8 @@ node tools/geography/smoke-chat-map.cjs
 
 单元回归 **138 项通过**，覆盖自主场景不披露、玩家未知、来源编辑/删除、35 分钟移动、一次格式修正、空回保存和工具后 API 失败回滚。浏览器专项 **24 项通过**，使用真实 Vue / IndexedDB / Edge 和隔离模型 fixture，验证「刚回北苑」内部自主选择4栋及门口台阶、刷新重放与原地图交互；fixture 不冒充真实模型。全部修改 JS 语法检查及 `git diff --check` 通过。
 
-线上复现截图：`.refactor-tmp/chat-map/live-before-location-fix.jpg`（忽略目录）。已拉取 `origin/multi_agent`，基线与远端一致，没有冲突。代码提交及 Pages 部署、真实模型验收在本轮完成后补记。
+已拉取 `origin/multi_agent`，基线与远端一致，没有冲突。实现提交 `1d3c995e55673a3fb16abe0c6cdca82a41ff78d2` 已推送；[Pages 部署 44056810818](https://github.com/Wangwenxv/RP/actions/runs/44056810818) 成功。公开站点四个核心 JS 资源与本地内容一致。
+
+真实模型验收：在苏祈雪开场白处创建「分支 2」，双方位置初始未知，微信记录为空；保持已有 `qwen3.7-plus`，发送「忙完了，今天累死了。你忙你的，我晚点再聊。」她仅回复「嗯 去休息」「记得吃点东西」「晚点说」，没有透露地点；地图却显示她自主建立的「图书馆 · 四楼靠窗的座位」，玩家仍未知。没有把角色住址自动代填成当前位置，也没有读取或复制 API Key。
+
+线上复现截图：`.refactor-tmp/chat-map/live-before-location-fix.jpg`（忽略目录）。最终刷新恢复与验收截图在本轮完成后补记。另同步修正地图说明文字，明确角色自主维护自身场景和玩家位置由用户决定。

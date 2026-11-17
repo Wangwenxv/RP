@@ -152,7 +152,7 @@
                         <div class="geo-actor-grid" aria-live="polite">
                             <button v-for="a in actors" :key="a.key" class="geo-actor-card bg-gray-50 border border-gray-200 text-left" :class="a.key === 'user' ? 'text-blue-600' : 'text-primary-600'" @click="focusActor(a)" :title="a.place ? '在地图上定位' : statusLabel(a.location.status)">
                                 <img v-if="a.avatar" :src="a.avatar" class="geo-card-avatar" alt=""><span v-else class="geo-card-avatar bg-white border border-gray-200">{{ a.name.charAt(0) }}</span>
-                                <span class="min-w-0"><strong class="block text-xs truncate">{{ a.name }}{{ a.key === 'user' ? ' · 我' : '' }}</strong><span class="block text-sm text-gray-800 font-semibold mt-1 truncate">{{ a.place?.name || statusLabel(a.location.status) }}</span><small class="block text-gray-500 mt-1">{{ a.place ? a.location.subLocation?.detail || statusLabel(a.location.status) : a.location.note || (worldMode ? '世界状态尚未确认地点' : '自身场景尚未建立') }}{{ a.location.subLocation?.room ? ' · ' + a.location.subLocation.room + '室' : '' }}</small></span>
+                                <span class="min-w-0"><strong class="block text-xs truncate">{{ a.name }}{{ a.key === 'user' ? ' · 我' : '' }}</strong><span class="block text-sm text-gray-800 font-semibold mt-1 truncate">{{ a.place?.name || statusLabel(a.location.status) }}</span><small class="block text-gray-500 mt-1">{{ a.place ? a.location.subLocation?.detail || statusLabel(a.location.status) : a.location.note || (a.key === 'user' ? '由你设置或说明当前位置' : worldMode ? '世界状态尚未确认地点' : '自身场景尚未建立') }}{{ a.location.subLocation?.room ? ' · ' + a.location.subLocation.room + '室' : '' }}</small></span>
                             </button>
                         </div>
                         <section class="geo-map-section border border-gray-200 rounded-2xl overflow-hidden">
@@ -192,7 +192,7 @@
                             <button class="settings-create-button mt-3 w-full" :disabled="disabled" @click="$emit('set-player', selected.id)">{{ saving ? '正在保存…' : '把我的位置设在这里' }}</button>
                         </div>
                         <div class="flex flex-wrap justify-between gap-2"><button class="settings-icon-button text-xs" :disabled="disabled" @click="$emit('set-player', '')">清除我的位置</button><button class="settings-icon-button text-xs" @click="$emit('manage')">地图管理</button></div>
-                        <p class="text-xs text-gray-500 leading-relaxed">{{ worldMode ? '显示当前世界分支已提交的人物位置。角色移动按路程和剧情时间确认到达，在途不会画作已经到达；查看地图不赋予人物额外认知。' : '位置来自当前剧情的最近确认，模型按原文事实更新角色。' }}地图坐标属于RP世界示意图；玩家位置由你决定。设定会保存到本分支，不自动发送模型请求。</p>
+                        <p class="text-xs text-gray-500 leading-relaxed">{{ worldMode ? '显示当前世界分支已提交的人物位置。角色移动按路程和剧情时间确认到达，在途不会画作已经到达；查看地图不赋予人物额外认知。' : '角色依据已发生剧情自主维护自身位置，聊天中没有告知地点也可以有具体场景。' }}地图坐标属于RP世界示意图；玩家位置由你决定。设定会保存到本分支，不自动发送模型请求。</p>
                     </div>
                 </aside>
             </div>
