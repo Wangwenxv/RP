@@ -176,3 +176,26 @@ test('自主位置工具绑定RP正文，微信工具先提案，失败不写入
     assert.equal(budget.positionDecision.action, 'stay'); assert.equal(h.saved(), 1);
     h.switchBranch(); assert.equal(h.s.getChatGeographyState().character.status, 'unknown');
 });
+
+test('最终自身场景优先于兼容工具暂存；推理中的JSON不参与位置决定', () => {
+    const h = adapter();
+    vm.runInContext(fs.readFileSync(path.join(root, 'assets/js/wechat-protocol.js'), 'utf8'), context);
+    const raw = '<think>{"position":{"action":"present","placeId":"dorm-3","detail":"旧想法"}}</think>'
+        + '{"messages":[{"type":"text","content":"晚点聊"}],"position":{"action":"present","placeId":"library","detail":"靠窗座位"}}';
+    const decision = h.s.readWechatPositionDecision(raw, { positionDecision: { action: 'present', placeId: 'dorm-4', detail: '旧提案' } }, 1000);
+    assert.equal(decision.placeId, 'library');
+    assert.equal(h.s.getChatGeographyState().character.status, 'unknown');
+});
+
+test('遗漏在途position只保持行程，不自动到达或决定新的目的地', () => {
+    const h = adapter();
+    const start = msg('出门前', 'assistant', { id: 'start', channel: 'wechat' });
+    start.geographyPosition = { worldId: world.id, storyAt: 1000, sourceContent: start.content, decision: { action: 'present', placeId: 'dorm-3', detail: '楼门口' } };
+    const move = msg('走了', 'assistant', { id: 'move', channel: 'wechat' });
+    move.geographyPosition = { worldId: world.id, storyAt: 1000, sourceContent: move.content, decision: { action: 'depart', to: 'canteen-2' } };
+    h.s.wechatTimeline.value = [start, move];
+    const decision = h.s.readWechatPositionDecision('{"messages":[{"type":"text","content":"还在走"}]}', null, 1000);
+    assert.equal(decision.action, 'continue');
+    assert.equal(h.s.getChatGeographyState().character.status, 'in_transit');
+    assert.equal(h.s.getChatGeographyState().character.destinationId, 'canteen-2');
+});

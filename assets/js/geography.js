@@ -485,6 +485,12 @@
         ...properties, operation: { ...properties.operation, enum: [...properties.operation.enum, 'batch'] },
         requests: { type: 'array', minItems: 1, maxItems: 4, description: 'batch最多4个独立查询，一次返回；不许嵌套batch', items: { type: 'object', properties, required: ['operation'], additionalProperties: false } }
     }, required: ['operation'], additionalProperties: false } } };
+    const queryProperties = Object.fromEntries(Object.entries(properties).filter(([key]) => !['action', 'placeId', 'sceneDetail', 'locationStatus', 'sourceMessageId', 'evidence'].includes(key)));
+    queryProperties.operation = { type: 'string', enum: ['context', 'search', 'place', 'route', 'status'], description: '只查询地点与路程；角色位置通过最终JSON的position提交' };
+    const queryDefinition = { type: 'function', function: { name: 'tool_geo', description: '查询地图资料，不更改位置。search检索地点，context获取地点和路程；速查够用不重复查，多地点可batch。角色自身场景仅在最终JSON的position提交。', parameters: { type: 'object', properties: {
+        ...queryProperties, operation: { ...queryProperties.operation, enum: [...queryProperties.operation.enum, 'batch'] },
+        requests: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'object', properties: queryProperties, required: ['operation'], additionalProperties: false } }
+    }, required: ['operation'], additionalProperties: false } } };
     const validateArgs = (args, allowBatch = true) => {
         if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(k => !Object.keys(allowBatch ? definition.function.parameters.properties : properties).includes(k))) throw new Error('地理工具参数不合法');
         for (const [key, value] of Object.entries(args)) {
@@ -519,5 +525,5 @@
         }
         throw new Error('需要 operation: search/place/route/status');
     };
-    window.RPHubGeography = { validate, validateArgs, messageText, verifyLocationUpdate, decidePosition, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, needs, search, everydayContext, project, definition, execute, compass, relation, reachability };
+    window.RPHubGeography = { validate, validateArgs, messageText, verifyLocationUpdate, decidePosition, resolve, path, edgeUnits, route, placeInfo, briefPlace, briefRoute, briefState, contextInfo, boundResult, mention, mentions, needs, search, everydayContext, project, definition, queryDefinition, execute, compass, relation, reachability };
 })();

@@ -174,6 +174,7 @@
             userName: extra.userName, characterName: who, channel: 'wechat'
         }));
         parts.push(REPLY_DECISION_REMINDER);
+        if (extra.positionPrompt) parts.push(extra.positionPrompt);
         return parts.join('\n\n');
     }
 

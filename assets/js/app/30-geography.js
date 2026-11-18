@@ -34,9 +34,21 @@
         const state = data => G.project(data, evidence(), actorBindings());
         __s.getChatGeographyWorld = world;
         __s.getChatGeographyState = () => { const data = world(); return data ? G.briefState(state(data), data) : null; };
-        __s.buildCharacterPositionPrompt = () => {
+        __s.buildCharacterPositionPrompt = (channel = 'rp') => {
             const data = world(); if (!data) return '';
             const own = state(data).character;
+            if (channel === 'wechat') return '【本轮最终JSON与自身场景】你就是当前角色，应该知道自己的身体具体在哪里。'
+                + `最近自身状态：${JSON.stringify(G.briefState({ character: own }, data).character)}。`
+                + `地点ID表：${data.places.filter(p => p.kind !== 'junction').map(p => `${p.id}=${p.name}`).join('；')}。`
+                + '依据已发生剧情自主决定具体场景，聊天内容与场景一致；不知道对方位置就保持未知。'
+                + '回答“在哪吃的”是在说过去用餐地点，不表示现在还在那里；“去找你？”是邀请，不表示任何人已经出发。'
+                + '最终只输出一个JSON，同时包含messages和内部position，位置不作为聊天气泡。'
+                + '初次场景用{"action":"present","placeId":"具体ID","detail":"楼内具体位置"}；原地用{"action":"stay"}，可加detail细化；'
+                + '实际出发用{"action":"depart","to":"目的地ID","mode":"walk"}；在途未到用{"action":"continue"}。'
+                + '只有到达且剧情时间满足路程才present；现实等待不推进剧情钟。住址不是当前位置，不能为迎合邀请瞬移。'
+                + 'tool_geo只查询资料，位置统一在最终position提交，不为原地回复查询路线，不用工具补写旧聊天。'
+                + '例如原地回答：{"messages":[{"type":"text","content":"我已经回宿舍了"}],"position":{"action":"stay"}}。'
+                + '不发消息也保留自身场景：{"messages":[],"silence":{"reason":"topic_closed","summary":"话题结束","awareness":"read"},"position":{"action":"stay"}}；首次没有位置时必须自主选择present，不能stay。';
             const ids = new Set([own.placeId, binding()?.bindings?.character?.home, ...(own.placeId ? [] : [...(data.landmarks || []).slice(0, 8), ...data.places.filter(p => p.kind !== 'junction').slice(0, 8).map(p => p.id)])]);
             return '【角色自身场景｜内部状态，不是发给对方的消息】你就是当前角色，应该知道自己的身体具体在哪里。'
                 + '先依据人物卡、已经发生的剧情和自身打算，自主决定当下的真实场景，而不是等用户询问或从说出口的文字反推。'
@@ -50,9 +62,17 @@
         };
         __s.readWechatPositionDecision = (raw, budget, storyAt) => {
             const data = world(); if (!data) return null;
-            const parsed = window.RPHubWeChatProtocol.extractJSON(raw);
-            const decision = budget?.positionDecision || parsed?.position;
-            G.decidePosition(data, state(data).character, decision, storyAt);
+            const P = window.RPHubWeChatProtocol;
+            const parsed = P.extractJSON(P.stripThinking(raw));
+            const own = state(data).character;
+            const hasFinalPosition = parsed && Object.hasOwn(parsed, 'position');
+            const speech = (Array.isArray(parsed?.messages) ? parsed.messages : []).filter(m => m?.type === 'text').map(m => m.content || '').join('\n');
+            if (!hasFinalPosition && !budget?.positionDecision && /(?:已经|刚刚|刚)(?:出发|离开|到(?:了|达)|回到)|(?:^|\n)(?:我)?(?:出发了|离开了|到了|到啦)/.test(speech)) throw new Error('回复描述了新的出发或到达，请在position明确本次实际场景变化');
+            // Old tool-style replies remain readable; an explicit final decision wins.
+            // Omission can only retain an already established state, never invent a place.
+            const decision = hasFinalPosition ? parsed.position : budget?.positionDecision
+                || (own.status === 'last_confirmed' ? { action: 'stay' } : own.status === 'in_transit' && own.destinationId ? { action: 'continue' } : null);
+            G.decidePosition(data, own, decision, storyAt);
             return JSON.parse(JSON.stringify(decision));
         };
         const updateLocation = async (data, args, call, context) => {
@@ -91,7 +111,7 @@
             if (value.placeSearch) personal(value.placeSearch, detail);
             if (value.results) value.results.forEach((entry, index) => personal(entry.result || entry, requests?.[index]?.detail || detail));
         };
-        __s.geographyTools = () => world() ? [G.definition] : [];
+        __s.geographyTools = (channel = 'rp') => world() ? [channel === 'wechat' ? G.queryDefinition : G.definition] : [];
         __s.createGeographyBudget = () => ({ used: 0, calls: 0, seen: new Map() });
         __s.resetGeographyBudget = () => { __s.geographyToolBudget = __s.createGeographyBudget(); };
         __s.resetGeographyBudget();
@@ -120,6 +140,7 @@
                 return { status: 'ok', operation: 'set_position', character: G.briefState({ character: next }, data).character, note: '自身场景已决定，不等于向玩家告知；玩家位置未更改' };
             })();
             if (args.operation === 'update_location') {
+                if (context?.channel === 'wechat') return { status: 'use_final_position', note: '微信不补写旧原文；使用最终JSON的position决定当前自身场景。' };
                 if (++budget.calls > 4) return { status: 'budget_exhausted', note: '本轮地理调用已达4次' };
                 return updateLocation(data, args, call, context);
             }
@@ -137,7 +158,7 @@
             budget.used += size; budget.seen.set(key, call.id || 'previous_geo_result');
             return bounded;
         };
-        __s.buildGeographyPrompt = () => {
+        __s.buildGeographyPrompt = (channel = 'rp') => {
             if (binding()?.enabled === false) return '';
             const data = world();
             if (!data) return binding() ? '【地理】角色绑定地图不存在；距离、当前地点、文化均需澄清，不能编造。' : '';
@@ -151,21 +172,24 @@
             const sources = evidence().map((m, i) => ({ id: String(m.id || i), role: m.role, text: G.messageText(m) }))
                 .filter(m => m.role === 'assistant' && /在|到|出发|离开|走进|走出/.test(m.text)).slice(-2);
             if (sources.length) text += `位置更新可用原文（截断句不可作证）：${JSON.stringify(sources.map(m => ({ ...m, text: m.text.slice(0, 200) })))}\n`;
+            if (channel === 'wechat') text = `【共享地图资料】${data.name}。tool_geo仅按需查询：search找地点，context一次取场所和路程；已有速查够用就直接回复。`
+                + '当前位置以自身场景为准；过去吃饭地点、未来约见地点不覆盖现在的位置。实际移动需有路程和已推进的剧情时间。'
+                + '玩家的位置与行动由玩家决定，地图资料不代表人物全知。库存、取件码、临时设施等未收录事实保持未知。\n';
             if (data.everyday?.knowledge.length) text += `校园生活常识：${data.everyday.knowledge.slice(0, 2).join('；')}\n`;
             const timeline = evidence();
-            const channel = timeline.at(-1)?.channel || 'rp';
+            const inputChannel = timeline.at(-1)?.channel || 'rp';
             const turn = []; let inputSize = 0;
-            if (channel === 'wechat') {
+            if (inputChannel === 'wechat') {
                 for (let i = timeline.length - 1; i >= 0 && turn.length < 8 && inputSize < 4000; i--) {
                     const message = timeline[i];
-                    if ((message.channel || 'rp') !== channel) continue;
+                    if ((message.channel || 'rp') !== inputChannel) continue;
                     if (message.role === 'assistant') break;
                     if (message.role !== 'user' || (message.type && message.type !== 'text')) continue;
                     const content = String(message.content || '').slice(0, 4000 - inputSize);
                     turn.push(content); inputSize += content.length;
                 }
             } else {
-                const latest = [...timeline].reverse().find(m => (m.channel || 'rp') === channel && m.role === 'user' && (!m.type || m.type === 'text'));
+                const latest = [...timeline].reverse().find(m => (m.channel || 'rp') === inputChannel && m.role === 'user' && (!m.type || m.type === 'text'));
                 if (latest) turn.push(String(latest.content || '').slice(0, 2000));
             }
             const input = turn.join('\n');

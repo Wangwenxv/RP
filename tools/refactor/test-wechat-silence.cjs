@@ -732,3 +732,101 @@ test('微信工具先确定位置但最终API失败时，不持久化暂定场�
   assert.equal(h.state.getChatGeographyState().character.status, 'unknown');
   assert.equal(h.stored.get('wechat_timeline/branch-a')[0].geographyReplyPosition, undefined);
 });
+
+test('苏祈雪用餐追问和见面邀请保留现在的宿舍位置，不把过去二饭当到达', async () => {
+  const h = harness(async (_options, n) => n === 3
+    ? { toolCalls: [nativeCall('route', { operation: 'context', query: 'canteen-2' }, 'tool_geo')] }
+    : { content: JSON.stringify({ messages: [{ type: 'text', content: n === 1 ? '刚回宿舍' : n === 2 ? '二饭' : '我已经回宿舍了' }],
+      ...(n === 1 ? { position: { action: 'present', placeId: 'dorm-3', detail: '314室书桌前' } } : {}) }) });
+  await h.loadGeography();
+  h.state.chatHistory.value.push({ id: 'player-map', role: 'user', content: '/geo user lab-A' });
+  await h.send('喂喂喂，怎么不理我');
+  await h.send('在哪吃的，我刚下课，在实验楼A');
+  assert.equal(h.requests.length, 2, '原地回复无需额外位置修正');
+  await h.send('没呢，那我现在去2饭找你？');
+  assert.equal(h.requests.length, 4, '查询后一次最终回复即可');
+  assert.equal(h.toasts.length, 0);
+  assert.equal(h.state.wechatUnansweredCount.value, 0);
+  const state = h.state.getChatGeographyState();
+  assert.equal(state.character.placeId, 'dorm-3');
+  assert.equal(state.character.subLocation.detail, '314室书桌前');
+  assert.equal(state.user.placeId, 'lab-A');
+  assert.equal(h.stored.get('wechat_timeline/branch-a').at(-1).geographyPosition.decision.action, 'stay');
+  const system = h.requests[0].messages[0].content;
+  assert.match(system, /回答“在哪吃的”是在说过去用餐地点/);
+  assert.match(system, /canteen-2=博雅园/);
+  assert.equal(system.includes('位置更新可用原文'), false);
+  assert.match(system.slice(system.lastIndexOf('【本轮最终JSON')), /messages.*position/);
+  const geo = h.requests[0].tools.find(t => t.function.name === 'tool_geo').function.parameters.properties;
+  assert.equal(geo.operation.enum.includes('set_position'), false);
+  assert.equal(geo.operation.enum.includes('update_location'), false);
+  assert.equal(geo.requests.items.properties.operation.enum.includes('set_position'), false);
+});
+
+test('无效移动只修正一次，修正请求撤掉工具且不把邀请变成瞬移', async () => {
+  const h = harness(async (_options, n) => ({ content: JSON.stringify({ messages: [{ type: 'text', content: n === 2 ? '我去二饭等你' : '我在宿舍，你先吃吧' }],
+    position: n === 1 ? { action: 'present', placeId: 'dorm-3', detail: '书桌前' }
+      : n === 2 ? { action: 'present', placeId: 'canteen-2', detail: '二楼餐桌' } : { action: 'stay' } }) }));
+  await h.loadGeography(); await h.send('在吗'); await h.send('那我现在去2饭找你？');
+  assert.equal(h.requests.length, 3);
+  assert.equal(h.requests[2].tools, undefined);
+  assert.equal(h.toasts.length, 0);
+  assert.equal(h.state.getChatGeographyState().character.placeId, 'dorm-3');
+  assert.equal(h.state.wechatTimeline.value.some(m => m.role === 'assistant' && m.content === '我去二饭等你'), false);
+});
+
+test('两轮地图查询后撤掉地理工具，截断JSON只补一次完整回复', async () => {
+  const h = harness(async (_options, n) => n <= 2
+    ? { toolCalls: [nativeCall(`query-${n}`, { operation: n === 1 ? 'search' : 'context', query: '二饭' }, 'tool_geo')] }
+    : { content: n === 3 ? '{"messages":[' : '{"messages":[{"type":"text","content":"我在宿舍"}],"position":{"action":"present","placeId":"dorm-3","detail":"书桌前"}}' });
+  await h.loadGeography(); await h.send('没呢，那我现在去2饭找你？');
+  assert.equal(h.requests.length, 4);
+  assert.equal(h.requests[2].tools, undefined);
+  assert.equal(h.requests[3].tools, undefined);
+  assert.equal(h.toasts.length, 0);
+  assert.equal(h.state.wechatUnansweredCount.value, 0);
+  assert.equal(h.state.getChatGeographyState().character.placeId, 'dorm-3');
+});
+
+test('显式无效position不能降级成原地', async () => {
+  const h = harness(async (_options, n) => ({ content: JSON.stringify({ messages: [{ type: 'text', content: '嗯' }],
+    position: n === 1 ? { action: 'present', placeId: 'dorm-3', detail: '楼门口' } : null }) }));
+  await h.loadGeography(); await h.send('在吗'); await h.send('去二饭？');
+  assert.equal(h.requests.length, 3); assert.equal(h.toasts.length, 1);
+  assert.equal(h.state.wechatUnansweredCount.value, 1);
+  assert.equal(h.state.getChatGeographyState().character.placeId, 'dorm-3');
+});
+
+test('明确出发却漏掉position需要一次修正，不能静默记录为原地', async () => {
+  const h = harness(async (_options, n) => ({ content: JSON.stringify({ messages: [{ type: 'text', content: n === 2 ? '已经出发了' : '嗯' }],
+    ...(n === 1 ? { position: { action: 'present', placeId: 'dorm-3', detail: '楼门口' } }
+      : n === 3 ? { position: { action: 'depart', to: 'canteen-2' } } : {}) }) }));
+  await h.loadGeography(); await h.send('在吗'); await h.send('出来吃饭吧');
+  assert.equal(h.requests.length, 3); assert.equal(h.toasts.length, 0);
+  assert.equal(h.state.getChatGeographyState().character.status, 'in_transit');
+  assert.equal(h.state.getChatGeographyState().character.destinationId, 'canteen-2');
+});
+
+test('位置与图片格式错误合并修正，不串成两次格式补写', async () => {
+  const h = harness(async (_options, n) => ({ content: JSON.stringify({ messages: [{ type: 'text', content: n === 1 ? '格式待修' : '好了' }],
+    ...(n === 2 ? { position: { action: 'present', placeId: 'dorm-3', detail: '书桌前' } } : {}) }) }));
+  await h.loadGeography();
+  h.state.wechatImageReplyCorrection = messages => messages[0]?.content === '格式待修' ? '刚才的回复尚未发送，请修正图片格式' : '';
+  await h.send('发张图');
+  assert.equal(h.requests.length, 2); assert.equal(h.toasts.length, 0);
+  const correction = h.requests[1].messages.at(-1).content;
+  assert.match(correction, /图片格式/); assert.match(correction, /position/);
+  assert.equal(h.requests[1].tools, undefined);
+});
+
+test('微信旧原文位置更新不提前落盘，最终回复出错不会留下新坐标', async () => {
+  const h = harness(async (_options, n) => {
+    if (n === 2) throw new Error('连接断开');
+    return { toolCalls: [nativeCall('legacy', { operation: 'update_location', locationStatus: 'last_confirmed', query: 'library', sourceMessageId: 'old', evidence: '她在图书馆。' }, 'tool_geo')] };
+  });
+  await h.loadGeography(); await h.send('在吗');
+  assert.equal(h.requests.length, 2);
+  assert.match(h.requests[1].messages.find(m => m.role === 'tool').content, /use_final_position/);
+  assert.equal(h.state.getChatGeographyState().character.status, 'unknown');
+  assert.equal(h.stored.get('wechat_timeline/branch-a')[0].geographyReplyPosition, undefined);
+});

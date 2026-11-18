@@ -35,9 +35,9 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
             const body = route.request().postDataJSON(); requests.push(body);
             const done = body.messages.some(m => m.role === 'tool');
             const tool = (id, args) => ({ id, type: 'function', function: { name: 'tool_geo', arguments: JSON.stringify(args) } });
-            const content = fixture === 'spoken' ? '{"messages":[{"type":"text","content":"刚回北苑"},{"type":"text","content":"吃过了"}],"position":{"action":"present","placeId":"dorm-4","detail":"一楼门口台阶"}}' : fixture === 'wechat' ? '{"messages":[{"type":"text","content":"到啦。"}],"position":{"action":"stay","detail":"四楼靠窗书桌"}}' : '到啦，先等你。';
+            const content = fixture === 'spoken' ? '{"messages":[{"type":"text","content":"刚回北苑"},{"type":"text","content":"吃过了"}],"position":{"action":"present","placeId":"dorm-4","detail":"一楼门口台阶"}}' : fixture === 'wechat' ? '{"messages":[{"type":"text","content":"到啦。"}],"position":{"action":"present","placeId":"library","detail":"四楼靠窗书桌"}}' : '到啦，先等你。';
             const message = done || fixture === 'spoken' ? { role: 'assistant', content } : { role: 'assistant', content: fixture === 'rp' ? '她走进了图书馆。' : '', tool_calls: [
-                tool('map-update', { operation: 'update_location', locationStatus: 'last_confirmed', query: 'library', sourceMessageId: fixture === 'rp' ? 'current' : 'wx-location', evidence: '她走进了图书馆。' }),
+                tool('map-update', fixture === 'rp' ? { operation: 'update_location', locationStatus: 'last_confirmed', query: 'library', sourceMessageId: 'current', evidence: '她走进了图书馆。' } : { operation: 'context', query: 'library' }),
                 tool('map-status', { operation: 'status' })
             ] };
             return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message, finish_reason: done ? 'stop' : 'tool_calls' }] }) });
@@ -111,7 +111,8 @@ const check = (label, condition) => { assert.ok(condition, label); console.log('
             r.wechatInput = '到了吗'; await r.sendWechatMessage(); await r.requestWechatReplyNow();
         });
         await page.waitForFunction(() => window.__APP_PROXY__.chatMapLocations.character.placeId === 'library');
-        check('微信模型工具共用地图状态，双方同址头像分别显示', await drawer.locator('.geo-marker').count() === 2 && await drawer.locator('.geo-route-summary').textContent().then(text => text.includes('同址')));
+        check('微信查询后最终JSON提交自身场景，双方同址头像分别显示', await drawer.locator('.geo-marker').count() === 2 && await drawer.locator('.geo-route-summary').textContent().then(text => text.includes('同址')));
+        check('微信仅提供查询schema，未广告旧位置写入工具', !requests.at(-1).tools.find(t => t.function.name === 'tool_geo').function.parameters.properties.operation.enum.includes('update_location'));
         check('微信固定地图时聊天层避开右侧抽屉', await page.evaluate(() => document.querySelector('.wx-root').getBoundingClientRect().right <= document.querySelector('.geo-drawer').getBoundingClientRect().left + 1));
         check('同址头像横向分开展示，指针仍指向同一坐标', await drawer.locator('.geo-marker-bubble').evaluateAll(elements => elements[0].style.transform !== elements[1].style.transform));
         await drawer.getByRole('button', { name: '双方', exact: true }).click();
