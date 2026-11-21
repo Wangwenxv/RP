@@ -49,7 +49,7 @@
         if (!['sta1n-nai', 'chat-image'].includes(c.protocol)) throw new Error('图片接口协议无效');
         const shape = c.size === '1024x1024' ? '方图' : c.size === '1216x832' ? '横图' : '竖图';
         const content = c.protocol === 'sta1n-nai' ? [
-            `提示词:${prompt}`, '画师串:', `尺寸:${shape}`, '提示词引导值:6', '缩放引导值:0',
+            `提示词:${prompt}`, `画师串:${String(c.artists || '').replace(/\s+/g, ' ').trim()}`, `尺寸:${shape}`, '提示词引导值:6', '缩放引导值:0',
             `负面提示词:lowres, blurry, bad anatomy, bad hands, text, signature, watermark${c.negativePrompt ? ', ' + c.negativePrompt : ''}`,
             `采样器:${model.split(':')[1] || 'k_dpmpp_2m'}`
         ].join('\n') : prompt;
@@ -115,7 +115,7 @@
     }
     async function generate(c, prompt, signal) {
         c = { ...DEFAULTS, ...c };
-        if (!ready(c)) throw new Error('请在设置 → 微信生图中填写 API Key 并开启生图');
+        if (!ready(c)) throw new Error('请在设置 → 生图服务（RP / 微信共用）中填写 API Key 并开启生图');
         const request = payload(c, prompt), url = `${base(c.baseUrl)}/${request.endpoint}`;
         return scoped(signal, c.timeoutMs || 300000, async signal => {
             const response = await fetch(url, { method: 'POST', signal, credentials: 'omit', headers: {

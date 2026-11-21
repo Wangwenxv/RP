@@ -44,6 +44,7 @@
         };
         __s.abortClassicBatchExtraction = abortClassicBatchExtraction;
         const abortConversationBackgroundWork = () => {
+            __s.cancelGeneratedImageTasks?.();
             __s.abortUiTemplateUpdate();
             abortClassicBatchExtraction();
         };

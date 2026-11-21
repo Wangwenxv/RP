@@ -59,98 +59,140 @@
         const generatedImageTasks = new Map();
         __s.generatedImageTasks = generatedImageTasks;
         __s.generatedImageObserver = null;
-        const fetchImageJobJson = async (url, options) => {
-            const response = await fetch(url, options);
-            const text = await response.text();
-            let payload = {};
-            try { payload = text ? JSON.parse(text) : {}; } catch { /* 交给下方统一报错 */ }
-            if (!response.ok) throw new Error(payload.error || text || `HTTP ${response.status}`);
-            return payload;
+        __s.isAutoImageGenerating = ref(false);
+        __s.generatedImageActiveCount = 0;
+        __s.generatedImageEpoch = 0;
+        const buildGeneratedImageCardMarkup = (tags) => {
+            const request = new URL('rp-image', window.location.href);
+            request.searchParams.set('tag', tags);
+            return `<div class="generated-image-card is-generating" data-image-request="${request.href}" style="width:100%;max-width:100%;padding:2px;border:1px solid rgba(255,255,255,.58);position:relative;border-radius:12px;overflow:hidden;display:flex;justify-content:center;align-items:center"><img alt="" style="width:100%;height:100%;object-fit:contain;border-radius:9px"><button type="button" class="generated-image-reroll" title="重新生成图片" aria-label="重新生成图片"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg></button></div>`;
         };
-        __s.fetchImageJobJson = fetchImageJobJson;
+        __s.buildGeneratedImageCardMarkup = buildGeneratedImageCardMarkup;
+        const generatedImageBinding = card => {
+            const row = card.closest('[data-chat-index]');
+            const message = __s.chatHistory.value[Number(row?.dataset.chatIndex)];
+            if (!row || !message || message.role !== 'assistant') return null;
+            const cards = [...row.querySelectorAll('.generated-image-card')];
+            const index = cards.indexOf(card);
+            const matches = cardUtils.findUnprotectedMatches(String(message.content || ''), getImageTagRegex());
+            const prompt = matches[index]?.[1]?.trim();
+            return prompt ? { message, index, prompt } : null;
+        };
+        __s.generatedImageBinding = generatedImageBinding;
         const renderGeneratedImageJob = (card, task, job) => {
             if (!card?.isConnected) return task.cards.delete(card);
-            task.job = job;
-            card.dataset.imageJobId = job.id || '';
-            const progress = Math.max(0, Math.min(100, Number(job.generationProgress?.percent || 0)));
             const label = card.querySelector('.generated-image-progress-label');
             const bar = card.querySelector('.generated-image-progress-bar');
-            card.classList.toggle('is-waiting', job.status === 'queued');
-            if (bar) bar.style.width = `${progress}%`;
-
-            if (job.status === 'queued') {
-                if (label) label.textContent = job.queuePosition
-                    ? `排队中 · 第 ${job.queuePosition} / ${job.queuedCount || job.queuePosition} 个`
-                    : '排队中';
-                return;
-            }
-            if (job.status === 'running') {
-                if (label) label.textContent = `生成中 ${Math.round(progress)}%`;
-                return;
-            }
-
-            const imageUrl = job.imageUrl
-                ? new URL(job.imageUrl, task.baseUrl).href
-                : job.id
-                    ? `${task.baseUrl}/api/jobs/${encodeURIComponent(job.id)}/content?token=${encodeURIComponent(task.token)}`
-                    : '';
-            if (!imageUrl) {
-                card.classList.remove('is-generating');
-                card.classList.add('is-generation-error');
-                if (label) label.textContent = job.error || '生成失败';
-                return;
-            }
-
-            const image = card.querySelector('img');
-            image.style.height = '100%';
-            image.src = imageUrl;
-            card.classList.remove('is-generating', 'is-generation-error', 'is-waiting');
             card.dataset.imageJobState = job.status;
+            card.classList.toggle('is-generating', job.status === 'running');
+            card.classList.toggle('is-generation-error', job.status === 'failed');
+            card.classList.remove('is-waiting');
+            if (label) label.textContent = job.status === 'running' ? '生成中…' : job.status === 'failed' ? job.error || '生成失败，请点击重新生成' : '';
+            if (bar) bar.style.width = job.status === 'done' ? '100%' : '0%';
+            if (job.status === 'done') {
+                card.querySelector('img').src = task.imageUrl;
+                card.style.aspectRatio = `${job.width} / ${job.height}`;
+            }
         };
         __s.renderGeneratedImageJob = renderGeneratedImageJob;
-        const startGeneratedImageTask = (requestUrl, fresh = false) => {
-            const request = new URL(requestUrl, window.location.href);
-            const token = request.searchParams.get('token') || __s.settings.imageGenKey.trim();
-            request.searchParams.set('token', token);
-            const key = fresh ? `${request.href}#${Date.now()}-${Math.random()}` : request.href;
-            if (generatedImageTasks.has(key)) return generatedImageTasks.get(key);
-            const task = { key, requestUrl: request.href, baseUrl: request.origin, token, cards: new Set(), job: null };
-            const publish = (job) => {
-                task.job = job;
-                [...task.cards].forEach(card => renderGeneratedImageJob(card, task, job));
+        const cancelGeneratedImageTasks = () => {
+            __s.generatedImageEpoch++;
+            for (const task of generatedImageTasks.values()) {
+                task.controller.abort();
+                if (task.imageUrl) URL.revokeObjectURL(task.imageUrl);
+                for (const card of task.cards) {
+                    if (task.job?.status === 'done') card.dataset.imageJobState = '';
+                    else renderGeneratedImageJob(card, task, { status: 'failed', error: '生成已取消，请手动重试' });
+                }
+                task.cards.clear();
+            }
+            generatedImageTasks.clear();
+            nextTick(() => hydrateGeneratedImages(__s.chatContainer.value));
+        };
+        __s.cancelGeneratedImageTasks = cancelGeneratedImageTasks;
+        const startGeneratedImageTask = (requestUrl, fresh = false, binding) => {
+            const { message, index, prompt } = binding;
+            const scopeId = __s.getCurrentStoryBranchScopeId();
+            const revision = __s.conversationRevision, epoch = __s.generatedImageEpoch;
+            const key = JSON.stringify([scopeId, revision, __s.chatHistory.value.indexOf(message), index, prompt]);
+            const existing = generatedImageTasks.get(key);
+            if (existing && (!fresh || !existing.job || existing.job.status === 'running')) return existing;
+            if (existing?.imageUrl) URL.revokeObjectURL(existing.imageUrl);
+            const controller = new AbortController();
+            const task = { key, requestUrl, message, index, controller, cards: new Set(), job: null, imageUrl: '' };
+            const check = () => {
+                const matches = cardUtils.findUnprotectedMatches(String(message.content || ''), getImageTagRegex());
+                if (controller.signal.aborted || epoch !== __s.generatedImageEpoch || revision !== __s.conversationRevision
+                    || scopeId !== __s.getCurrentStoryBranchScopeId() || !__s.chatHistory.value.includes(message)
+                    || matches[index]?.[1]?.trim() !== prompt) throw new DOMException('会话或插图已变化', 'AbortError');
             };
+            const publish = job => {
+                task.job = job;
+                for (const card of task.cards) renderGeneratedImageJob(card, task, job);
+            };
+            const save = async () => {
+                check();
+                if (await __s.saveChatHistoryNow(scopeId) === false) throw new Error('插图记录保存失败，请不要刷新，稍后重试');
+                check();
+            };
+            // A pending checkpoint prevents refresh/navigation from silently repeating a paid request.
+            const previous = message.generatedImages?.[index];
             task.promise = (async () => {
-                let job = await fetchImageJobJson(`${task.baseUrl}/api/jobs`, {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify(Object.fromEntries(request.searchParams.entries()))
-                });
-                publish(job);
-                let pollFailures = 0;
-                while (!['done', 'failed'].includes(job.status)) {
-                    await new Promise(resolve => setTimeout(resolve, 150));
-                    try {
-                        job = await fetchImageJobJson(`${task.baseUrl}/api/jobs/${encodeURIComponent(job.id)}?token=${encodeURIComponent(task.token)}`);
-                        pollFailures = 0;
-                    } catch (error) {
-                        if (++pollFailures < 5) continue;
-                        throw error;
+                check();
+                const G = window.RPHubImageGeneration, M = window.RPHubWeChatMedia;
+                const library = __s.wechatMediaLibrary;
+                let asset = previous?.prompt === prompt && previous.assetId && (!fresh || previous.status !== 'done')
+                    ? await library.get(previous.assetId) : null;
+                let pixels;
+                if (asset) {
+                    try { pixels = await library.read(asset.id, false, controller.signal); }
+                    catch (error) {
+                        check();
+                        if (!fresh || !/图片文件已丢失|图片资源已不存在/.test(error.message)) throw error;
+                        asset = null; // Explicit manual retry may replace missing pixels.
                     }
-                    publish(job);
                 }
-                if (fresh && job.status === 'done') {
-                    const reusableRequest = new URL(task.requestUrl);
-                    reusableRequest.searchParams.set('nocache', '0');
-                    generatedImageTasks.delete(task.key);
-                    task.key = reusableRequest.href;
-                    generatedImageTasks.set(task.key, task);
+                if (!fresh && previous?.prompt === prompt && !asset) {
+                    throw new Error(previous.error || (previous.assetId ? '图片原件已丢失，请手动重新生成' : '上次生图未完成，请手动重试；服务端可能已计费'));
                 }
-                return job;
-            })().catch((error) => {
-                const job = { status: 'failed', error: error.message || '生成失败' };
-                publish(job);
-                return job;
+                check();
+                if (!asset) {
+                    const config = { ...G.config(__s.settings), artists: cardUtils.getImageStyleArtists(__s.settings.imageStyle, __s.settings.customImageArtists) };
+                    if (!G.ready(config)) throw new Error('请在设置 → 生图服务（RP / 微信共用）中填写 API Key 并开启生图');
+                    // Validate before saving a pending task or paying.
+                    G.payload(config, prompt);
+                    message.generatedImages = [...(message.generatedImages || [])];
+                    message.generatedImages[index] = { prompt, status: 'pending' };
+                    await save();
+                    publish({ status: 'running' });
+                    const blob = await G.generate(config, prompt, controller.signal); check();
+                    const image = await M.rasterize(blob, { signal: controller.signal }); check();
+                    asset = await library.save(image, { source: 'generate', ownerId: __s.currentCharacter.value.uuid,
+                        scopeId, caption: 'RP 剧情插图', captionSource: 'generation_prompt' }, controller.signal); check();
+                }
+                const blob = pixels || await library.read(asset.id, false, controller.signal); check();
+                // Keep the saved pixels on a failed chat write so manual retry reuses them.
+                message.generatedImages = [...(message.generatedImages || [])];
+                message.generatedImages[index] = { prompt, assetId: asset.id, status: 'done', width: asset.width, height: asset.height };
+                await save();
+                task.imageUrl = URL.createObjectURL(blob);
+                const job = { status: 'done', width: asset.width, height: asset.height };
+                publish(job); return job;
+            })().catch(async error => {
+                const job = { status: 'failed', error: error.name === 'AbortError' ? '生成已取消，请手动重试' : error.message || '生成失败，请手动重试' };
+                if (error.name !== 'AbortError') {
+                    try {
+                        check();
+                        message.generatedImages = [...(message.generatedImages || [])];
+                        message.generatedImages[index] = { ...(message.generatedImages[index]?.prompt === prompt ? message.generatedImages[index] : {}), prompt, status: 'failed', error: job.error };
+                        await save();
+                    } catch (_) { /* An obsolete task cannot write to a new conversation. */ }
+                }
+                publish(job); return job;
+            }).finally(() => {
+                __s.isAutoImageGenerating.value = --__s.generatedImageActiveCount > 0;
             });
+            __s.isAutoImageGenerating.value = ++__s.generatedImageActiveCount > 0;
             generatedImageTasks.set(key, task);
             return task;
         };
@@ -174,9 +216,11 @@
             card.querySelector('.generated-image-spinner-path')?.style.setProperty('animation-delay', `-${animationTime % 1500}ms`);
             const label = card.querySelector('.generated-image-progress-label');
             const bar = card.querySelector('.generated-image-progress-bar');
-            const task = startGeneratedImageTask(requestUrl, options.fresh === true);
+            const binding = generatedImageBinding(card);
+            if (!binding) return Promise.resolve({ status: 'failed' });
+            const task = startGeneratedImageTask(requestUrl, options.fresh === true, binding);
             if (!task.job) {
-            if (label) label.textContent = '等待生成';
+                if (label) label.textContent = '正在准备图片…';
                 if (bar) bar.style.width = '0%';
             }
             task.cards.add(card);
@@ -184,31 +228,53 @@
             card.dataset.imageJobState = 'loading';
             card.classList.add('is-generating');
             card.classList.remove('is-generation-error');
-            const size = new URL(requestUrl, window.location.href).searchParams.get('size');
-            card.style.aspectRatio = size === '横图' ? '1216 / 832' : size === '方图' ? '1' : '832 / 1216';
+            const size = window.RPHubImageGeneration.config(__s.settings).size;
+            card.style.aspectRatio = size === '1216x832' ? '1216 / 832' : size === '1024x1024' ? '1' : '832 / 1216';
             if (task.job) renderGeneratedImageJob(card, task, task.job);
             return task.promise;
         };
         __s.loadGeneratedImageCard = loadGeneratedImageCard;
         const hydrateGeneratedImages = (root) => {
+            if (__s.isConversationClearing?.value || __s.storyBranchSwitching?.value || __s._isApplyingCharacterScopedData) return;
             const cards = root?.matches?.('.generated-image-card[data-image-request]')
                 ? [root]
                 : [...(root?.querySelectorAll?.('.generated-image-card[data-image-request]') || [])];
             cards.forEach(card => {
-                if (!card.dataset.imageJobState) loadGeneratedImageCard(card);
+                if (__s.isConversationBusy.value) {
+                    if (!card.dataset.imageJobState) {
+                        ensureGeneratedImageProgressUi(card);
+                        card.dataset.imageJobState = 'waiting';
+                        card.querySelector('.generated-image-progress-label').textContent = '等待正文完成…';
+                    }
+                    return;
+                }
+                if (!card.dataset.imageJobState || card.dataset.imageJobState === 'waiting') loadGeneratedImageCard(card);
             });
         };
         __s.hydrateGeneratedImages = hydrateGeneratedImages;
         watch(__s.chatContainer, (container) => {
             __s.generatedImageObserver?.disconnect();
-            if (!container) return;
+            if (!container) { cancelGeneratedImageTasks(); return; }
             __s.generatedImageObserver = new MutationObserver(records => {
                 records.forEach(record => record.addedNodes.forEach(node => {
                     if (node.nodeType === Node.ELEMENT_NODE) hydrateGeneratedImages(node);
                 }));
+                for (const [key, task] of generatedImageTasks) {
+                    for (const card of task.cards) if (!card.isConnected) task.cards.delete(card);
+                    if (!task.cards.size && ['done', 'failed'].includes(task.job?.status)) {
+                        if (task.imageUrl) URL.revokeObjectURL(task.imageUrl);
+                        generatedImageTasks.delete(key);
+                    }
+                }
             });
             __s.generatedImageObserver.observe(container, { childList: true, subtree: true });
             hydrateGeneratedImages(container);
+        });
+        watch(__s.isConversationBusy, busy => {
+            if (!busy) nextTick(() => hydrateGeneratedImages(__s.chatContainer.value));
+        });
+        watch(() => [__s.storyBranchSwitching?.value, __s.switchingCharacterIndex?.value], () => {
+            nextTick(() => hydrateGeneratedImages(__s.chatContainer.value));
         });
         const handleGeneratedImageReroll = async (event, messageIndex) => {
             const button = event.target.closest('.generated-image-reroll');
@@ -230,24 +296,8 @@
             if (!message || imageIndex < 0 || !imageMatch) return;
             if (card.classList.contains('is-rerolling')) return;
 
-            const tags = imageMatch[1].split(',').map(tag => tag.trim()).filter(Boolean);
-            if (tags.length < 2) {
-                __s.showToast('提示词太短，无法重新生成', 'warning');
-                return;
-            }
-            const swapIndex = Math.floor(Math.random() * (tags.length - 1));
-            [tags[swapIndex], tags[swapIndex + 1]] = [tags[swapIndex + 1], tags[swapIndex]];
-            const updatedToken = `image###${tags.join(', ')}###`;
-            const updatedContent = sourceText.slice(0, imageMatch.index)
-                + updatedToken
-                + sourceText.slice(imageMatch.index + imageMatch[0].length);
-            const sourceUrl = card.dataset.imageRequest || card.querySelector('img')?.getAttribute('src');
+            const sourceUrl = card.dataset.imageRequest;
             if (!sourceUrl) return;
-            const nextImageUrl = new URL(sourceUrl, window.location.href);
-            nextImageUrl.searchParams.set('tag', tags.join(', '));
-            nextImageUrl.searchParams.set('nocache', '1');
-
-            const originalContent = message.content;
             const finishLoading = () => {
                 card.classList.remove('is-rerolling');
                 button.disabled = false;
@@ -255,18 +305,9 @@
             card.classList.add('is-rerolling');
             button.disabled = true;
 
-            const job = await loadGeneratedImageCard(card, nextImageUrl.href, { fresh: true });
+            const job = await loadGeneratedImageCard(card, sourceUrl, { fresh: true });
             if (job.status === 'done') {
-                if (__s.chatHistory.value[messageIndex] !== message || message.content !== originalContent) {
-                    finishLoading();
-                    return;
-                }
-                message.content = updatedContent;
-                message.shouldAnimate = false;
-                __s.scheduleChatHistorySave();
                 __s.showToast('已重新生成图片', 'success');
-                nextTick(finishLoading);
-                return;
             }
             finishLoading();
         };
@@ -280,38 +321,8 @@
                 if (!regex) return [];
             }
 
-            const targetArtists = cardUtils.getImageStyleArtists(__s.settings.imageStyle, __s.settings.customImageArtists);
-            const styleName = imageStyleOptions.find(option => option.value === __s.settings.imageStyle)?.label
-                || imageStyleOptions[0].label;
-            const modelName = __s.getImageModelName(__s.settings.imageModel);
-
-            // 动态替换 URL 中的 model、artist 和 size 参数
-            const encodedTargetArtists = encodeURIComponent(targetArtists);
-            const oldReplacement = regex.replacement;
-            let newReplacement = oldReplacement.replace(/artist=[\s\S]*?(&size=)/, 'artist=' + encodedTargetArtists + '$1');
-            if (newReplacement === oldReplacement) {
-                newReplacement = oldReplacement.replace(/artist=[^&]+/, 'artist=' + encodedTargetArtists);
-            }
-            newReplacement = newReplacement.replace(/model=[^&]+/, 'model=' + __s.settings.imageModel);
-            newReplacement = newReplacement.replace(/size=[^&]+/, 'size=' + __s.settings.imageSize);
-            regex.replacement = newReplacement;
-
-            let messages = [];
-            // 检查 Artist 变化
-            const oldArtist = oldReplacement.match(/artist=([\s\S]*?)&size=/)?.[1] || oldReplacement.match(/artist=([^&]+)/)?.[1];
-            if (oldArtist !== encodedTargetArtists) {
-                messages.push(styleName);
-            }
-            const oldModel = oldReplacement.match(/model=([^&]+)/)?.[1];
-            if (oldModel !== __s.settings.imageModel) {
-                messages.push(modelName);
-            }
-            // 检查 Size 变化
-            const oldSize = oldReplacement.match(/size=([^&]+)/)?.[1];
-            if (oldSize !== __s.settings.imageSize) {
-                messages.push(`比例: ${__s.settings.imageSize}`);
-            }
-
+            regex.replacement = buildGeneratedImageCardMarkup('$1');
+            const messages = [];
             if (enableRegex && !regex.enabled) {
                 regex.enabled = true;
                 messages.push(`${imageGenRegexName} 已启用`);
@@ -344,8 +355,8 @@
                 updateImageGenRegexState({ enableRegex: isAutoImageGenEnabled.value });
             }
         });
-        watch(() => __s.settings.imageModel, (imageModel) => {
-            if (imageModel === 'nai-diffusion-5-full' && __s.v5UnsupportedImageStyles.has(__s.settings.imageStyle)) {
+        watch(() => __s.settings.wechatImageApi.model, (imageModel) => {
+            if (String(imageModel || '').split(':')[0] === 'nai-diffusion-5-full' && __s.v5UnsupportedImageStyles.has(__s.settings.imageStyle)) {
                 __s.settings.imageStyle = 'vertical';
             }
             const messages = updateImageGenRegexState({ enableRegex: isAutoImageGenEnabled.value });

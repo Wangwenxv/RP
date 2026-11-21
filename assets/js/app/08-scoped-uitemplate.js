@@ -45,6 +45,7 @@
         const finishApplyingCharacterScopedData = () => {
             nextTick(() => {
                 __s._isApplyingCharacterScopedData = false;
+                __s.hydrateGeneratedImages?.(__s.chatContainer.value);
             });
         };
         __s.finishApplyingCharacterScopedData = finishApplyingCharacterScopedData;

@@ -13,12 +13,13 @@
         const prefix = CONFIG[kind].prefix;
         return part.startsWith('chunk_') ? `${prefix}_chunk_${id}_${part.slice(6)}` : `${prefix}_${part}_${id}`;
     };
-    const refs = branch => (branch.wechatTimeline || []).flatMap(item => {
+    const refs = branch => [...(branch.wechatTimeline || []).flatMap(item => {
         if (item.type === 'image' && item.media?.assetId) return [{ kind: 'image', id: item.media.assetId, branchId: branch.branchId }];
         if (item.type === 'voice' && item.media?.assetId) return [{ kind: 'voice', id: item.media.assetId, branchId: branch.branchId }];
         if (item.type === 'document' && item.document?.id) return [{ kind: 'document', id: item.document.id, branchId: branch.branchId }];
         return [];
-    });
+    }), ...(branch.messages || []).flatMap(message => (Array.isArray(message.generatedImages) ? message.generatedImages : [])
+        .filter(image => image?.assetId).map(image => ({ kind: 'image', id: image.assetId, branchId: branch.branchId })))];
     const encode = async value => {
         if (!(value instanceof Blob)) return { encoding: 'json', data: copy(value) };
         const bytes = new Uint8Array(await value.arrayBuffer()); let binary = '';
@@ -127,6 +128,12 @@
             const kind = item.type === 'image' ? 'image' : item.type === 'voice' ? 'voice' : null;
             if (kind && item.media?.assetId && mappings.has(mapKey(kind, item.media.assetId, branch.branchId))) item.media.assetId = mappings.get(mapKey(kind, item.media.assetId, branch.branchId));
             if (item.document?.id && mappings.has(mapKey('document', item.document.id, branch.branchId))) item.document.id = mappings.get(mapKey('document', item.document.id, branch.branchId));
+        }
+        for (const branch of chats.values()) for (const message of branch.messages) {
+            for (const image of Array.isArray(message.generatedImages) ? message.generatedImages : []) {
+                if (image?.assetId && mappings.has(mapKey('image', image.assetId, branch.branchId)))
+                    image.assetId = mappings.get(mapKey('image', image.assetId, branch.branchId));
+            }
         }
         for (const pair of indexes) entries.push(pair);
         return { chats, entries };

@@ -104,34 +104,10 @@
         const quotaError = ref(false);
         __s.quotaError = quotaError;
         const fetchQuota = async () => {
-            quotaLoading.value = true;
+            // The shared provider has no portable remaining-image-count endpoint.
+            quotaLoading.value = false;
+            quotaValue.value = 0;
             quotaError.value = false;
-            try {
-                const imageGenToken = __s.settings.imageGenKey.trim();
-                if (!imageGenToken) {
-                    quotaValue.value = 0;
-                    return;
-                }
-                const baseUrl = IMAGE_GEN_BASE_URL;
-                const response = await fetch(`${baseUrl}/api/api/getUser`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ toUserId: imageGenToken })
-                });
-                const data = await response.json();
-                if (data.status === 'ok' && data.type === 'sta1n') {
-                    const val = Number.parseInt(data.data?.value, 10);
-                    if (!Number.isFinite(val)) throw new Error('Invalid quota value');
-                    quotaValue.value = val;
-                } else {
-                    quotaError.value = true;
-                }
-            } catch (e) {
-                console.error('Quota fetch error:', e);
-                quotaError.value = true;
-            } finally {
-                quotaLoading.value = false;
-            }
         };
         __s.fetchQuota = fetchQuota;
         const showConfirmModal = ref(false);

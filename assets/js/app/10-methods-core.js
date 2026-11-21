@@ -115,12 +115,16 @@
                     // 兼容外部正则字段：findRegex/regex, replaceString/replacement
                     let regexPattern = script.regex || script.findRegex;
                     let flags = script.flags || script.regexFlags || 'g';
-                    const replacement = script.hasOwnProperty('replacement')
+                    let replacement = script.hasOwnProperty('replacement')
                         ? script.replacement
                         : (script.replaceString || '');
 
                     if (!regexPattern) return;
                     const isImageGenScript = (script.name || script.scriptName) === 'NAI画图正则';
+                    if (isImageGenScript && isDisplay) {
+                        // Escape each prompt as URL data; stored legacy regexes must never expose keys or call the old service.
+                        replacement = (_, tags) => __s.buildGeneratedImageCardMarkup(tags);
+                    }
 
                     // 解析 /pattern/flags 格式
                     if (regexPattern.startsWith('/') && regexPattern.lastIndexOf('/') > 0) {
@@ -201,6 +205,7 @@
             if (!msg) return false;
             return !!(
                 msg.reasoning
+                || (msg.role === 'assistant' && cardUtils.findUnprotectedMatches(String(msg.content || ''), getImageTagRegex()).length > 0)
                 || parseCot(msg.content || '').cot
                 || (Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0)
                 || messageUsesHtmlFrame(msg)

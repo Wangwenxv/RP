@@ -4,6 +4,7 @@
     window.RPHubAppSections.wechatMedia = function (__s) {
         const M = window.RPHubWeChatMedia;
         const library = M.createLibrary(window.RPHubStorage);
+        __s.wechatMediaLibrary = library;
         __s.deleteWechatMediaOwner = ownerId => library.purgeOwner(ownerId);
         __s.reloadWechatMediaLibrary = async () => {
             __s.invalidateWechatMedia?.();

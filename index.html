@@ -1688,11 +1688,6 @@
                                             <div class="flex justify-between items-center mb-0.5">
                                                 <div class="flex items-center gap-1.5 min-w-0 text-xs font-bold text-gray-700 truncate">
                                                     <span>生图服务</span>
-                                                    <span class="text-gray-400">·</span>
-                                                    <span class="text-gray-500 font-medium whitespace-nowrap">
-                                                        <span v-if="quotaLoading">获取中...</span>
-                                                        <span v-else>{{ quotaError ? '查询失败' : quotaValue + ' 次' }}</span>
-                                                    </span>
                                                 </div>
                                                 <span v-if="imageGenStatus === 'connected'"
                                                     class="text-xs font-mono font-medium text-primary-600">{{
@@ -1895,33 +1890,9 @@
                                             </svg>
                                             RP 自动插图设置
                                         </h4>
-                                        <a href="https://www.qianxun1688.com/links/D07F549B" target="_blank"
-                                            rel="noopener noreferrer"
-                                            class="text-primary-600 hover:text-primary-700 hover:underline cursor-pointer transition-colors text-xs normal-case font-medium">
-                                            获取生图密钥
-                                        </a>
                                     </div>
+                                    <p class="text-sm text-gray-500 mb-4">API 地址、Key、模型、协议和比例使用下方的「生图服务（RP / 微信共用）」。开启聊天中的「自动生图」后，正文仍会插入剧情图片。</p>
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <!-- Image Key -->
-                                        <div
-                                            class="min-w-0">
-                                            <label
-                                                class="settings-label">自动生图密钥</label>
-                                            <input v-model="settings.imageGenKey" type="password"
-                                                class="settings-control font-mono"
-                                                placeholder="原自动插图服务密钥">
-                                        </div>
-
-                                        <!-- Image Model -->
-                                        <div class="min-w-0">
-                                            <label
-                                                class="settings-label">生图版本</label>
-                                            <custom-select v-model="settings.imageModel" :options="imageModelOptions"
-                                                button-class="settings-control"
-                                                menu-class="text-sm">
-                                            </custom-select>
-                                        </div>
-
                                         <!-- Image Style -->
                                         <div
                                             class="min-w-0">
@@ -1935,17 +1906,6 @@
                                                 v-model="settings.customImageArtists" rows="3"
                                                 class="settings-control mt-3 resize-y custom-scrollbar"
                                                 placeholder="输入自定义画师串"></textarea>
-                                        </div>
-
-                                        <!-- Image Size -->
-                                        <div
-                                            class="min-w-0">
-                                            <label
-                                                class="settings-label">生图比例</label>
-                                            <custom-select v-model="settings.imageSize" :options="imageSizeOptions"
-                                                button-class="settings-control"
-                                                menu-class="text-sm">
-                                            </custom-select>
                                         </div>
 
                                         <!-- Image Count -->
@@ -1966,10 +1926,10 @@
                     </div>
 
                     <div class="settings-card" id="wechat-image-settings">
-                        <div class="settings-card__header"><div class="settings-card__title">微信生图</div></div>
+                        <div class="settings-card__header"><div class="settings-card__title">生图服务（RP / 微信共用）</div></div>
                         <div class="p-5 space-y-4">
-                            <p class="text-sm text-gray-500">角色可以按聊天内容拍照、分享饭菜或生成场景图片。默认使用 STA1N，填写 API Key 后即可使用；每次实际生图由服务商计费。</p>
-                            <label class="wx-pick-item"><input type="checkbox" v-model="settings.wechatImageApi.enabled">允许微信角色按需生图（原微信与世界微信）</label>
+                            <p class="text-sm text-gray-500">RP 正文插图与微信按需发图共用此配置。默认使用 STA1N，填写 API Key 后即可使用；每次实际生图由服务商计费。RP 自动插图需另行开启「自动生图」。</p>
+                            <label class="wx-pick-item"><input type="checkbox" v-model="settings.wechatImageApi.enabled">启用生图服务（RP 自动插图、原微信与世界微信）</label>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <label class="min-w-0"><span class="settings-label">图片 API 地址</span><input class="settings-control" v-model="settings.wechatImageApi.baseUrl" placeholder="https://sta1n.ai/v1"></label>
                                 <label class="min-w-0"><span class="settings-label">图片 API Key</span><input class="settings-control" v-model="settings.wechatImageApi.apiKey" type="password" autocomplete="off" placeholder="填写你的 STA1N API Key"></label>
@@ -3466,7 +3426,7 @@
                         <div class="wx-field">
                             <span>图片来源 <small>相册与手绘默认可用</small></span>
                             <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageSearchEnabled">联网找参考图（需网络）</label>
-                            <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageGenerationEnabled">允许本角色按需生图（在设置 → 微信生图填写 API Key）</label>
+                            <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageGenerationEnabled">允许本角色按需生图（在设置 → 生图服务填写 API Key）</label>
                             <p class="wx-hint">点击顶栏相册可查看素材、加入自己的照片；新图本轮完整识别，历史用短描述，细节按需查看。</p>
                         </div>
                         <div class="wx-field wx-image-identity-settings">

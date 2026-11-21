@@ -277,7 +277,7 @@
         onBeforeUnmount(() => {
             __s.activeSortable?.destroy();
             __s.generatedImageObserver?.disconnect();
-            __s.generatedImageTasks.clear();
+            __s.cancelGeneratedImageTasks();
             __s.closeNavigation();
             document.removeEventListener('fullscreenchange', __s.syncChatFullscreenState);
             document.removeEventListener('webkitfullscreenchange', __s.syncChatFullscreenState);

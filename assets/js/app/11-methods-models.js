@@ -98,13 +98,13 @@
         };
         __s.checkApiStatus = checkApiStatus;
         const checkImageGenStatus = async () => {
-            await checkConnectionStatus(__s.imageGenStatus, __s.imageGenLatency, 'Image API', signal => (
-                fetch(IMAGE_GEN_BASE_URL, {
-                    method: 'HEAD',
-                    mode: 'no-cors',
-                    signal
-                })
-            ), () => true);
+            const config = window.RPHubImageGeneration.config(__s.settings);
+            if (!window.RPHubImageGeneration.ready(config)) {
+                __s.imageGenStatus.value = 'error';
+                return;
+            }
+            await checkConnectionStatus(__s.imageGenStatus, __s.imageGenLatency, 'Image API',
+                signal => window.RPHubImageGeneration.models(config, signal), () => true);
         };
         __s.checkImageGenStatus = checkImageGenStatus;
         const checkAllStatuses = () => {
@@ -151,6 +151,7 @@
         };
         __s.markActiveToolInlineWorkCancelled = markActiveToolInlineWorkCancelled;
         const stopGeneration = () => {
+            __s.cancelGeneratedImageTasks?.();
             __s.abortUiTemplateUpdate();
             if (__s.abortController.value) {
                 abortSafely(__s.abortController.value, 'Generation cancelled by user');

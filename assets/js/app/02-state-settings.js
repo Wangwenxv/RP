@@ -118,7 +118,7 @@
         };
         const v5UnsupportedImageStyles = new Set(['r18', 'lolita25d', 'anime']);
         __s.v5UnsupportedImageStyles = v5UnsupportedImageStyles;
-        const availableImageStyleOptions = computed(() => settings.imageModel === 'nai-diffusion-5-full'
+        const availableImageStyleOptions = computed(() => String(settings.wechatImageApi.model || '').split(':')[0] === 'nai-diffusion-5-full'
             ? imageStyleOptions.filter(option => !v5UnsupportedImageStyles.has(option.value))
             : imageStyleOptions);
         __s.availableImageStyleOptions = availableImageStyleOptions;
