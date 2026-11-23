@@ -164,12 +164,12 @@
             if (!__s.isWechatImageGenerationReady()) return '';
             const G = window.RPHubImageGeneration, card = __s.currentCharacter.value;
             const description = messages.some(message => message.type === 'image_request' && message.media?.mode === 'describe');
-            const missingIdentity = G.identityOf(card) && messages.some(message => message.type === 'image_request'
+            const missingIdentity = G.hasPortrait(card, G.config(__s.settings)) && messages.some(message => message.type === 'image_request'
                 && message.media?.mode === 'generate' && typeof message.media.selfPortrait !== 'boolean');
             if (!description && !missingIdentity) return '';
             return '本轮微信生图已配置并开启，mode:"describe" 不可用于新图片。刚才的回复尚未发送，也尚未调用生图服务。若角色愿意发照片，请保留当前场景和发图位置，使用 mode:"generate"，补充具体英文 prompt 与中文 description；程序取得真实像素后才发送。'
                 + (missingIdentity ? '刚才的generate遗漏了selfPortrait，必须明确补为true或false。' : '')
-                + G.identityPrompt(card)
+                + G.promptFor(G.config(__s.settings)) + G.identityPrompt(card, G.config(__s.settings))
                 + '仍可按原处境拒绝或沉默。重新输出完整 messages JSON，不解释接口，不把图片改成文字动作或 [图片]。';
         };
         // Internal capability entry: reuse RP's matcher without adding to user-owned worldbooks.
@@ -209,7 +209,7 @@
             check();
             const sources = capabilities();
             return `【图片能力｜本轮按需加载】\n这只是可用能力，不是发图指令。先遵守能否、愿否、是否需要回复的判断；可以拒绝或空回，不为收尾补图。当前可用来源：${sources.join('、')}。一轮最多一张图片；表情频率不约束照片。图片请求放在 messages 数组的原位置，不输出源码/URL/base64。\n`
-                + (sources.includes('generate') ? `【本轮真实生图】已配置并开启。决定拍照或分享当前画面时使用 generate，程序会调用生图服务、保存真实像素并发送图片；新图片不使用 describe，不沿用历史描述卡片的发送方式。\n${window.RPHubImageGeneration.prompt}\n${window.RPHubImageGeneration.identityPrompt(__s.currentCharacter.value)}` : '')
+                + (sources.includes('generate') ? `【本轮真实生图】已配置并开启。决定拍照或分享当前画面时使用 generate，程序会调用生图服务、保存真实像素并发送图片；新图片不使用 describe，不沿用历史描述卡片的发送方式。\n${window.RPHubImageGeneration.promptFor(window.RPHubImageGeneration.config(__s.settings))}\n${window.RPHubImageGeneration.identityPrompt(__s.currentCharacter.value, window.RPHubImageGeneration.config(__s.settings))}` : '')
                 + `相册：{"type":"image_request","media":{"mode":"album","assetId":"下方真实ID","usage":"scene_photo"}}；usage 另可用 album_photo（旧图）、reference（参考）。素材可配合虚构场景，但须符合已建立的饭菜、地点和人物，不能把陌生人当本人，不能凭图片元数据改写剧情。\n`
                 + `绘图：{"type":"image_request","media":{"mode":"draw","template":"note","text":"纸条文字","tone":"warm","decorations":["heart"]}}；template 也可为 doodle，subject 为 heart/cat/flower/meal，tone 为 warm/cool/plain；这是手绘，不冒充照片。\n`
                 + (!sources.includes('generate') ? `描述兜底：{"type":"image_request","media":{"mode":"describe","description":"240字以内的画面内容","usage":"scene_photo"}}。未配置生图时，复杂照片、人物自拍或没有匹配素材时可用它，仍是一条图片分享，画面描述不是角色发送的配文；不必编造图片无法发送的台词。只描写当前剧情允许出现的画面，不改写玩家动作或既定事实。相册/绘图请求也可带 description，资源不可用时显示描述卡片；不要用不匹配素材或简笔画充当照片。\n` : '')
@@ -226,7 +226,7 @@
                 + '有准确匹配的图片可用 image:{mode:"album",assetId:"目录ID",description:"画面兜底"}；简单纸条可用 draw。'
                 + (capabilities().includes('generate') ? '新图片不使用 describe，不能用描述卡片替代实际生图。' : '未配置生图时，复杂照片或无匹配素材可用 image:{mode:"describe",description:"240字以内的画面内容"}，仍是图片气泡而不是配文，不需要额外API。')
                 + '新发生的分享必须通过工具进入微信，不在旁白里假称已经发过；回忆已记录的旧消息不用重发，不补造过去未记录的联系。只发当前角色自己的消息，不替玩家拍照、回答或标记已读。成功后交给玩家。\n'
-                + (capabilities().includes('generate') ? window.RPHubImageGeneration.identityPrompt(__s.currentCharacter.value) : '')
+                + (capabilities().includes('generate') ? window.RPHubImageGeneration.promptFor(window.RPHubImageGeneration.config(__s.settings)) + window.RPHubImageGeneration.identityPrompt(__s.currentCharacter.value, window.RPHubImageGeneration.config(__s.settings)) : '')
                 + candidates.map(item => `- ${item.id}｜${item.title}｜${item.caption}`).join('\n');
         };
         __s.buildWechatMediaPrompt = async (context = __s.resolveWechatMediaContext()) => {

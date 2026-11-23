@@ -33,6 +33,7 @@ function harness(respond = () => new Response(JSON.stringify({ data: [{ b64_json
 test('RP uses shared model, credential, NAI protocol and size, persists pixels and pending checkpoint', async () => {
     const h = harness(), binding = h.add();
     h.s.settings.wechatImageApi.size = '1216x832';
+    h.s.currentCharacter.value.imageReferences = [{ id: 'face', kind: 'character', dataUrl: 'data:image/png;base64,' + png }];
     const task = h.s.startGeneratedImageTask('http://local/rp-image', false, binding);
     const result = await task.promise;
     assert.equal(result.status, 'done', result.error);
@@ -46,6 +47,24 @@ test('RP uses shared model, credential, NAI protocol and size, persists pixels a
     assert.ok(binding.message.generatedImages[0].assetId);
     assert.ok(await h.library.read(binding.message.generatedImages[0].assetId) instanceof Blob);
     assert.doesNotMatch(JSON.stringify(h.saved), /base64,|shared-key|legacy-key/);
+    h.s.cancelGeneratedImageTasks();
+});
+
+test('RP natural JSON illustration sends bound reference images and restores without paying again', async () => {
+    const h = harness();
+    const G = h.context.window.RPHubImageGeneration;
+    Object.assign(h.s.settings.wechatImageApi, G.PRESETS.yeelo);
+    h.s.currentCharacter.value.imageReferences = [{ id: 'portrait', kind: 'character', dataUrl: 'data:image/png;base64,' + png }];
+    const binding = h.add(JSON.stringify({ prompt: '她在走廊里拍下课后的自拍。', selfPortrait: true }));
+    const result = await h.s.startGeneratedImageTask('http://local/rp-image', false, binding).promise;
+    assert.equal(result.status, 'done', result.error);
+    const body = JSON.parse(h.requests[0].options.body);
+    assert.equal(h.requests[0].url, 'https://img.yeelo.fun/v1/images/edits');
+    assert.equal(body.image_data_urls.length, 1); assert.equal(body.prompt, '她在走廊里拍下课后的自拍。');
+    assert.doesNotMatch(body.prompt, /artist:|提示词:|负面提示词:/);
+    h.s.cancelGeneratedImageTasks();
+    await h.s.startGeneratedImageTask('http://local/rp-image', false, binding).promise;
+    assert.equal(h.requests.length, 1);
     h.s.cancelGeneratedImageTasks();
 });
 test('fresh runtime restores saved pixels even when disabled, reroll preserves prompt', async () => {

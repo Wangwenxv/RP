@@ -69,6 +69,26 @@ test('新图片意图不依赖 content，非法图/源码和多图不降级成�
 });
 
 const textItem = (role, content, id = content) => ({ id, ts: 1, channel: 'wechat', role, type: 'text', content });
+test('natural WeChat selfie transmits reference selection and format guide without pixels or old prompts in chat', async () => {
+  const h = harness(async () => ({ content: JSON.stringify({ messages: [{ type: 'image_request', media: { mode: 'generate', selfPortrait: true, prompt: '她在教学楼里微笑着自拍。', description: '课后的自拍' } }] }) }));
+  const G = h.context.window.RPHubImageGeneration;
+  h.s.settings.wechatImageApi = { ...G.DEFAULTS, ...G.PRESETS.yeelo, apiKey: 'image-secret' };
+  const dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1kAAAAASUVORK5CYII=';
+  h.s.currentCharacter.value.imageReferences = [{ id: 'face', name: '本人', kind: 'character', dataUrl }];
+  let actual;
+  h.context.window.RPHubImageGeneration = { ...G, generate: async (config, prompt) => { actual = { config, prompt }; return new Blob(['pixels']); } };
+  await h.send('可以给我拍张漂亮的自拍吗？');
+  assert.equal(actual.prompt, '她在教学楼里微笑着自拍。'); assert.equal(actual.config.referenceImages[0].dataUrl, dataUrl);
+  assert.match(h.requests[0].messages[0].content, /生图格式：自然语言/);
+  assert.doesNotMatch(JSON.stringify(h.requests), /iVBOR|image-secret|固定英文特征/);
+  assert.doesNotMatch(JSON.stringify(h.s.wechatTimeline.value), /iVBOR|base64|referenceIds/);
+  assert.equal(h.s.wechatTimeline.value.at(-1).media.source, 'generate');
+  h.s.currentCharacter.value.imageReferences.push({ id: 'corridor', name: '教学楼走廊', kind: 'scene', dataUrl });
+  const active = h.s.normalizeActiveWechatImage({ mode: 'generate', selfPortrait: true, referenceIds: ['corridor'], prompt: '她在这条走廊里自拍。' });
+  await h.s.prepareWechatReplyMedia([{ type: 'image_request', media: active }], new AbortController().signal);
+  assert.equal(actual.config.referenceImages.length, 2);
+  assert.equal(actual.config.referenceImages[1].id, 'corridor');
+});
 const loadCall = (id = 'load') => ({ id, type: 'function', function: { name: 'tool_load_image_sending', arguments: '{}' } });
 
 test('截图中的收尾上下文不加载相册，模型空回照常记录；新问题仍可回答', async () => {

@@ -4,6 +4,28 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const { harness } = require('./world-engine-harness.cjs');
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1kAAAAASUVORK5CYII=';
 const message = { type: 'image_request', media: { mode: 'generate', selfPortrait: false, prompt: 'yellow braised chicken, rice, clay pot', description: '砂锅黄焖鸡和米饭', usage: 'scene_photo' } };
+test('world natural portraits use each bound actor reference pixels and keep them out of model context', async () => {
+    const actors = [{ actorId: 'player', name: '玩家', card: null }, ...['qing', 'suqixue', 'linwan'].map(id => ({ actorId: id, name: id,
+        card: { name: id, personality: '原本人设', extensions: { rp_hub_image_references: [{ id: id + '-face', kind: 'character', name: id + '本人', dataUrl: png }] } },
+        knownActorIds: ['player', 'qing', 'suqixue'], bindings: { user: 'player' }, initialState: { phoneAccess: 'available' } }))];
+    const t = await setup({ definition: { actors } });
+    Object.assign(t.config.imageConfig, t.h.context.window.RPHubImageGeneration.PRESETS.yeelo);
+    for (const id of ['qing', 'suqixue']) {
+        await t.h.run({ kind: 'wechat', conversationId: 'dm-player-' + id, text: '拍张漂亮自拍吧', apiConfig: t.config }, request => {
+            assert.match(request.messages[0].content, /生图格式：自然语言/);
+            assert.ok(request.messages[0].content.includes(id + '-face'));
+            assert.ok(!request.messages[0].content.includes((id === 'qing' ? 'suqixue' : 'qing') + '-face'));
+            assert.doesNotMatch(JSON.stringify(request.messages), /base64|iVBOR/);
+            return { messages: [{ type: 'image_request', media: { mode: 'generate', selfPortrait: true, prompt: '她在窗边微笑着拍下自拍。', description: '窗边自拍' } }] };
+        });
+        const r = t.requests.at(-1);
+        assert.equal(r.config.referenceImages[0].id, id + '-face'); assert.equal(r.config.referenceImages[0].dataUrl, png);
+        assert.equal(r.prompt, '她在窗边微笑着拍下自拍。');
+    }
+    const pkg = await t.h.Store.exportSession(t.h.snapshot.sessionId), restored = await t.h.Store.importSession(pkg);
+    const C = t.h.context.window.RPHubActorContext;
+    assert.equal(C.cardOf(C.actorOf(restored, 'suqixue')).extensions.rp_hub_image_references[0].dataUrl, png);
+});
 async function setup(options = {}) {
     const h = await harness(options); let calls = 0;
     const requests = [];

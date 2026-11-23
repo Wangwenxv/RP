@@ -78,7 +78,8 @@
                             properties: {
                                 mode: { type: 'string', enum: ['album', 'draw', ...(__s.isWechatImageGenerationReady?.() ? ['generate'] : ['describe'])] },
                                 prompt: { type: 'string', maxLength: 1500, description: '生图模式必填，符合当前剧情的具体画面提示词。' },
-                                selfPortrait: { type: 'boolean', description: '仅generate使用。有固定外貌时不可省略：当前角色本人入镜填true，饭菜、风景或他人填false；程序拼入本角色固定外貌，prompt仅补当前场景（最多600字符）。' },
+                                selfPortrait: { type: 'boolean', description: '仅generate使用。有本人人物参考图时不可省略：当前角色本人入镜填true，饭菜、风景或他人填false。程序按所选服务加入参考图，prompt描述当前场景。' },
+                                referenceIds: { type: 'array', items: { type: 'string' }, maxItems: 16, description: '本轮匹配的地点参考图 ID；人物参考图在 selfPortrait=true 时自动加入。' },
                                 description: { type: 'string', maxLength: 240, description: '中文画面说明，不是角色配文。未配置生图时才可用于描述兜底。' },
                                 assetId: { type: 'string', description: '相册模式使用本轮目录里的真实 ID。' },
                                 usage: { type: 'string', enum: ['scene_photo', 'album_photo', 'reference', 'drawing'] },
@@ -149,7 +150,10 @@
                 storyPanelsEnabled: __s.isStoryPanelsEnabled.value,
                 uiTemplateEnabled: __s.isUiTemplateAnalysisEnabled()
             });
-            return BUILTIN_PROMPTS.appendSystemPrompt(messageList, prompt);
+            const G = window.RPHubImageGeneration;
+            const imageGuide = __s.isAutoImageGenEnabled.value ? '\n' + G.formatPrompt(G.config(__s.settings)) + '\n'
+                + G.identityPrompt(__s.currentCharacter.value, G.config(__s.settings)) : '';
+            return BUILTIN_PROMPTS.appendSystemPrompt(messageList, prompt + imageGuide);
         };
         __s.appendResponseProtocolPrompt = appendResponseProtocolPrompt;
         const usedGeminiPromptNonces = new Set();

@@ -664,6 +664,22 @@ window.RPHubUtils = {
             negative: typeof value.negative === 'string' ? value.negative.replace(/\s+/g, ' ').trim().slice(0, 400) : ''
         };
     };
+    const normalizeImageReferences = (value) => {
+        if (value == null) return [];
+        if (!Array.isArray(value) || value.length > 16) throw new Error('角色最多保存16张参考图');
+        const ids = new Set(); let total = 0;
+        return value.map((ref, index) => {
+            if (!ref || typeof ref.dataUrl !== 'string' || !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/i.test(ref.dataUrl)
+                || ref.dataUrl.length > 8 * 1024 * 1024) throw new Error('参考图无效或单张超过6MB');
+            total += ref.dataUrl.length;
+            if (total > 32 * 1024 * 1024) throw new Error('角色参考图总计不能超过24MB');
+            const id = String(ref.id || `reference-${index + 1}`);
+            if (!/^[\w-]{1,80}$/.test(id) || ids.has(id)) throw new Error('参考图 ID 无效或重复');
+            ids.add(id);
+            return { id, name: String(ref.name || `参考图${index + 1}`).slice(0, 80), kind: ref.kind === 'scene' ? 'scene' : 'character',
+                description: String(ref.description || '').replace(/\s+/g, ' ').trim().slice(0, 240), dataUrl: ref.dataUrl };
+        });
+    };
     const parseImportedCharacterCard = (rawData = {}) => {
         const source = rawData && typeof rawData === 'object' ? rawData : {};
         const character = source.data && typeof source.data === 'object' ? source.data : source;
@@ -698,6 +714,8 @@ window.RPHubUtils = {
             geography: cloneJsonValue(character.extensions?.rp_hub_geography || source.extensions?.rp_hub_geography || character.geography, null),
             imageIdentity: normalizeImageIdentity(Object.hasOwn(character, 'imageIdentity') ? character.imageIdentity
                 : character.extensions?.rp_hub_image_identity ?? source.extensions?.rp_hub_image_identity),
+            imageReferences: normalizeImageReferences(Object.hasOwn(character, 'imageReferences') ? character.imageReferences
+                : character.extensions?.rp_hub_image_references ?? source.extensions?.rp_hub_image_references),
             regexScripts: Array.isArray(regexScripts) ? regexScripts : [],
             uiTemplates: Array.isArray(uiTemplates) ? uiTemplates : [],
             worldInfoEntries
@@ -780,6 +798,7 @@ window.RPHubUtils = {
             ? mapExportItems(character.uiTemplates, uiTemplateMapper)
             : [];
         const imageIdentity = normalizeImageIdentity(character.imageIdentity);
+        const imageReferences = normalizeImageReferences(character.imageReferences);
 
         const data = {
             name: character.name,
@@ -792,6 +811,7 @@ window.RPHubUtils = {
                 rp_hub_watermark: 'rp-hub',
                 ...(character.geography ? { rp_hub_geography: cloneJsonValue(character.geography, null) } : {}),
                 ...(imageIdentity ? { rp_hub_image_identity: imageIdentity } : {}),
+                ...(imageReferences.length ? { rp_hub_image_references: imageReferences } : {}),
                 regex_scripts: regexScripts,
                 ...(includeUiTemplates ? { rp_hub_ui_templates: uiTemplates } : {})
             },
@@ -945,6 +965,7 @@ window.RPHubUtils = {
         injectPngTextChunk,
         normalizeImportedRegexScript,
         normalizeImageIdentity,
+        normalizeImageReferences,
         normalizeRegexScript,
         normalizeRegexModifiers,
         normalizeWorldInfoEntry,

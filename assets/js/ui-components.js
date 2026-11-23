@@ -1248,6 +1248,48 @@
             </modal-shell>`
     };
 
+    // References belong to the card's media metadata, separate from its persona.
+    const ImageReferenceEditor = {
+        props: { modelValue: { type: Array, default: () => [] }, disabled: Boolean },
+        emits: ['update:modelValue'],
+        data: () => ({ loading: false, error: '' }),
+        methods: {
+            update(id, field, value) {
+                this.$emit('update:modelValue', this.modelValue.map(r => r.id === id ? { ...r, [field]: value } : r));
+            },
+            remove(id) { this.$emit('update:modelValue', this.modelValue.filter(r => r.id !== id)); },
+            async upload(event) {
+                const files = [...(event.target.files || [])]; event.target.value = ''; this.error = '';
+                if (!files.length || this.disabled || this.loading) return;
+                if (this.modelValue.length + files.length > 16) { this.error = '最多保存16张参考图'; return; }
+                const original = this.modelValue; this.loading = true;
+                try {
+                    const added = [];
+                    for (const file of files) {
+                        if (!/^image\/(png|jpeg|webp)$/i.test(file.type) || file.size > 12 * 1024 * 1024) throw new Error('请选择12MB以内的 PNG、JPEG 或 WebP 图片');
+                        const image = await window.RPHubWeChatMedia.rasterize(file);
+                        added.push({ id: 'ref-' + crypto.randomUUID(), name: file.name.slice(0, 80), kind: 'character', description: '',
+                            dataUrl: await window.RPHubWeChatMedia.blobToDataURL(image.blob) });
+                    }
+                    if (original !== this.modelValue || this.disabled) throw new Error('参考图编辑已切换，请重新选择图片');
+                    this.$emit('update:modelValue', window.RPHubCardUtils.normalizeImageReferences([...original, ...added]));
+                } catch (error) { this.error = error.message; }
+                finally { this.loading = false; }
+            }
+        },
+        template: `<section class="image-reference-editor space-y-3" aria-label="角色生图参考图">
+            <p class="wx-hint">人物照片仅在本人入镜时使用；地点照片按当前场景选择。最多16张，随角色卡与备份保存。需要支持参考图的生图服务。</p>
+            <label class="wx-field"><span>{{ loading ? '正在导入…' : '添加参考图（可多选）' }}</span><input type="file" multiple accept="image/png,image/jpeg,image/webp" :disabled="disabled || loading || modelValue.length >= 16" @change="upload"></label>
+            <p v-if="error" class="wx-hint" role="alert">{{ error }}</p>
+            <article v-for="ref in modelValue" :key="ref.id" class="space-y-2 border rounded-xl p-3">
+                <div class="flex items-center gap-3"><img :src="ref.dataUrl" :alt="ref.name" class="w-20 h-20 object-cover rounded-lg"><div class="min-w-0 flex-1"><label class="wx-field"><span>参考图名称</span><input :value="ref.name" maxlength="80" :disabled="disabled || loading" @input="update(ref.id, 'name', $event.target.value)"></label><small class="wx-hint">{{ ref.id }}</small></div><button type="button" class="wx-ghost" :disabled="disabled || loading" @click="remove(ref.id)">移除</button></div>
+                <label class="wx-field"><span>参考图用途</span><select :value="ref.kind" :disabled="disabled || loading" @change="update(ref.id, 'kind', $event.target.value)"><option value="character">人物身份（本人入镜时自动使用）</option><option value="scene">地点场景（本轮匹配时选择）</option></select></label>
+                <label class="wx-field"><span>参考图说明</span><input :value="ref.description" maxlength="240" :disabled="disabled || loading" placeholder="例如：本人正面照，或教学楼三楼走廊" @input="update(ref.id, 'description', $event.target.value)"></label>
+            </article>
+            <p v-if="!modelValue.length" class="wx-hint">还没有参考图。可以添加人物照片，也可以添加常去地点的照片。</p>
+        </section>`
+    };
+
     const CharacterEditorModal = {
         props: {
             show: Boolean,
@@ -1263,6 +1305,7 @@
                 { value: 'description', label: '描述' },
                 { value: 'personality', label: '人设' },
                 { value: 'first_mes', label: '开场白' },
+                { value: 'imageReferences', label: '参考图' },
                 { value: 'geography', label: '地理环境' }
             ]
         }),
@@ -1331,6 +1374,7 @@
                             <geography-binding-editor :value="character.geography" :maps="maps" :character-name="character.name"
                                 @update="updateField('geography', $event)" @manage="$emit('manage-maps')"></geography-binding-editor>
                         </div>
+                        <div v-if="tab === 'imageReferences'" class="animate-fade-in"><image-reference-editor :model-value="character.imageReferences || []" @update:model-value="updateField('imageReferences', $event)"></image-reference-editor></div>
                         <div v-if="tab === 'personality'" class="animate-fade-in h-full flex flex-col">
                             <div class="flex justify-between items-center mb-2"><label class="block text-sm font-bold text-gray-600">具体人设</label><span class="text-[10px] text-gray-400 font-mono bg-gray-100 px-1.5 py-0.5 rounded">{{ (character.personality || '').length }} 字</span></div>
                             <textarea :value="character.personality" @input="updateField('personality', $event.target.value)"
@@ -2947,6 +2991,7 @@
     };
 
     window.RPHubComponents = {
+        ImageReferenceEditor,
         ActionConfirmModal,
         ActiveToolEditorModal,
         AddCharacterModal,

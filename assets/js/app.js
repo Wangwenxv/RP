@@ -283,6 +283,8 @@ const app = createApp({
             wechatImageModels: __s.wechatImageModels, wechatImageModelsLoading: __s.wechatImageModelsLoading,
             wechatImageModelStatus: __s.wechatImageModelStatus, loadWechatImageModels: __s.loadWechatImageModels,
             wechatImageProtocols: __s.wechatImageProtocols, wechatImageSizes: __s.wechatImageSizes,
+            applyImageServicePreset: __s.applyImageServicePreset, imageReferenceModes: __s.imageReferenceModes,
+            imageResponseFormats: __s.imageResponseFormats, imageReferenceEndpoints: __s.imageReferenceEndpoints,
             ...__s.worldExports,
             worldUi: __s.worldUi,
             fullBackupBusy: __s.fullBackupBusy, fullBackupProgress: __s.fullBackupProgress, fullBackupError: __s.fullBackupError,
@@ -801,4 +803,5 @@ const app = createApp({
 // 公共弹窗部件需要全局注册，供其他弹窗组件内部直接复用。
 app.component('ModalShell', ModalShell);
 app.component('ModalHeader', ModalHeader);
+app.component('ImageReferenceEditor', window.RPHubComponents.ImageReferenceEditor);
 app.mount('#app');

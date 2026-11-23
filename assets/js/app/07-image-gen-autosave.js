@@ -160,12 +160,14 @@
                     const config = { ...G.config(__s.settings), artists: cardUtils.getImageStyleArtists(__s.settings.imageStyle, __s.settings.customImageArtists) };
                     if (!G.ready(config)) throw new Error('请在设置 → 生图服务（RP / 微信共用）中填写 API Key 并开启生图');
                     // Validate before saving a pending task or paying.
-                    G.payload(config, prompt);
+                    const intent = G.inlineIntent(prompt);
+                    const request = G.characterRequest(config, intent, __s.currentCharacter.value);
+                    G.payload(request.config, request.prompt);
                     message.generatedImages = [...(message.generatedImages || [])];
                     message.generatedImages[index] = { prompt, status: 'pending' };
                     await save();
                     publish({ status: 'running' });
-                    const blob = await G.generate(config, prompt, controller.signal); check();
+                    const blob = await G.generate(request.config, request.prompt, controller.signal); check();
                     const image = await M.rasterize(blob, { signal: controller.signal }); check();
                     asset = await library.save(image, { source: 'generate', ownerId: __s.currentCharacter.value.uuid,
                         scopeId, caption: 'RP 剧情插图', captionSource: 'generation_prompt' }, controller.signal); check();
@@ -373,6 +375,7 @@
         watch(() => __s.settings.imageGenCount, () => {
             __s.enforceSpecialRules();
         });
+        watch(() => __s.settings.wechatImageApi.protocol, () => __s.enforceSpecialRules());
 
         // Debounce function
         const debounce = (fn, delay) => {

@@ -1894,10 +1894,10 @@
                                     <p class="text-sm text-gray-500 mb-4">API 地址、Key、模型、协议和比例使用下方的「生图服务（RP / 微信共用）」。开启聊天中的「自动生图」后，正文仍会插入剧情图片。</p>
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <!-- Image Style -->
-                                        <div
+                                        <div v-if="settings.wechatImageApi.protocol === 'sta1n-nai'"
                                             class="min-w-0">
                                             <label
-                                                class="settings-label">生图风格</label>
+                                                class="settings-label">NAI 生图风格</label>
                                             <custom-select v-model="settings.imageStyle" :options="availableImageStyleOptions"
                                                 button-class="settings-control"
                                                 menu-class="text-sm">
@@ -1928,18 +1928,26 @@
                     <div class="settings-card" id="wechat-image-settings">
                         <div class="settings-card__header"><div class="settings-card__title">生图服务（RP / 微信共用）</div></div>
                         <div class="p-5 space-y-4">
-                            <p class="text-sm text-gray-500">RP 正文插图与微信按需发图共用此配置。默认使用 STA1N，填写 API Key 后即可使用；每次实际生图由服务商计费。RP 自动插图需另行开启「自动生图」。</p>
+                            <p class="text-sm text-gray-500">RP 正文插图与微信按需发图共用此配置。选择自然语言服务或 STA1N NAI，再填写对应密钥与模型。每次实际生图由服务商计费，RP 自动插图需另行开启。</p>
+                            <div class="flex flex-wrap gap-2"><button type="button" class="wx-ghost" @click="applyImageServicePreset('yeelo')">YeeMagine · gpt-image-2.6</button><button type="button" class="wx-ghost" @click="applyImageServicePreset('openai')">OpenAI Images</button><button type="button" class="wx-ghost" @click="applyImageServicePreset('sta1n')">STA1N NAI</button></div>
                             <label class="wx-pick-item"><input type="checkbox" v-model="settings.wechatImageApi.enabled">启用生图服务（RP 自动插图、原微信与世界微信）</label>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <label class="min-w-0"><span class="settings-label">图片 API 地址</span><input class="settings-control" v-model="settings.wechatImageApi.baseUrl" placeholder="https://sta1n.ai/v1"></label>
-                                <label class="min-w-0"><span class="settings-label">图片 API Key</span><input class="settings-control" v-model="settings.wechatImageApi.apiKey" type="password" autocomplete="off" placeholder="填写你的 STA1N API Key"></label>
+                                <label class="min-w-0"><span class="settings-label">图片 API 地址</span><input class="settings-control" v-model="settings.wechatImageApi.baseUrl" placeholder="https://img.yeelo.fun/v1/images/generations"></label>
+                                <label class="min-w-0"><span class="settings-label">图片 API Key</span><input class="settings-control" v-model="settings.wechatImageApi.apiKey" type="password" autocomplete="off" placeholder="填写当前生图服务的 API Key"></label>
                                 <div class="min-w-0"><label class="settings-label">接口协议</label><custom-select v-model="settings.wechatImageApi.protocol" :options="wechatImageProtocols" button-class="settings-control"></custom-select></div>
                                 <div class="min-w-0"><label class="settings-label">图片比例</label><custom-select v-model="settings.wechatImageApi.size" :options="wechatImageSizes" button-class="settings-control"></custom-select></div>
                                 <div class="min-w-0"><label class="settings-label">生图模型</label><custom-select v-model="settings.wechatImageApi.model" :options="wechatImageModels" button-class="settings-control"></custom-select></div>
                                 <label class="min-w-0"><span class="settings-label">模型名称（可手动填写）</span><input class="settings-control" v-model="settings.wechatImageApi.model" placeholder="nai-diffusion-4-5-full:k_dpmpp_2m"></label>
+                                <template v-if="settings.wechatImageApi.protocol !== 'sta1n-nai'">
+                                    <label class="min-w-0"><span class="settings-label">自定义尺寸</span><input class="settings-control" v-model="settings.wechatImageApi.size" placeholder="auto 或 1024x1536"></label>
+                                    <div class="min-w-0"><label class="settings-label">参考图输入方式</label><custom-select v-model="settings.wechatImageApi.referenceMode" :options="imageReferenceModes" button-class="settings-control"></custom-select></div>
+                                    <div v-if="settings.wechatImageApi.protocol === 'openai-images'" class="min-w-0"><label class="settings-label">参考图接口</label><custom-select v-model="settings.wechatImageApi.referenceEndpoint" :options="imageReferenceEndpoints" button-class="settings-control"></custom-select></div>
+                                    <div v-if="settings.wechatImageApi.protocol === 'openai-images'" class="min-w-0"><label class="settings-label">图片返回格式</label><custom-select v-model="settings.wechatImageApi.responseFormat" :options="imageResponseFormats" button-class="settings-control"></custom-select></div>
+                                </template>
                             </div>
                             <button class="wx-ghost" @click="loadWechatImageModels" :disabled="wechatImageModelsLoading || !settings.wechatImageApi.apiKey">{{ wechatImageModelsLoading ? '读取中…' : '读取可用模型' }}</button>
-                            <p class="text-sm text-gray-500" role="status">{{ wechatImageModelStatus || '默认模型为 NAI，偏插画风格。选择其它生图模型时，请匹配其接口协议。' }}</p>
+                            <p class="text-sm text-gray-500" role="status">{{ wechatImageModelStatus || '地址可填 /v1 或完整 /v1/images/generations。部分站点的模型列表只列聊天模型，生图模型可手动填写。' }}</p>
+                            <p class="text-sm text-gray-500">{{ settings.wechatImageApi.protocol === 'sta1n-nai' ? 'NAI 使用英文标签组与通用负面提示词，不发送参考图像素。画师配置仅用于 NAI。' : '自然语言服务接收画面描述。人物与地点照片在角色编辑 → 参考图中添加；输入方式须与服务商文档一致。' }}</p>
                         </div>
                     </div>
 
@@ -3429,13 +3437,9 @@
                             <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageGenerationEnabled">允许本角色按需生图（在设置 → 生图服务填写 API Key）</label>
                             <p class="wx-hint">点击顶栏相册可查看素材、加入自己的照片；新图本轮完整识别，历史用短描述，细节按需查看。</p>
                         </div>
-                        <div class="wx-field wx-image-identity-settings">
-                            <span>本人生图外貌 <small>自拍与本人入镜时使用</small></span>
-                            <label class="wx-pick-item"><input type="checkbox" v-model="wechatSettingsDraft.imageIdentityEnabled">使用固定外貌</label>
-                            <label class="wx-field"><span>外貌说明</span><textarea v-model="wechatSettingsDraft.imageIdentityDescription" rows="2" maxlength="240" placeholder="例如：瘦鹅蛋脸、深棕杏眼、齐肩细软深棕发"></textarea></label>
-                            <label class="wx-field"><span>固定英文提示词</span><textarea v-model="wechatSettingsDraft.imageIdentityPrompt" rows="5" maxlength="900" placeholder="slim oval face, natural-sized almond-shaped dark brown eyes, shoulder-length dark brown hair…"></textarea></label>
-                            <label class="wx-field"><span>本人图片负面提示词</span><textarea v-model="wechatSettingsDraft.imageIdentityNegative" rows="2" maxlength="400" placeholder="anime, doll-like face, oversized eyes, plastic skin…"></textarea></label>
-                            <small class="wx-hint">自动与本轮衣服、姿势和场景拼接；不用于饭菜、风景或他人。固定特征能提高相似度，效果取决于生图模型。负面提示词用于 STA1N NAI 协议。留空英文提示词可清除这份资料。</small>
+                        <div class="wx-field wx-image-reference-settings">
+                            <span>生图参考图 <small>与原人设独立保存</small></span>
+                            <image-reference-editor v-model="wechatSettingsDraft.imageReferences"></image-reference-editor>
                         </div>
                         <div class="wx-field wx-voice-settings">
                             <span>语音消息 <small>BreezeBlue · 中文</small></span>

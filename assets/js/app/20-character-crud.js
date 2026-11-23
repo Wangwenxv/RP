@@ -458,7 +458,7 @@
             const autoImageGenWIContent = {
                 comment: autoImageGenWIName,
                 keys: [],
-                content: BUILTIN_PROMPTS.buildAutoImageGenPrompt(imageGenCount),
+                content: BUILTIN_PROMPTS.buildAutoImageGenPrompt(imageGenCount, __s.settings.wechatImageApi.protocol),
                 constant: true,
                 enabled: false, // Default closed
                 scope: 'global',

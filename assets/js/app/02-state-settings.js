@@ -101,9 +101,27 @@
         __s.wechatImageModels = ref([{ value: window.RPHubImageGeneration.DEFAULTS.model, label: window.RPHubImageGeneration.DEFAULTS.model }]);
         __s.wechatImageModelsLoading = ref(false);
         __s.wechatImageModelStatus = ref('');
-        __s.wechatImageProtocols = [{ value: 'sta1n-nai', label: 'STA1N · NAI 标签格式（默认）' },
-            { value: 'chat-image', label: 'Chat Completions 生图' }, { value: 'openai-images', label: 'OpenAI Images 生图' }];
-        __s.wechatImageSizes = [{ value: '1024x1024', label: '方图' }, { value: '1216x832', label: '横图' }, { value: '832x1216', label: '竖图' }];
+        watch(() => settings.wechatImageApi.model, value => {
+            if (value && !__s.wechatImageModels.value.some(option => option.value === value)) __s.wechatImageModels.value.push({ value, label: value });
+        }, { immediate: true });
+        __s.wechatImageProtocols = [{ value: 'openai-images', label: '自然语言 · Images API' },
+            { value: 'chat-image', label: '自然语言 · Chat 生图' }, { value: 'sta1n-nai', label: '其他 · STA1N NAI 标签组' }];
+        __s.wechatImageSizes = computed(() => settings.wechatImageApi.protocol === 'sta1n-nai'
+            ? [{ value: '1024x1024', label: '方图' }, { value: '1216x832', label: '横图' }, { value: '832x1216', label: '竖图' }]
+            : [{ value: 'auto', label: '由模型决定' }, { value: '1024x1024', label: '方图 1024×1024' }, { value: '1536x1024', label: '横图 1536×1024' }, { value: '1024x1536', label: '竖图 1024×1536' }]);
+        __s.imageReferenceModes = [{ value: 'none', label: '不支持参考图' }, { value: 'image_data_urls', label: 'JSON · image_data_urls（YeeMagine）' },
+            { value: 'image_urls', label: 'JSON · image_urls（需服务支持 Data URL）' }, { value: 'multipart', label: '文件上传 · image[]（OpenAI）' }, { value: 'chat-content', label: 'Chat · image_url 内容块' }];
+        __s.imageResponseFormats = [{ value: 'auto', label: '服务默认（不发送此参数）' }, { value: 'url', label: '图片 URL' }, { value: 'b64_json', label: 'Base64 图片' }];
+        __s.imageReferenceEndpoints = [{ value: 'images/edits', label: '/images/edits' }, { value: 'images/generations', label: '/images/generations' }];
+        __s.applyImageServicePreset = name => {
+            const preset = window.RPHubImageGeneration.PRESETS[name]; if (!preset) return;
+            const { apiKey: unused, enabled: unusedEnabled, ...options } = preset;
+            try { if (new URL(options.baseUrl).origin !== new URL(settings.wechatImageApi.baseUrl).origin) settings.wechatImageApi.apiKey = ''; }
+            catch (_) { settings.wechatImageApi.apiKey = ''; }
+            Object.assign(settings.wechatImageApi, options);
+            __s.wechatImageModels.value = [{ value: options.model, label: options.model }];
+            __s.wechatImageModelStatus.value = '已选择服务，请填写对应 API Key；模型名称和参考图能力以服务商为准。';
+        };
         __s.loadWechatImageModels = async () => {
             if (__s.wechatImageModelsLoading.value) return;
             __s.wechatImageModelsLoading.value = true; __s.wechatImageModelStatus.value = '';

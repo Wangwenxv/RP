@@ -304,6 +304,7 @@
             scene: '',
             persona: '',
             imageIdentityPrompt: '', imageIdentityDescription: '', imageIdentityNegative: '', imageIdentityEnabled: true,
+            imageReferences: [],
             speed: 'normal',
             worldInfoComments: [],
             presetNames: [],
@@ -1322,6 +1323,7 @@
             wechatSettingsDraft.imageIdentityDescription = identity?.description || '';
             wechatSettingsDraft.imageIdentityNegative = identity?.negative || '';
             wechatSettingsDraft.imageIdentityEnabled = identity?.enabled !== false;
+            wechatSettingsDraft.imageReferences = window.RPHubCardUtils.normalizeImageReferences(window.RPHubImageGeneration.referencesOf(char));
             __s.openWechatVoiceSettings?.();
             showWechatSettings.value = true;
         };
@@ -1345,6 +1347,7 @@
             char.imageIdentity = window.RPHubCardUtils?.normalizeImageIdentity({ prompt: wechatSettingsDraft.imageIdentityPrompt,
                 description: wechatSettingsDraft.imageIdentityDescription, negative: wechatSettingsDraft.imageIdentityNegative,
                 enabled: wechatSettingsDraft.imageIdentityEnabled }) || null;
+            char.imageReferences = window.RPHubCardUtils.normalizeImageReferences(wechatSettingsDraft.imageReferences);
             showWechatSettings.value = false;
             try {
                 await __s.saveCharactersNow();
@@ -2207,7 +2210,7 @@
         __s.normalizeActiveWechatImage = raw => {
             if (!window.RPHubWeChatMedia) throw new Error('微信图片模块尚未加载');
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)
-                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations', 'prompt', 'selfPortrait'].includes(key))) {
+                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations', 'prompt', 'selfPortrait', 'referenceIds'].includes(key))) {
                 throw new Error('图片参数不能包含发送者、消息列表或未知字段');
             }
             const image = window.RPHubWeChatMedia.normalizeIntent(raw);
@@ -2215,7 +2218,7 @@
             if (image.mode === 'generate' && (__s.currentCharacter.value?.wechatImageGenerationEnabled === false
                 || !window.RPHubImageGeneration?.ready(window.RPHubImageGeneration.config(__s.settings)))) throw new Error('请先配置并开启微信生图');
             if (image.mode === 'describe' && __s.isWechatImageGenerationReady?.()) throw new Error('微信生图已开启，请使用 image:{mode:"generate",prompt:"具体英文画面",description:"中文说明"}，不能用描述卡片替代');
-            window.RPHubImageGeneration?.assertIdentityIntent(image, __s.currentCharacter.value);
+            window.RPHubImageGeneration?.assertIdentityIntent(image, __s.currentCharacter.value, window.RPHubImageGeneration.config(__s.settings));
             return image;
         };
         const deliverActiveWechatMessage = (content, rawImage = null, sendAt) => {
