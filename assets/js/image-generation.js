@@ -21,9 +21,9 @@
         : '【生图格式：自然语言】prompt 使用连贯的画面描述，中文或英文均可。按当前人设、实际对话与已确认场景组织：人物身份 → 地点与时间 → 本轮服装 → 动作及持有物 → 拍摄方式与构图 → 光线 → 参考图继承范围。不要输出 NAI 标签、画师串或正反词模板。'
             + '人物自拍同时提供身份与视觉偏好：五官关系用于保持身份；多张照片中相容的衣品、妆容、表情与自拍习惯可在当前人设和场景允许时借鉴，不能只截取脸，也不能把单张偶然造型断言为永久偏好。具体服装、首饰、姿势应按本轮天气、活动、情绪和机位取舍，不能逐张照搬。麦克风、伞、舞台和背景则需要本轮情境支持，不得因参考图有设备就把课后自拍改成演出；本轮确实演出、授课、录制时可保留设备。'
             + '有地点图时仅参考该地点，不能把图中的陌生人当当前人物。普通手机自拍明确前置摄像头、持机手与取景范围，避免多余人物、额外肢体或第三人称拍摄机位。未知服装可用朴素日常衣着，不能从舞台服或角色扮演服照搬；已知服装与发型优先于参考照片。夜晚不用直射阳光，不在室内自动撑开雨伞。'
-            + '生图前先在 media.scene 填画面计划：location、action、framing、props 必填（无道具为[]），time、clothing、lighting、avoid 可补充；世界地图已知时可带placeId，明确借鉴某张本人的姿势时可带poseReferenceId。逐项核对上下文，把必要物件列入props，把不适用的偶然元素列入avoid。表情符合本轮情绪，手势符合正在做的动作与可见手臂；不能哭泣时自动照搬笑脸，不能手忙时为了复用比V多生成一只手。prompt与scene须一致；依据不足时保守处理，不编造活动来迁就图片。未实际看过参考像素时不能声称已识图。';
+            + '生图前先在 media.scene 填画面计划：location、action、framing、props 必填（无道具为[]），time、appearance、clothing、lighting、avoid 可补充；本人入镜时把角色卡中已明确的肤色、发型长度等写进appearance和prompt，生图服务看不到整张角色卡，不能只写“符合角色设定”。世界地图已知时可带placeId，明确借鉴某张本人的姿势时可带poseReferenceId。逐项核对上下文，把必要物件列入props，把不适用的偶然元素列入avoid。表情符合本轮情绪，手势符合正在做的动作与可见手臂；不能哭泣时自动照搬笑脸，不能手忙时为了复用比V多生成一只手。prompt与scene须一致；依据不足时保守处理，不编造活动来迁就图片。未实际看过参考像素时不能声称已识图。';
     const SCENE_SCHEMA = Object.freeze({ type: 'object', properties: {
-        ...Object.fromEntries(['location', 'time', 'clothing', 'action', 'framing', 'lighting', 'placeId', 'poseReferenceId'].map(key => [key, { type: 'string', maxLength: 240 }])),
+        ...Object.fromEntries(['location', 'time', 'appearance', 'clothing', 'action', 'framing', 'lighting', 'placeId', 'poseReferenceId'].map(key => [key, { type: 'string', maxLength: 240 }])),
         props: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 12 },
         avoid: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 12 }
     }, required: ['location', 'action', 'framing', 'props'], additionalProperties: false });
@@ -71,6 +71,8 @@
         if (refs.length) {
             lines.push('【参考图用途】人物图保留脸型、五官关系、肤色等身份，并参考照片中相容的衣品、妆容、表情和拍照习惯；不是只参考脸。偏好是候选，不能由单张图断定长期人设。发型和具体衣着按本轮已知设定，气质与化妆程度保持相容。地点图只参考环境，不继承陌生人。');
             lines.push(JSON.stringify(refs.map((ref, index) => ({ image: index + 1, role: ref.kind === 'scene' ? '地点参考' : '人物身份与视觉偏好参考', note: String(ref.description || '').slice(0, 240) }))));
+            const portraitIndex = refs.findIndex(ref => ref.kind !== 'scene');
+            if (portraitIndex >= 0) lines.push('【人物外貌保持】第' + (portraitIndex + 1) + '张人物参考作为主要面部依据，其余人物图补充可见细节与视觉偏好。保留参考中的脸部比例，不为“漂亮”另造通用网红脸，不混合出新的五官；妆容、表情、视角和光线可以变化。发型长度等已知外貌以画面计划appearance与本轮描述为准，不能因参考是长发而覆盖明确的齐肩或短发设定。');
             lines.push('【取舍边界】自然表情、轻妆、常见自拍角度或比手势可在当前情绪、持有物和取景允许时借鉴，不能为复用动作多生成一只手或改变当前正在做的事。舞台服和夸张首饰仅在本轮造型相容时借鉴，不能改成角色永远的穿搭。没有本轮明确的演出、授课、录制等用途时，不出现头戴麦克风、话筒、舞台设备；室内日常场景不因雨天参考照自动撑伞。若本轮确实需要这些物件，按画面计划保留。');
             if (scene?.poseReferenceId) lines.push('【姿势参考】可借鉴第' + (refs.findIndex(ref => ref.id === scene.poseReferenceId) + 1) + '张图片的拍照动作，但仍按当前机位、情绪和手部占用调整；不同时复制这张图的服装、设备和背景。');
         }

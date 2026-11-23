@@ -85,7 +85,11 @@
                     console.info('[模型请求摘要] ' + JSON.stringify({ request: options.requestType || 'chat', model: options.body.model,
                         images: parts.filter(part => part.type === 'image_url').length,
                         freshImageLabels: parts.filter(part => part.type === 'text' && part.text?.startsWith('【本轮新图 #')).length,
+                        comparisonImageLabels: parts.filter(part => part.type === 'text' && part.text?.startsWith('【本轮对照旧图 #') && !part.text.includes('读取失败')).length,
+                        followupImageLabels: parts.filter(part => part.type === 'text' && part.text?.startsWith('【本轮追问旧图 #') && !part.text.includes('读取失败')).length,
                         referenceLabels: parts.filter(part => part.type === 'text' && /^【(?:人物|地点)参考 #/.test(part.text)).length,
+                        visualCheckImageLabels: parts.filter(part => part.type === 'text' && part.text?.startsWith('【核对图片 #')).length,
+                        visualCheckReferenceLabels: parts.filter(part => part.type === 'text' && part.text?.startsWith('【核对图片 #reference:')).length,
                         toolCalls: calls.map(call => call.function?.name),
                         toolResults: options.body.messages.filter(message => message.role === 'tool').length }));
                     console.groupCollapsed?.(title);

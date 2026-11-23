@@ -60,3 +60,14 @@ test('legacy requests get the new natural reference instructions without rewriti
     assert.equal(nai.prompt, 'portrait, school corridor');
     assert.throws(() => h.G.characterRequest(h.c, { mode: 'generate', selfPortrait: true, prompt: '' }, card), /1～1500/);
 });
+
+test('natural portrait names the primary face reference and forwards explicit current appearance', () => {
+    const h = harness(), card = { imageReferences: [ref('front', '近景'), ref('side', '侧面')] };
+    const request = h.G.characterRequest(h.c, { mode: 'generate', selfPortrait: true, prompt: '齐肩细软黑发，校园自拍',
+        scene: { ...scene, appearance: '自然白皙，齐肩细软黑发' } }, card);
+    assert.match(request.prompt, /第1张人物参考作为主要面部依据/);
+    assert.match(request.prompt, /不混合出新的五官/);
+    assert.match(request.prompt, /"appearance":"自然白皙，齐肩细软黑发"/);
+    assert.match(h.G.formatPrompt(h.c), /生图服务看不到整张角色卡/);
+    assert.equal(request.config.referenceImages.length, 2);
+});

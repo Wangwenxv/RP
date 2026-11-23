@@ -29,14 +29,31 @@ test('请求摘要只含图片数量和工具名，可区分新图与参考，�
   const h = harness(), input = options();
   input.messages.push({ role: 'user', content: [
     { type: 'text', text: '【本轮新图 #new】private-caption' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,private-pixels' } },
-    { type: 'text', text: '【人物参考 #ref】' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,reference-pixels' } }
+    { type: 'text', text: '【人物参考 #ref】' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,reference-pixels' } },
+    { type: 'text', text: '【本轮对照旧图 #old｜角色刚才发送】' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,old-pixels' } },
+    { type: 'text', text: '【本轮对照旧图 #missing 读取失败】' },
+    { type: 'text', text: '【本轮追问旧图 #review｜第1张】' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,review-pixels' } },
+    { type: 'text', text: '【本轮追问旧图 #missing 读取失败】' }
   ] });
   await h.api.requestChatCompletion(input);
   const line = h.logs.find(args => args[0].startsWith('[模型请求摘要]'))[0];
   const summary = JSON.parse(line.slice('[模型请求摘要] '.length));
-  assert.equal(summary.images, 2); assert.equal(summary.freshImageLabels, 1); assert.equal(summary.referenceLabels, 1);
+  assert.equal(summary.images, 4); assert.equal(summary.freshImageLabels, 1); assert.equal(summary.referenceLabels, 1); assert.equal(summary.comparisonImageLabels, 1);
+  assert.equal(summary.followupImageLabels, 1);
   assert.deepEqual(summary.toolCalls, ['tool_search_history']); assert.equal(summary.toolResults, 1);
   assert.doesNotMatch(line, /private|pixels|base64|fixture-secret/);
+});
+
+test('独立核对摘要区分逐图输入与人物参考，不复制核对内容', async () => {
+  const h = harness(), input = options(); input.requestType = '微信独立画面核对';
+  input.messages = [{ role: 'user', content: [
+    { type: 'text', text: '【核对图片 #new｜玩家新图】' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,private-pixels' } },
+    { type: 'text', text: '【核对图片 #reference:a｜人物造型参考】' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,private-ref' } }
+  ] }];
+  await h.api.requestChatCompletion(input);
+  const line = h.logs.find(args => args[0].startsWith('[模型请求摘要]'))[0], summary = JSON.parse(line.slice('[模型请求摘要] '.length));
+  assert.equal(summary.visualCheckImageLabels, 2); assert.equal(summary.visualCheckReferenceLabels, 1);
+  assert.equal(summary.request, '微信独立画面核对'); assert.doesNotMatch(line, /private|pixels|base64/);
 });
 test('关闭请求调试不输出；自动重试的每次实际发送都打印并标记尝试次数', async () => {
   const off = harness(); await off.api.requestChatCompletion({ ...options(), logRequest: false }); assert.equal(off.logs.length, 0);
