@@ -20,7 +20,7 @@ test('world natural portraits use each bound actor reference pixels and keep the
         });
         const r = t.requests.at(-1);
         assert.equal(r.config.referenceImages[0].id, id + '-face'); assert.equal(r.config.referenceImages[0].dataUrl, png);
-        assert.equal(r.prompt, '她在窗边微笑着拍下自拍。');
+        assert.ok(r.prompt.includes('【本轮画面】她在窗边微笑着拍下自拍。'));
     }
     const pkg = await t.h.Store.exportSession(t.h.snapshot.sessionId), restored = await t.h.Store.importSession(pkg);
     const C = t.h.context.window.RPHubActorContext;
@@ -91,6 +91,19 @@ test('world omitted portrait flag is repaired before image generation', async ()
     });
     assert.equal(modelCalls, 2); assert.equal(t.calls, 1);
     assert.ok(t.requests[0].prompt.startsWith('qing fixed face'));
+});
+
+test('world scene equipment conflict is repaired by actor before any image is paid', async () => {
+    const t = await setup(); Object.assign(t.config.imageConfig, t.h.context.window.RPHubImageGeneration.PRESETS.yeelo);
+    let modelCalls = 0;
+    await t.run(request => {
+        modelCalls++;
+        if (modelCalls > 1) assert.match(request.messages.at(-1).content, /场景矛盾/);
+        const scene = { location: '教学楼走廊', action: '课后自拍', framing: '手机前置自拍', props: modelCalls === 1 ? ['microphone'] : ['手机'] };
+        return { messages: [{ type: 'image_request', media: { mode: 'generate', selfPortrait: true, prompt: '校园自拍', scene } }] };
+    });
+    assert.equal(modelCalls, 2); assert.equal(t.calls, 1);
+    assert.match(t.requests[0].prompt, /"props":\["手机"\]/);
 });
 test('meal photo becomes an actual image event; no key or pixels in actor history, invisible to strangers', async () => {
     const t = await setup(); await t.run();

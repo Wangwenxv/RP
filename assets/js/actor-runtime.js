@@ -58,6 +58,7 @@
                 clean.image = window.RPHubWeChatMedia.normalizeIntent(action.image);
                 if (clean.image.mode !== 'generate') throw new Error('世界微信请使用 generate 和画面提示词');
                 window.RPHubImageGeneration?.assertIdentityIntent(clean.image, { imageIdentity: context.imageIdentity, imageReferences: context.imageReferences }, { protocol: context.imageProtocol });
+                window.RPHubImageGeneration?.assertSceneIntent(clean.image, { protocol: context.imageProtocol }, context.imageSceneContext);
             }
             for (const key of ['text', 'targetActorId', 'channel', 'placeId', 'delayMinutes', 'mode']) if (action[key] !== undefined) clean[key] = action[key];
             if (action.state !== undefined) {
@@ -156,13 +157,14 @@
         context.imageReferences = (window.RPHubImageGeneration?.referencesOf(Context().cardOf(Context().actorOf(snapshot, actorId))) || []).map(r => ({ id: r.id, kind: r.kind }));
         context.imageProtocol = apiConfig?.imageConfig?.protocol;
         context.imagePortraitRequired = window.RPHubImageGeneration?.hasPortrait({ imageIdentity: context.imageIdentity, imageReferences: context.imageReferences }, apiConfig?.imageConfig);
+        context.imageSceneContext = window.RPHubImageGeneration?.worldSceneContext(snapshot, actorId);
         const boundTools = Context().createTools(snapshot, actorId, conversationId);
         const wechatTool = kind === 'rp' && window.RPHubWorldOrchestrator.canReadPhone(snapshot, actorId)
             ? { type: 'function', function: { name: 'tool_wechat',
                 description: '以当前绑定角色身份发一条真实微信。content 是本人纯文本短消息，不能含发送者或JSON消息列表。targetActorId 省略时联系玩家，也可选择已认识的NPC。每次人物决策仅接收一次发送，成功后不再工具续写；联系玩家时等待玩家回答，联系NPC时由收件人独立回应。消息在世界提交成功后才算发送，不虚构已读、回复或约定。',
                 parameters: { type: 'object', properties: { content: { type: 'string', maxLength: window.RPHubWeChatProtocol.MAX_CONTENT_LEN },
                     ...(context.imageGenerationEnabled ? { image: { type: 'object', properties: { mode: { type: 'string', enum: ['generate'] },
-                        prompt: { type: 'string', maxLength: 1500 }, selfPortrait: { type: 'boolean', description: '当前绑定角色本人入镜填true；饭菜、风景或他人填false。人物参考图由程序加入，prompt描述本轮画面。' }, referenceIds: { type: 'array', items: { type: 'string' }, maxItems: 16 }, description: { type: 'string', maxLength: 240 }, usage: { type: 'string', enum: ['scene_photo', 'album_photo', 'reference', 'drawing'] } }, required: ['mode', 'prompt', ...(context.imagePortraitRequired ? ['selfPortrait'] : [])], additionalProperties: false } } : {}),
+                        prompt: { type: 'string', maxLength: 1500 }, selfPortrait: { type: 'boolean', description: '当前绑定角色本人入镜填true；饭菜、风景或他人填false。人物参考图由程序加入，prompt描述本轮画面。' }, referenceIds: { type: 'array', items: { type: 'string' }, maxItems: 16 }, scene: window.RPHubImageGeneration.SCENE_SCHEMA, description: { type: 'string', maxLength: 240 }, usage: { type: 'string', enum: ['scene_photo', 'album_photo', 'reference', 'drawing'] } }, required: ['mode', 'prompt', ...(context.imagePortraitRequired ? ['selfPortrait'] : [])], additionalProperties: false } } : {}),
                     targetActorId: { type: 'string', enum: context.allowedTargetActorIds } }, anyOf: [{ required: ['content'] }, ...(context.imageGenerationEnabled ? [{ required: ['image'] }] : [])], additionalProperties: false } } }
             : null;
         const messages = context.messages.map(item => ({ ...item }));

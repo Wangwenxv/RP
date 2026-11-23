@@ -80,6 +80,7 @@
                                 prompt: { type: 'string', maxLength: 1500, description: '生图模式必填，符合当前剧情的具体画面提示词。' },
                                 selfPortrait: { type: 'boolean', description: '仅generate使用。有本人人物参考图时不可省略：当前角色本人入镜填true，饭菜、风景或他人填false。程序按所选服务加入参考图，prompt描述当前场景。' },
                                 referenceIds: { type: 'array', items: { type: 'string' }, maxItems: 16, description: '本轮匹配的地点参考图 ID；人物参考图在 selfPortrait=true 时自动加入。' },
+                                scene: { ...window.RPHubImageGeneration.SCENE_SCHEMA, description: '自然语言生图的画面计划，先核对本轮地点、服装、动作、机位和道具，再写prompt。参考照片中的设备和服装不能默认继承。' },
                                 description: { type: 'string', maxLength: 240, description: '中文画面说明，不是角色配文。未配置生图时才可用于描述兜底。' },
                                 assetId: { type: 'string', description: '相册模式使用本轮目录里的真实 ID。' },
                                 usage: { type: 'string', enum: ['scene_photo', 'album_photo', 'reference', 'drawing'] },

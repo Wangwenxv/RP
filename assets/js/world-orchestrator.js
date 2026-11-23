@@ -297,7 +297,7 @@
                         let outcome = 'failed';
                         try {
                             action.media = await window.RPHubWorldMedia.prepare({ id: turn.preparedActor.imageIds[i], intent: action.image,
-                                config: apiConfig.imageConfig, card: Context().cardOf(actor(snapshot, step.actorId)), signal });
+                                config: apiConfig.imageConfig, card: Context().cardOf(actor(snapshot, step.actorId)), sceneContext: window.RPHubImageGeneration.worldSceneContext(snapshot, step.actorId), signal });
                             outcome = 'complete';
                         } finally { apiConfig.onActivity?.({ type: 'request-end', ...activityMeta, outcome }); }
                     }

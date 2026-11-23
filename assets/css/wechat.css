@@ -195,6 +195,10 @@
     color: var(--wx-text);
 }
 
+.wx-bar { gap: 12px; }
+.wx-copy-records { display: inline-flex; justify-content: center; gap: 6px; width: auto; padding: 0 10px; font: inherit; font-size: 13px; white-space: nowrap; }
+.wx-copy-records:disabled { opacity: .4; }
+
 /* ---------- 聊天区 ---------- */
 .wx-chat {
     flex: 1 1 auto;
@@ -1249,6 +1253,8 @@
     .wx-peer-status { font-size: 10px; }
     .wx-bar-right { gap: 2px; }
     .wx-bar-right .wx-icon-btn { width: 34px; height: 40px; }
+    .wx-copy-records { padding: 0; }
+    .wx-copy-records > span { display: none; }
     .wx-chat { padding: 20px 16px 24px; gap: 14px; }
     .wx-row { gap: 9px; }
     .wx-avatar { width: 34px; height: 34px; border-radius: 9px; font-size: 14px; }

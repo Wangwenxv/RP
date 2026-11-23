@@ -166,9 +166,15 @@
             const description = messages.some(message => message.type === 'image_request' && message.media?.mode === 'describe');
             const missingIdentity = G.hasPortrait(card, G.config(__s.settings)) && messages.some(message => message.type === 'image_request'
                 && message.media?.mode === 'generate' && typeof message.media.selfPortrait !== 'boolean');
-            if (!description && !missingIdentity) return '';
+            let sceneConflict = '';
+            for (const message of messages.filter(message => message.type === 'image_request' && message.media?.mode === 'generate')) {
+                try { G.assertSceneIntent(message.media, G.config(__s.settings)); }
+                catch (error) { sceneConflict = error.message; break; }
+            }
+            if (!description && !missingIdentity && !sceneConflict) return '';
             return '本轮微信生图已配置并开启，mode:"describe" 不可用于新图片。刚才的回复尚未发送，也尚未调用生图服务。若角色愿意发照片，请保留当前场景和发图位置，使用 mode:"generate"，补充具体英文 prompt 与中文 description；程序取得真实像素后才发送。'
                 + (missingIdentity ? '刚才的generate遗漏了selfPortrait，必须明确补为true或false。' : '')
+                + (sceneConflict ? '刚才的画面计划尚未付费：' + sceneConflict + '。保留真实剧情，修正画面与道具，不编造演出或录制来迁就参考图。' : '')
                 + G.promptFor(G.config(__s.settings)) + G.identityPrompt(card, G.config(__s.settings))
                 + '仍可按原处境拒绝或沉默。重新输出完整 messages JSON，不解释接口，不把图片改成文字动作或 [图片]。';
         };

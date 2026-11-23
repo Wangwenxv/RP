@@ -766,6 +766,8 @@ const app = createApp({
             saveWechatEdit: __s.saveWechatEdit, autoResizeWechatEdit: __s.autoResizeWechatEdit,
             deleteWechatMessage: __s.deleteWechatMessage,
             copyWechatMessageText: __s.copyWechatMessageText,
+            copyWechatTranscript: __s.copyWechatTranscript, isWechatCopying: __s.isWechatCopying,
+            buildWechatTranscriptText: __s.buildWechatTranscriptText,
             wechatBurstMode: __s.wechatBurstMode, wechatUnansweredCount: __s.wechatUnansweredCount,
             requestWechatReplyNow: __s.requestWechatReplyNow,
             wechatActiveToolNotice: __s.wechatActiveToolNotice,

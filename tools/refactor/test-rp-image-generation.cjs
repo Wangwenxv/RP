@@ -60,7 +60,7 @@ test('RP natural JSON illustration sends bound reference images and restores wit
     assert.equal(result.status, 'done', result.error);
     const body = JSON.parse(h.requests[0].options.body);
     assert.equal(h.requests[0].url, 'https://img.yeelo.fun/v1/images/edits');
-    assert.equal(body.image_data_urls.length, 1); assert.equal(body.prompt, '她在走廊里拍下课后的自拍。');
+    assert.equal(body.image_data_urls.length, 1); assert.ok(body.prompt.includes('【本轮画面】她在走廊里拍下课后的自拍。'));
     assert.doesNotMatch(body.prompt, /artist:|提示词:|负面提示词:/);
     h.s.cancelGeneratedImageTasks();
     await h.s.startGeneratedImageTask('http://local/rp-image', false, binding).promise;

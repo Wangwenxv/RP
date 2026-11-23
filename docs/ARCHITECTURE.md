@@ -1,5 +1,7 @@
 # RP-Hub 架构交接文档
 
+> 2026-11-23 原单卡微信新增完整聊天记录复制，入口在 `25` / `app.js` / 微信顶栏，沿用现有 Vue/CSS 和剧情钟；不修改存储协议。详见 [微信聊天记录复制交接](./wechat-chat-copy.md)。
+
 > 2026-11-11 多角色世界已落地独立 `world_session` 路径：`world-model/store/projections` 保存版本化身份、事件和观察；`actor-context/runtime` 编译隔离资料并共用 API；`world-orchestrator/scene-narrator` 执行群聊顺序回复、有限告知及 RP 叙述。`35-world-session.js` 和 `world-components.js` 提供导航世界入口。旧单卡模式保留；当前多人通信以文本为范围。实际状态与测试见 [实施交接](./Multi-Agent-Engineering/06-implementation-status.md)。
 
 > 世界服务加载在 `data-services.js` 后，组件加载在 `app.js` 前；setup 在 `historyRetrieval` 后调用 `worldSession`。新模式不调用旧微信镜像、旧总提要或未适配工具，`chatHistory` 不充当世界权威历史。主库新增 `world_session_v1:<sessionId>` 逻辑键；单键／多键同步事务入口在同一 IDB 事务比较 revision 和幂等记录。世界回档覆盖全部人物，更卡生成新存档副本，原卡／分支保留。世界包和整库备份校验事件来源及卡／地图哈希。

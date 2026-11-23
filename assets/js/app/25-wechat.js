@@ -1478,12 +1478,98 @@
         };
         __s.saveWechatEdit = saveWechatEdit;
 
+        // 聊天记录复制读取完整分支时间线，不受屏幕上最近 80 条的展示窗口限制。
+        const isWechatCopying = ref(false);
+        __s.isWechatCopying = isWechatCopying;
+        const wechatCopyBody = item => {
+            if (item.type === 'image') {
+                const caption = String(item.media?.caption || '').trim();
+                return caption ? `【image：${caption}】` : '【image】';
+            }
+            if (item.type === 'voice') {
+                const duration = item.voice?.duration;
+                return typeof duration === 'number' && Number.isFinite(duration) && duration > 0
+                    ? `【语音 ${Math.ceil(duration)}秒】` : '【语音】';
+            }
+            if (item.type === 'sticker') return `【表情：${String(item.content || '').trim() || '表情'}】`;
+            if (item.type === 'document') return `【文件：${String(item.document?.name || '').trim() || '文件'}】`;
+            return String(item.content || '');
+        };
+        const wechatCopyTime = item => {
+            const time = wxTime.itemTime(item);
+            if (!wxTime.valid(time)) return '';
+            // storyAt 用 UTC 字段编码虚构日历，不能再次按本机时区换算。
+            const date = new Date(time), hour = date.getUTCHours();
+            const pad = value => String(value).padStart(2, '0');
+            return `${date.getUTCMonth() + 1}/${date.getUTCDate()} ${hour < 12 ? '上午' : '下午'}${hour % 12 || 12}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+        };
+        const buildWechatTranscriptText = () => wechatTimeline.value
+            .filter(item => item.channel === 'wechat' && ['user', 'assistant'].includes(item.role))
+            .map(item => {
+                const name = item.role === 'user' ? String(__s.user?.name || '').trim() || '我' : wechatPeerName.value;
+                const time = wechatCopyTime(item);
+                return `${name}${time ? ' ' + time : ''}\n${wechatCopyBody(item)}`;
+            }).join('\n\n');
+        __s.buildWechatTranscriptText = buildWechatTranscriptText;
+
+        const writeWechatClipboard = async text => {
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    return;
+                }
+            } catch (_) { /* 本地文件、普通 HTTP 或权限限制下使用浏览器复制兜底。 */ }
+            const active = document.activeElement;
+            const selection = window.getSelection();
+            const ranges = [];
+            for (let i = 0; selection && i < selection.rangeCount; i++) ranges.push(selection.getRangeAt(i).cloneRange());
+            const inputSelection = active && typeof active.selectionStart === 'number'
+                ? [active.selectionStart, active.selectionEnd, active.selectionDirection] : null;
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.readOnly = true;
+            textarea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+            document.body.appendChild(textarea);
+            try {
+                textarea.focus({ preventScroll: true });
+                textarea.select();
+                if (!document.execCommand('copy')) throw new Error('浏览器未允许复制');
+            } finally {
+                textarea.remove();
+                active?.focus?.({ preventScroll: true });
+                if (selection) {
+                    selection.removeAllRanges();
+                    ranges.forEach(range => selection.addRange(range));
+                }
+                if (inputSelection) active.setSelectionRange(...inputSelection);
+            }
+        };
+        const copyWechatTranscript = async () => {
+            if (isWechatCopying.value) return;
+            if (loadedWechatScopeId.value !== wechatScopeId()) {
+                __s.showToast('聊天记录正在加载，请稍后重试', 'info');
+                return;
+            }
+            const text = buildWechatTranscriptText();
+            if (!text) { __s.showToast('暂无可复制的聊天记录', 'info'); return; }
+            closeWechatMessageMenu();
+            isWechatCopying.value = true;
+            try {
+                await writeWechatClipboard(text);
+                __s.showToast('聊天记录已复制', 'success');
+            } catch (error) {
+                console.error('复制微信聊天记录失败:', error);
+                __s.showToast('复制失败，请重试', 'error');
+            } finally { isWechatCopying.value = false; }
+        };
+        __s.copyWechatTranscript = copyWechatTranscript;
+
         const copyWechatMessageText = async (item) => {
             const text = String(item?.content || '');
             if (!text) return;
             closeWechatMessageMenu();
             try {
-                await navigator.clipboard.writeText(text);
+                await writeWechatClipboard(text);
                 __s.showToast('已复制', 'success');
             } catch (error) {
                 console.error('复制微信消息失败:', error);
@@ -2210,7 +2296,7 @@
         __s.normalizeActiveWechatImage = raw => {
             if (!window.RPHubWeChatMedia) throw new Error('微信图片模块尚未加载');
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)
-                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations', 'prompt', 'selfPortrait', 'referenceIds'].includes(key))) {
+                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations', 'prompt', 'selfPortrait', 'referenceIds', 'scene'].includes(key))) {
                 throw new Error('图片参数不能包含发送者、消息列表或未知字段');
             }
             const image = window.RPHubWeChatMedia.normalizeIntent(raw);
@@ -2219,6 +2305,7 @@
                 || !window.RPHubImageGeneration?.ready(window.RPHubImageGeneration.config(__s.settings)))) throw new Error('请先配置并开启微信生图');
             if (image.mode === 'describe' && __s.isWechatImageGenerationReady?.()) throw new Error('微信生图已开启，请使用 image:{mode:"generate",prompt:"具体英文画面",description:"中文说明"}，不能用描述卡片替代');
             window.RPHubImageGeneration?.assertIdentityIntent(image, __s.currentCharacter.value, window.RPHubImageGeneration.config(__s.settings));
+            window.RPHubImageGeneration?.assertSceneIntent(image, window.RPHubImageGeneration.config(__s.settings));
             return image;
         };
         const deliverActiveWechatMessage = (content, rawImage = null, sendAt) => {

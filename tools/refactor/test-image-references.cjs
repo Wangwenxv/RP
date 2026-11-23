@@ -27,7 +27,7 @@ test('portraits select current character refs, scenes only by explicit ID, meals
     await h.G.generate(r.config, r.prompt);
     const body = JSON.parse(h.requests[0].options.body);
     assert.equal(h.requests[0].url, 'https://img.yeelo.fun/v1/images/edits');
-    assert.equal(body.image_data_urls.length, 3); assert.equal(body.prompt, '她在图书馆门前自拍。');
+    assert.equal(body.image_data_urls.length, 3); assert.ok(body.prompt.includes('【本轮画面】她在图书馆门前自拍。'));
     assert.equal(body.negative_prompt, undefined); assert.equal(body.response_format, 'b64_json');
     assert.equal(c.referenceImages, undefined);
     const meal = h.G.characterRequest(c, { mode: 'generate', selfPortrait: false, prompt: '一碗热饭' }, card);
@@ -40,7 +40,8 @@ test('natural language never applies legacy positive/negative profile; NAI still
     const { G } = harness(), card = { name: 'A', imageIdentity: { prompt: 'LEGACY_POSITIVE', negative: 'LEGACY_NEGATIVE' }, imageReferences: [ref('portrait')] };
     const c = { ...G.DEFAULTS, ...G.PRESETS.yeelo };
     const r = G.characterRequest(c, { mode: 'generate', selfPortrait: true, prompt: '拍一张课后的自然自拍。' }, card);
-    assert.equal(r.prompt, '拍一张课后的自然自拍。'); assert.equal(r.config.negativePrompt, undefined);
+    assert.ok(r.prompt.includes('【本轮画面】拍一张课后的自然自拍。')); assert.equal(r.config.negativePrompt, undefined);
+    assert.doesNotMatch(r.prompt, /LEGACY_POSITIVE|LEGACY_NEGATIVE/);
     assert.doesNotMatch(G.identityPrompt(card, c), /LEGACY_POSITIVE|LEGACY_NEGATIVE|base64/);
     assert.match(G.formatPrompt(c), /自然语言/); assert.match(G.formatPrompt(G.DEFAULTS), /NAI 标签组/);
     const nai = G.characterRequest(G.DEFAULTS, { mode: 'generate', selfPortrait: true, prompt: 'campus, selfie' }, { imageReferences: [ref('portrait')] });

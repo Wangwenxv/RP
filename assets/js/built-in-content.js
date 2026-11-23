@@ -403,7 +403,7 @@ year 2025, textless version, {{petite,loli}}, Petite figure, no text, The image 
     ]);
 
     const buildAutoImageGenPrompt = (imageGenCount, protocol = 'sta1n-nai') => protocol !== 'sta1n-nai'
-        ? `<auto_image_gen>\n用户已开启自然语言自动生图。每次回复插入${imageGenCount}张图片，按剧情先后放在对应段落之后，图片之间及最后一张后须有正文。格式为 image###{"prompt":"连贯的自然语言画面描述","selfPortrait":true,"referenceIds":[]}###。本人入镜填true，饭菜、风景、他人填false；referenceIds只选当前资料目录中吻合的地点。人物参考图由程序自动加入，prompt描述当下服装、姿势、环境、视角和光线，不写 NAI 标签、画师串或正反词模板。遵守原人设与已确定的剧情，只描述可见画面。\n</auto_image_gen>`
+        ? `<auto_image_gen>\n用户已开启自然语言自动生图。每次回复插入${imageGenCount}张图片，按剧情先后放在对应段落之后，图片之间及最后一张后须有正文。格式为 image###{"prompt":"连贯的自然语言画面描述","selfPortrait":true,"referenceIds":[],"scene":{"location":"本轮地点","action":"本轮动作","framing":"拍摄方式与取景","props":[]}}###。本人入镜填true，饭菜、风景、他人填false；referenceIds只选当前资料目录中吻合的地点。人物参考图默认仅复用身份，不能照搬其服装、道具、姿势；scene可补time、clothing、lighting、avoid，在生图前核对地点、时间、动作、机位与物件，不因参考图有麦克风就编造演出。prompt描述当下服装、姿势、环境、视角和光线，不写 NAI 标签、画师串或正反词模板。遵守原人设与已确定的剧情，只描述可见画面。\n</auto_image_gen>`
         : `<auto_image_gen>\n用户已开启自动生图。每次回复都必须将${imageGenCount}张图片作为正文插图，按剧情先后分散插入各自对应段落之后，禁止连续输出多个图片或集中放在正文开头、结尾及同一位置。格式为：image###英文Tag###，不得只输出文字正文。
 围绕当前剧情中的具体场景和人物生成${imageGenCount}张画面，每张图选择明确的剧情瞬间、视觉焦点和镜头。所有Tag必须使用英文并以英文逗号分隔，禁止中文Tag；提示词必须详尽、细致且可直接绘制，不得使用笼统省略的Tag或脱离场景拼凑通用画面。
 强制按“对应正文段落 → 该段图片 → 后续正文段落”的顺序穿插。第一张图片前、任意两张图片之间及最后一张图片后都必须有非空正文；严禁相邻输出图片、写完正文后再统一补图，或让图片成为整次回复的结尾。输出前必须检查并重排不符合此顺序的图片。

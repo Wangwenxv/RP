@@ -60,14 +60,20 @@ const server = http.createServer((req, res) => {
                 if (yeelo && chats > 1) assert.ok(JSON.stringify(body).includes('生图格式：自然语言'), 'Natural language instruction reaches chat');
                 if (live) return route.continue();
                 const correction = body.messages.some(m => m.role === 'system' && m.content.includes('刚才的回复尚未发送'));
+                const selfieScene = { location: '教学楼走廊', time: '三月傍晚，天已黑', clothing: '清爽米白针织衫与外套', action: '课后独自拍照，浅笑，空闲手轻轻比V',
+                    framing: '手机前置摄像头上半身自拍，另一只手在画面外持机', props: ['手机'], avoid: ['头戴麦克风'], lighting: '柔和室内灯光' };
+                const corrected = { mode: 'generate', selfPortrait: true, prompt: yeelo ? '她下课后在教学楼走廊里浅笑自拍，空闲手比V，清爽米白针织衫，柔和灯光，窗外已暗。' : 'campus corridor, phone selfie, evening light',
+                    description: '校园走廊里的自拍', ...(yeelo ? { scene: selfieScene } : {}) };
                 const messages = chats === 1 ? [{ type: 'text', content: '在呢' }, { type: 'text', content: '刚下课' }] : [
                     { type: 'text', content: '给你看看' }, { type: 'image_request', media: correction
-                        ? { mode: 'generate', selfPortrait: true, prompt: 'campus corridor, phone selfie, evening light', description: '校园走廊里齐肩头发女生的自拍' }
+                        ? corrected
+                        : process.argv.includes('--scene-conflict')
+                            ? { ...corrected, scene: { ...selfieScene, props: ['头戴麦克风'], avoid: [] } }
                         : process.argv.includes('--missing-portrait-flag')
                             ? { mode: 'generate', prompt: 'phone selfie, campus corridor', description: '校园走廊里齐肩头发女生的自拍' }
                             : { mode: 'describe', description: '校园走廊里齐肩头发女生的自拍' } }
                 ];
-                decisions.push(correction ? 'corrected-generate' : chats === 1 ? 'text' : 'describe');
+                decisions.push(correction ? 'corrected-generate' : chats === 1 ? 'text' : process.argv.includes('--scene-conflict') ? 'scene-conflict' : 'describe');
                 return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify({ messages }) }, finish_reason: 'stop' }] }) });
             }
             if (url === imageBase + '/chat/completions' || url === imageBase + '/images/generations' || url === imageBase + '/images/edits') {
@@ -81,6 +87,8 @@ const server = http.createServer((req, res) => {
                     assert.equal(body.image_data_urls.length, references.filter(r => r.kind !== 'scene').length);
                     assert.equal(body.model, 'gpt-image-2.6');
                     assert.equal(body.negative_prompt, undefined);
+                    assert.ok(body.prompt.includes('人物身份与视觉偏好参考'));
+                    assert.ok(body.prompt.includes('【画面计划】'));
                     assert.equal(body.image_data_urls[0], references[0].dataUrl);
                 }
                 if (liveImage) {
@@ -202,7 +210,7 @@ const server = http.createServer((req, res) => {
         check('一张图片只调用一次生图服务', images === 1);
         if (yeelo) check('本人照片请求带角色参考图，无正反词拼接', imagePrompts[0]?.referenceCount === references.length && !imagePrompts[0]?.fixedAppearanceApplied && !imagePrompts[0]?.negativeApplied);
         else if (identity?.prompt && (!live || process.argv.includes('--expect-self-portrait'))) check('本人照片请求带固定特征与负面提示词', imagePrompts[0]?.fixedAppearanceApplied && imagePrompts[0]?.negativeApplied);
-        if (!live) check(process.argv.includes('--missing-portrait-flag') ? '本人标记遗漏在付费前通过一次聊天纠正' : '描述误用通过一次聊天纠正完成', chats === 3 && decisions.at(-1) === 'corrected-generate');
+        if (!live) check(process.argv.includes('--scene-conflict') ? '校园自拍的道具矛盾在付费前通过一次聊天纠正' : process.argv.includes('--missing-portrait-flag') ? '本人标记遗漏在付费前通过一次聊天纠正' : '描述误用通过一次聊天纠正完成', chats === 3 && decisions.at(-1) === 'corrected-generate');
         await page.waitForFunction(() => [...document.querySelectorAll('.wx-photo-button img')].some(img => img.complete && img.naturalWidth > 0));
         await page.evaluate(() => { const panel = document.querySelector('.wx-body'); if (panel) panel.scrollTop = panel.scrollHeight; });
         await page.screenshot({ path: path.join(OUT, live || liveImage ? 'live-chat.png' : 'fixture-chat.png') });

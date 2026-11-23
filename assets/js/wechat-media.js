@@ -19,6 +19,10 @@
         const usage = value.usage === undefined ? (value.mode === 'draw' ? 'drawing' : value.mode === 'describe' ? 'scene_photo' : 'reference') : value.usage;
         if (!USAGES.includes(usage)) throw new Error('图片用途无效');
         const result = { mode: value.mode, usage };
+        if (value.scene !== undefined) {
+            if (value.mode !== 'generate' || !window.RPHubImageGeneration?.normalizeScene) throw new Error('scene只能用于生图画面计划');
+            result.scene = window.RPHubImageGeneration.normalizeScene(value.scene);
+        }
         if (value.referenceIds !== undefined) {
             if (value.mode !== 'generate' || !Array.isArray(value.referenceIds) || value.referenceIds.length > 16
                 || value.referenceIds.some(id => typeof id !== 'string' || !/^[\w-]{1,80}$/.test(id))) throw new Error('referenceIds 只能是生图模式的参考图 ID 列表');

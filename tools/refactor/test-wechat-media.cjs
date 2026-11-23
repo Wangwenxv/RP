@@ -78,7 +78,7 @@ test('natural WeChat selfie transmits reference selection and format guide witho
   let actual;
   h.context.window.RPHubImageGeneration = { ...G, generate: async (config, prompt) => { actual = { config, prompt }; return new Blob(['pixels']); } };
   await h.send('可以给我拍张漂亮的自拍吗？');
-  assert.equal(actual.prompt, '她在教学楼里微笑着自拍。'); assert.equal(actual.config.referenceImages[0].dataUrl, dataUrl);
+  assert.ok(actual.prompt.includes('【本轮画面】她在教学楼里微笑着自拍。')); assert.equal(actual.config.referenceImages[0].dataUrl, dataUrl);
   assert.match(h.requests[0].messages[0].content, /生图格式：自然语言/);
   assert.doesNotMatch(JSON.stringify(h.requests), /iVBOR|image-secret|固定英文特征/);
   assert.doesNotMatch(JSON.stringify(h.s.wechatTimeline.value), /iVBOR|base64|referenceIds/);
@@ -500,6 +500,21 @@ test('模型误用描述时仅纠正一次，取得真实像素后才发整批�
   assert.equal(replies.length, 2); assert.equal(replies[1].type, 'image');
   assert.ok(replies[1].media.assetId); assert.equal(replies[1].media.source, 'generate');
   assert.ok(!replies[1].media.descriptionOnly); assert.equal(h.toasts.length, 0);
+});
+
+test('普通校园自拍的麦克风矛盾在付费前修正一次，重复矛盾不付费也不发送承诺', async () => {
+  for (const fixed of [true, false]) {
+    const bad = { location: '教学楼走廊', action: '下课后自拍', framing: '手机前置上半身', props: ['头戴麦克风'] };
+    const h = harness(async (_options, count) => ({ content: JSON.stringify({ messages: [{ type: 'text', content: '给你看看' },
+      { type: 'image_request', media: { mode: 'generate', selfPortrait: true, prompt: '教学楼里的自拍', scene: count > 1 && fixed ? { ...bad, props: ['手机'], avoid: ['头戴麦克风'] } : bad } }] }) }));
+    let paid = 0; enableGeneration(h, async () => { paid++; assert.equal(h.s.wechatTimeline.value.filter(item => item.role === 'assistant').length, 0); return new Blob(['pixels']); });
+    Object.assign(h.s.settings.wechatImageApi, h.context.window.RPHubImageGeneration.PRESETS.yeelo);
+    await h.send('下课了，拍张普通的自拍给我');
+    assert.equal(h.requests.length, 2); assert.equal(paid, fixed ? 1 : 0);
+    assert.match(h.requests[1].messages.at(-1).content, /画面计划.*尚未付费/);
+    assert.match(h.requests[1].messages.at(-1).content, /不编造演出或录制/);
+    if (!fixed) { assert.equal(h.s.wechatTimeline.value.length, 1); assert.equal(h.s.wechatUnansweredCount.value, 1); }
+  }
 });
 
 test('重复描述误用有界失败，不发前置承诺、不付费、不吞待回复消息', async () => {
