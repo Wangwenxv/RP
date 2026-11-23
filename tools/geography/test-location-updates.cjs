@@ -162,7 +162,7 @@ test('自身移动尊重路程与剧情时间；计划和原地回复不导致�
     assert.throws(() => G.decidePosition(world, initial, { action: 'present', placeId: 'library' }, 1000));
     assert.equal(G.decidePosition(world, initial, { action: 'stay' }, 1000).placeId, 'dorm-13');
     assert.throws(() => G.decidePosition(world, null, { action: 'present', placeId: '北苑' }, 1000));
-    assert.throws(() => G.decidePosition(world, null, { action: 'present', placeId: 'library' }, 1000));
+    assert.equal(G.decidePosition(world, null, { action: 'present', placeId: 'library' }, 1000).placeId, 'library');
     assert.throws(() => G.decidePosition(world, null, { action: 'present', placeId: 'library', actor: 'user' }, 1000));
 });
 
@@ -198,4 +198,49 @@ test('遗漏在途position只保持行程，不自动到达或决定新的目的
     assert.equal(decision.action, 'continue');
     assert.equal(h.s.getChatGeographyState().character.status, 'in_transit');
     assert.equal(h.s.getChatGeographyState().character.destinationId, 'canteen-2');
+});
+
+test('江拾门口场景方向自动定位角色，玩家具名场景只定位玩家，微信原地无需工具', () => {
+    const h = adapter();
+    h.s.currentCharacter.value.name = '江拾'; h.s.user = { name: '陆清淮' };
+    h.s.chatHistory.value = [msg('陆清淮在门诊部诊室里。江拾留在门诊部门口，用微信给陆清淮发消息。', 'user')];
+    assert.equal(h.s.getChatGeographyState().character.placeId, 'clinic');
+    assert.equal(h.s.getChatGeographyState().user.placeId, 'clinic');
+    const decision = h.s.readWechatPositionDecision('{"messages":[{"type":"text","content":"好嘛"}]}', null, 1000);
+    assert.equal(decision.action, 'stay');
+    h.s.chatHistory.value = [msg('江拾打算去门诊部。陆清淮在图书馆吗？', 'user')];
+    assert.equal(h.s.getChatGeographyState().character.status, 'unknown');
+    assert.equal(h.s.getChatGeographyState().user.status, 'unknown');
+    assert.equal(h.s.readWechatPositionDecision('{"messages":[{"type":"text","content":"好嘛"}]}', null, 1000), null);
+});
+
+test('江拾原始开场建立双方门诊部位置；其他地点、未来场景和住址不代填', () => {
+    const card = JSON.parse(fs.readFileSync(path.join(root, 'card/jiangshi/江拾.json'), 'utf8'));
+    const link = { character: { name: '江拾', home: 'clinic' }, user: { name: '陆清淮' } };
+    const opening = card.data.first_mes;
+    const locations = G.project(world, [msg(opening)], link);
+    assert.equal(locations.character.placeId, 'clinic'); assert.equal(locations.user.placeId, 'clinic');
+    assert.equal(G.project(world, [], link).character.status, 'unknown');
+    for (const text of ['下午四点，江拾准备去门诊部。', '“下午四点，我在门诊部。”', '下午四点，图书馆里。\n江拾坐在门诊部。'])
+        assert.equal(G.project(world, [msg(text)], link).user.status, 'unknown');
+    assert.equal(G.project(world, [msg('下午四点，图书馆里。\n江拾坐在长椅上。')], link).character.placeId, 'library');
+});
+
+test('同一RP气泡工具续写保留位置，手工编辑仍使旧决定失效；原地描述不重置到达时刻', async () => {
+    const h = adapter(); h.s.wechatClock = { value: { time: 1000 } };
+    const source = msg('她拿起手机。'); h.s.chatHistory.value = [source];
+    await h.s.executeGeographyTool(call({ operation: 'set_position', action: 'present', placeId: 'clinic', sceneDetail: '诊室门口' }), undefined, { sourceMessageId: source.id });
+    h.s.preserveRpPositionDuringAppend(source);
+    source.content += '\n她仍站在门口。';
+    h.s.finalizeRpPosition(source);
+    assert.equal(h.s.getChatGeographyState().character.placeId, 'clinic');
+    const before = G.project(world, [source], bindings).character;
+    const after = G.decidePosition(world, before, { action: 'stay', detail: '走廊长椅上' }, 1000 + 60000);
+    assert.equal(after.confirmedAt, 1000);
+    assert.equal(after.subLocation.detail, '走廊长椅上');
+    source.content = '她打算去门诊部。';
+    h.s.finalizeRpPosition(source);
+    assert.equal(h.s.getChatGeographyState().character.status, 'unknown');
+    assert.doesNotMatch(h.s.buildCharacterPositionPrompt(), /微信回复JSON|空回也带position/);
+    assert.match(h.s.buildCharacterPositionPrompt('wechat'), /原地回复可省略position/);
 });

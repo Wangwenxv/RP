@@ -285,7 +285,8 @@
             pendingReasoning += reasoning;
         };
         try {
-            const tools = [...(options.tools || []), ...(options.replyInTool && !options.requireTool ? [replyTool] : [])];
+            const requiredToolName = (options.tools || []).some(t => t.function?.name === options.requiredToolName) ? options.requiredToolName : null;
+            const tools = [...(options.tools || []), ...(options.replyInTool && !options.requireTool && !requiredToolName ? [replyTool] : [])];
             return await withApiResponse({ ...options, requestAttempt: attempt, onErrorResponse: text => {
                 if (logResponse) rawResponse = text;
             }, body: {
@@ -294,7 +295,8 @@
                 ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
                 ...(tools.length ? {
                     tools,
-                    tool_choice: options.requireTool || (options.replyInTool && options.tools?.length) ? 'required'
+                    tool_choice: requiredToolName ? { type: 'function', function: { name: requiredToolName } }
+                        : options.requireTool || (options.replyInTool && options.tools?.length) ? 'required'
                         : options.replyInTool ? { type: 'function', function: { name: replyTool.function.name } } : 'auto',
                     // output_reply and business calls cannot be mixed by the reply decoder.
                     parallel_tool_calls: options.parallelTools === true && !tools.some(tool => tool.function?.name === replyTool.function.name)

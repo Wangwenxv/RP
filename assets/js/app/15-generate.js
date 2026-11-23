@@ -471,6 +471,8 @@
                     : text;
                 if (!appendValue) return;
 
+                __s.preserveRpPositionDuringAppend?.(message);
+
                 if (isContinuation && !hasStarted && existing.trim()) {
                     message[field] = existing.replace(/\s+$/, '') + '\n\n' + appendValue;
                 } else {
@@ -522,8 +524,10 @@
                 if (requestSignal.aborted) throw __s.createAbortReason();
 
                 // 必须在正则、角色合并和记忆处理之后追加，保留 tool_call_id 及服务端签名。
+                if (__s.currentCharacter.value.wechatEnabled) await __s.ensureWechatTimelineLoaded();
+                const storyClockPrompt = __s.buildRpStoryClockPrompt?.();
+                if (storyClockPrompt) messages.unshift({ role: 'system', content: storyClockPrompt });
                 if (__s.currentCharacter.value?.geography) {
-                    if (__s.currentCharacter.value.wechatEnabled) await __s.ensureWechatTimelineLoaded();
                     const geographyPrompt = __s.buildGeographyPrompt?.();
                     if (geographyPrompt) messages.unshift({ role: 'system', content: geographyPrompt });
                     const positionPrompt = __s.buildCharacterPositionPrompt?.();
@@ -576,6 +580,7 @@
                     tools: __s.buildActiveToolDefinitions(requestTools),
                     parallelTools: true,
                     requireTool: activeToolDepth === 0 && __s.shouldRequireActiveToolCall(requestTools),
+                    requiredToolName: !__s.pendingActiveWechatMessages.length ? __s.getExplicitWechatToolName?.(requestTools) : null,
                     temperature: __s.settings.temperature,
                     reasoningEffort: __s.settings.reasoningEffort,
                     stream: __s.settings.stream,
@@ -674,6 +679,7 @@
                 }
             } finally {
                 if (assistantMessage?.content) {
+                    __s.preserveRpPositionDuringAppend?.(assistantMessage);
                     const styleFilterHits = [];
                     assistantMessage.content = __s.filterBlockedStyleText(assistantMessage.content, {
                         log: true,
@@ -688,6 +694,8 @@
                     if (combinedHits.length) assistantMessage.styleFilterHits = combinedHits;
                     else delete assistantMessage.styleFilterHits;
                 }
+                if (!toolResponse && !wasCancelled && !generationFailed && !requestSignal.aborted) __s.applyNarratedWechatHandoff?.(assistantMessage);
+                __s.finalizeRpPosition?.(assistantMessage);
                 if (continuationToolCall && continuationToolCall.status === 'continuing') {
                     continuationToolCall.status = 'done';
                 }

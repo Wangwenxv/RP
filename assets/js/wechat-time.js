@@ -30,27 +30,57 @@
         return parse(`${String(date.getFullYear()).padStart(4, '0')}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`);
     }
     const itemTime = item => valid(item?.storyAt) ? item.storyAt : legacyTime(item?.ts);
-    function rpTime(content) {
-        // 只认正文首行的完整公历时间戳，不从台词、约定、回忆中猜时间，也不补造年份。
+    function rpTime(content, reference, origin = reference) {
+        // 只读正文首行的当前场景时间。完整公历独立解析，中文和相对日
+        // 需要当前分支日历作为参考；不从台词、约定或回忆中取时。
         const first = String(content || '').replace(/<(?:think|thinking)>[\s\S]*?<\/(?:think|thinking)>/gi, '').trim().split(/\r?\n/)[0];
         const match = first.match(/^【(\d{4})(?:年(\d{1,2})月(\d{1,2})日|-(\d{2})-(\d{2}))\s+(\d{1,2})(?:时(?:(\d{1,2})分)?|:(\d{2}))】$/);
-        if (!match) return null;
-        return parse(`${match[1]}-${pad(match[2] || match[4])}-${pad(match[3] || match[5])} ${pad(match[6])}:${pad(match[7] || match[8] || 0)}`);
+        if (match) return parse(`${match[1]}-${pad(match[2] || match[4])}-${pad(match[3] || match[5])} ${pad(match[6])}:${pad(match[7] || match[8] || 0)}`);
+        if (!valid(reference) || /[“"「『]|说[：:]|明天|昨天|曾经|回忆|打算|约定/.test(first)) return null;
+        const number = text => {
+            if (/^\d+$/.test(text)) return Number(text);
+            const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+            if (text.includes('十')) { const [a, b] = text.split('十'); return (a ? digits[a] : 1) * 10 + (b ? digits[b] : 0); }
+            return digits[text];
+        };
+        // Partial narrative dates use this branch's fictional calendar, never
+        // the wall clock. Vague month periods use a documented calendar anchor.
+        const n = '[零〇一二两三四五六七八九十\\d]+';
+        const narrative = first.replace(/^【|】$/g, '');
+        const clock = new RegExp(`(?:^第${n}日\\s*|^(?:${n}月(?:末|底|初|中旬|下旬|上旬|${n}日)?[，,\\s]*)?)(?:(凌晨|早上|上午|中午|下午|傍晚|晚上|夜里)\\s*)?(${n})(?:点|时)(?:(${n})分|(一刻|三刻|半))?`).exec(narrative);
+        if (!clock) return null;
+        let hour = number(clock[2]), minute = clock[3] ? number(clock[3]) : ({ 一刻: 15, 三刻: 45, 半: 30 }[clock[4]] || 0);
+        if (/下午|傍晚|晚上|夜里/.test(clock[1] || '') && hour < 12) hour += 12;
+        if (/凌晨|早上|上午/.test(clock[1] || '') && hour === 12) hour = 0;
+        const date = new Date(reference);
+        const dayIndex = new RegExp(`^第(${n})日`).exec(narrative);
+        if (dayIndex && valid(origin)) date.setTime(origin + (number(dayIndex[1]) - 1) * 86400000);
+        const month = new RegExp(`^(${n})月(末|底|初|中旬|下旬|上旬|(${n})日)?`).exec(narrative);
+        if (month) {
+            const m = number(month[1]);
+            if (m < 1 || m > 12) return null;
+            const lastDay = new Date(Date.UTC(date.getUTCFullYear(), m, 0)).getUTCDate();
+            const day = month[3] ? number(month[3]) : /末|底/.test(month[2] || '') ? lastDay
+                : ({ 初: 1, 上旬: 5, 中旬: 15, 下旬: 25 }[month[2]] || Math.min(date.getUTCDate(), lastDay));
+            return parse(`${date.getUTCFullYear()}-${pad(m)}-${pad(day)} ${pad(hour)}:${pad(minute)}`);
+        }
+        return parse(`${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(hour)}:${pad(minute)}`);
     }
     function anchor(timeline, fallback) {
-        let latestRp = null;
-        for (let i = timeline.length - 1; i >= 0; i--) {
-            const item = timeline[i];
+        let time = fallback ?? null, established = false, origin = null;
+        for (const item of timeline) {
             if (item.channel === 'rp') {
-                if (latestRp === null) latestRp = rpTime(item.content);
+                const rp = rpTime(item.content, time, origin ?? time);
+                if (rp !== null) { time = established ? Math.max(time, rp) : rp; established = true; origin ??= rp; }
                 continue;
             }
             if (item.channel !== 'wechat' || !['user', 'assistant'].includes(item.role)) continue;
-            const time = itemTime(item);
-            if (time === null) continue;
-            return { time: latestRp === null ? time : Math.max(time, latestRp), established: valid(item.storyAt) || latestRp !== null };
+            const sent = itemTime(item);
+            if (sent === null) continue;
+            time = valid(item.storyAt) ? sent : established ? Math.max(time, sent) : sent;
+            established ||= valid(item.storyAt);
         }
-        return { time: latestRp ?? fallback ?? null, established: latestRp !== null };
+        return { time, established };
     }
     function metadata(item) {
         const result = {};

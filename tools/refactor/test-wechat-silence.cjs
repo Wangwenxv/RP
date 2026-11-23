@@ -130,6 +130,37 @@ const nativeCall = (id, content, name = 'tool_wechat') => ({ id, type: 'function
   name, arguments: JSON.stringify(typeof content === 'string' ? { content } : content)
 } });
 
+test('明确江拾发微信选择微信工具；玩家草稿、商家、计划、疑问和工具关闭不强制', () => {
+  const h = harness(); h.state.currentCharacter.value.name = '江拾'; h.state.user.name = '陆清淮';
+  h.loadRpTools([rpWechatTool]);
+  for (const content of ['江拾在门口外面发消息', '江拾留在门诊部诊室门口，用微信给陆清淮发消息要一杯水。', '让江拾给我发微信：“我渴了”']) {
+    h.state.chatHistory.value = [{ role: 'user', content }];
+    assert.equal(h.state.getExplicitWechatToolName([rpWechatTool]), 'tool_wechat', content);
+  }
+  for (const content of ['我给江拾发消息', '江拾准备发微信', '江拾给商家发消息', '江拾给陈璃发消息', '江拾不要发消息', '“江拾发消息”', '江拾发消息吗？']) {
+    h.state.chatHistory.value = [{ role: 'user', content }];
+    assert.equal(h.state.getExplicitWechatToolName([rpWechatTool]), null, content);
+  }
+  h.state.chatHistory.value = [{ role: 'user', content: '江拾发消息' }];
+  assert.equal(h.state.getExplicitWechatToolName([]), null);
+  h.state.currentCharacter.value.wechatEnabled = false;
+  assert.equal(h.state.getExplicitWechatToolName([rpWechatTool]), null);
+});
+
+test('江拾正文已发微信但模型漏掉工具时，落一条原话并截去自行补演的后续', () => {
+  const h = harness(); h.state.currentCharacter.value.name = '江拾'; h.state.user.name = '陆清淮';
+  h.loadRpTools([rpWechatTool]);
+  const content = '陆清淮关上门。\n江拾缩回手，站在走廊里。她赶紧掏出手机，点开微信，发了条消息：\n\n"我走了，你忙。"\n\n发完又补一条："晚上吃什么？"\n陆清淮回她："好的。"';
+  const message = { role: 'assistant', content };
+  assert.equal(h.state.applyNarratedWechatHandoff(message), true);
+  assert.deepEqual(plain(h.state.pendingActiveWechatMessages), ['我走了，你忙。']);
+  assert.ok(!message.content.includes('晚上吃什么')); assert.ok(!message.content.includes('陆清淮回她'));
+  assert.equal(message.toolCalls[0].origin, 'narrative_handoff');
+  assert.equal(h.state.applyNarratedWechatHandoff(message), false);
+  for (const text of ['陆清淮打开微信，给江拾发消息："喝水。"', '江拾准备在微信发消息："我渴了。"', '江拾点开微信，给商家发消息："外卖到哪了？"', '<think>江拾点开微信，发消息："水。"</think>', '江拾说："我发微信：水"'])
+    assert.equal(h.protocol.narratedSend(text, '江拾', '陆清淮'), null, text);
+});
+
 test('RP主动微信同轮四个并行调用只接收第一条，成功后不自动续写', async () => {
   const h = harness(), runtime = h.loadRpTools([rpWechatTool]);
   const run = await runtime.execute(['在忙吗', '图书馆', '好', '你早点弄完 别太晚'].map((text, i) => nativeCall(`call-${i}`, text)));
@@ -688,16 +719,16 @@ test('切换分支后连续沉默和归因不继承旧 scope', async () => {
   assert.equal(h.stored.get('wechat_timeline/branch-a')[0].replySilence.summary, '在赌气');
 });
 
-test('微信自主位置缺失时只修正一次，内部场景保存且不生成额外气泡', async () => {
+test('记录缺失不阻断普通微信或额外请求模型，未知位置不猜住址', async () => {
   const h = harness(async (_options, n) => ({ content: JSON.stringify({ messages: [{ type: 'text', content: '晚点聊' }],
     ...(n === 2 ? { position: { action: 'present', placeId: 'dorm-4', detail: '一楼门口台阶' } } : {}) }) }));
   await h.loadGeography(); await h.send('你忙你的');
-  assert.equal(h.requests.length, 2); assert.equal(h.toasts.length, 0);
+  assert.equal(h.requests.length, 1); assert.equal(h.toasts.length, 0);
   assert.equal(h.state.wechatTimeline.value.length, 2);
-  assert.equal(h.state.getChatGeographyState().character.placeId, 'dorm-4');
+  assert.equal(h.state.getChatGeographyState().character.status, 'unknown');
   assert.equal(h.state.getChatGeographyState().user.status, 'unknown');
-  assert.equal(h.stored.get('wechat_timeline/branch-a')[1].geographyPosition.decision.detail, '一楼门口台阶');
-  assert.match(h.requests[0].messages[0].content, /应该知道自己的身体具体在哪里/);
+  assert.equal(h.stored.get('wechat_timeline/branch-a')[1].geographyPosition, undefined);
+  assert.match(h.requests[0].messages[0].content, /记录不完整不妨碍普通聊天/);
 });
 
 test('微信空回仍保存角色自身位置，重新打开恢复且玩家位置保持未知', async () => {
@@ -809,7 +840,7 @@ test('明确出发却漏掉position需要一次修正，不能静默记录为原
 
 test('位置与图片格式错误合并修正，不串成两次格式补写', async () => {
   const h = harness(async (_options, n) => ({ content: JSON.stringify({ messages: [{ type: 'text', content: n === 1 ? '格式待修' : '好了' }],
-    ...(n === 2 ? { position: { action: 'present', placeId: 'dorm-3', detail: '书桌前' } } : {}) }) }));
+    position: n === 2 ? { action: 'present', placeId: 'dorm-3', detail: '书桌前' } : { action: 'present', placeId: '北苑' } }) }));
   await h.loadGeography();
   h.state.wechatImageReplyCorrection = messages => messages[0]?.content === '格式待修' ? '刚才的回复尚未发送，请修正图片格式' : '';
   await h.send('发张图');

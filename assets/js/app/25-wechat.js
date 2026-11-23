@@ -171,10 +171,13 @@
         __s.deleteWechatTimeTag = deleteWechatTimeTag;
         // 尚未设定剧情时间时使用固定起点，后续完全依赖分支时间线。
         const initialWechatTime = wxTime.parse('2025-03-11 18:30:00');
-        const wechatClock = computed(() => wxTime.anchor(wechatTimeline.value, initialWechatTime));
+        const wechatClock = computed(() => wxTime.anchor(wechatTimeline.value.length ? wechatTimeline.value
+            : (__s.chatHistory.value || []).map(m => ({ ...m, channel: 'rp' })), initialWechatTime));
         __s.wechatClock = wechatClock;
         const wechatClockLabel = computed(() => wxTime.format(wechatClock.value.time));
         __s.wechatClockLabel = wechatClockLabel;
+        __s.buildRpStoryClockPrompt = () => __s.currentCharacter.value?.wechatEnabled && wechatClock.value.established
+            ? `【当前剧情钟】${wechatClockLabel.value}。RP与微信共用此时刻，打开微信、请求耗时和原地聊天不推进剧情。若本轮确实推进时间，在正文首行写完整公历时标【YYYY年MM月DD日 HH时MM分】，与实际发生的剧情一致；不要无故跳时或倒退。` : '';
         const wechatSendTimeLabel = computed(() => wechatSendAt.value
             ? `${wxTime.format(wxTime.parse(wechatSendAt.value))} 发送` : '同一时间发送');
         __s.wechatSendTimeLabel = wechatSendTimeLabel;
@@ -2232,6 +2235,22 @@
                 content: text, ...(image ? { image } : {}) };
         };
         __s.deliverActiveWechatMessage = deliverActiveWechatMessage;
+        __s.applyNarratedWechatHandoff = message => {
+            if (!message?.content || __s.pendingActiveWechatMessages.length || !__s.currentCharacter.value?.wechatEnabled) return false;
+            const tool = __s.getEnabledActiveTools?.().find(t => __s.isWechatActiveTool?.(t));
+            if (!tool) return false;
+            const send = wxProtocol.narratedSend(message.content, __s.currentCharacter.value.name, __s.user.name);
+            if (!send) return false;
+            try { wxProtocol.normalizeActiveText(send.content); } catch (_) { return false; }
+            const result = deliverActiveWechatMessage(send.content);
+            message.content = send.narration;
+            if (!Array.isArray(message.toolCalls)) message.toolCalls = [];
+            message.toolCalls.push({ id: generateUUID(), toolId: tool.id, toolType: tool.type, name: tool.name,
+                callName: tool.callName, baseCallName: tool.callName, status: 'done', isOpen: false,
+                raw: JSON.stringify({ content: send.content }), query: send.content, reason: '正文已明确发送，程序衔接微信并交给玩家',
+                origin: 'narrative_handoff', resultCount: 1, resultText: JSON.stringify(result), error: '' });
+            return true;
+        };
 
         /** 逐条按打字节奏发出主动发起的微信消息，复用被动回复一致的表情档位与节奏。 */
         const playActiveWechatMessages = async (contents) => {

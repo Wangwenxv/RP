@@ -18,6 +18,22 @@
             || __s.normalizeActiveToolBaseCallName(tool?.callName) === 'tool_wechat'
             || tool?.id === 'tool_wechat';
         __s.isWechatActiveTool = isWechatActiveTool;
+        __s.getExplicitWechatToolName = tools => {
+            const tool = tools.find(t => t.enabled !== false && isWechatActiveTool(t));
+            if (!tool || !__s.currentCharacter.value?.wechatEnabled) return null;
+            const name = __s.currentCharacter.value.name;
+            const input = String((__s.chatHistory.value || []).findLast(m => m.role === 'user')?.content || '')
+                .replace(/<(think|thinking|cot)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi, '')
+                .replace(/“[^”]*”|"[^"\n]*"|「[^」]*」/g, '');
+            const explicit = (input.match(/[^。！？!?\n]+[。！？!?]?/g) || []).some(clause => {
+                const recipient = /给([^，,：:\s]{1,20}?)(?:发|发送|联系)/.exec(clause)?.[1];
+                if (recipient && !['我', '玩家', '{{user}}', __s.user?.name].includes(recipient)) return false;
+                return name && clause.includes(name)
+                && /(?:发(?:送|来|出|了)?(?:一条|条|个)?(?:微信|消息|信息)|微信.{0,30}(?:发|联系))/.test(clause)
+                && !/[？?]|不要|别发|不发|没发|尚未|未发|想|考虑|打算|准备|如果|假如|等到|明天|后天|曾经|之前|刚才|给(?:外卖|商家|骑手|同学|朋友)|群聊|群里/.test(clause);
+            });
+            return explicit ? tool.callName : null;
+        };
         const getEnabledActiveTools = () => __s.normalizeActiveTools()
             .filter(tool => tool.enabled !== false && tool.callName)
             // 主动发微信依赖角色开着微信才有落点，未开启时不向模型暴露该工具。
@@ -40,6 +56,7 @@
                 : __s.getActiveToolLatestUserReminder(),
             tools.some(isWechatActiveTool)
                 ? `微信工具只执行「${__s.currentCharacter.value?.name || '角色'}」→「${__s.user?.name || '用户'}」的角色消息；玩家自己的草稿、想说的话或发送意图不触发角色代发。`
+                    + '玩家明确指定当前角色用微信给玩家发消息，或本轮剧情写到角色实际按下发送时，必须调用tool_wechat发送那条消息并结束本轮；门口、隔着门或同一建筑也可用微信。仅掏手机、考虑联系或给外卖商家发消息不触发。不要只在旁白写“发送了”而漏掉工具。'
                 : ''
         ].filter(Boolean).join('\n');
         __s.getActiveToolInvocationReminder = getActiveToolInvocationReminder;

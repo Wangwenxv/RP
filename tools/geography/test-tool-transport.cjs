@@ -26,6 +26,17 @@ test('输出回复工具存在时关闭并行；强制业务阶段无回复工�
 test('其它模型用途没有主动启用时保持原并行选项', async () => {
     const h = harness({ role: 'assistant', content: '正常回复' }); await h.request({}); assert.equal(h.requests[0].parallel_tool_calls, false);
 });
+
+test('明确主动微信指定原生工具，不能由地理或output_reply代替；未开启工具不强制', async () => {
+    const tools = ['tool_geo', 'tool_wechat'].map(name => ({ type: 'function', function: { name, parameters: {} } }));
+    const h = harness({ role: 'assistant', content: '', tool_calls: [call('wx', 'tool_wechat', { content: '大夫，我渴了' })] });
+    await h.request({ tools, requiredToolName: 'tool_wechat', replyInTool: true });
+    assert.deepEqual(h.requests[0].tool_choice, { type: 'function', function: { name: 'tool_wechat' } });
+    assert.equal(h.requests[0].tools.some(t => t.function.name === 'output_reply'), false);
+    const off = harness({ role: 'assistant', content: '正文' });
+    await off.request({ requiredToolName: 'tool_wechat' });
+    assert.equal(off.requests[0].tool_choice, 'auto');
+});
 test('SSE交错到达的多个工具参数正确组装并按index配对', async () => {
     const chunks = [
         { choices: [{ delta: { tool_calls: [{ index: 1, id: 'b', type: 'function', function: { name: 'tool_geo', arguments: '{"operation":' } }, { index: 0, id: 'a', type: 'function', function: { name: 'tool_geo', arguments: '{"operation":"place",' } }] }, finish_reason: null }] },

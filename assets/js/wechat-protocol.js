@@ -421,8 +421,30 @@
 
     // Shared by single-character and world composers. A silent decision settles the batch too.
     const countUnanswered = items => items.reduce((count, item) => item.isReply || item.settled ? 0 : item.isUser ? count + 1 : count, 0);
+    // Some providers return a narrated send instead of the offered native call.
+    // Only recover an explicit current-character send with a complete quoted
+    // message. Never infer content from an intention or from a player's line.
+    function narratedSend(raw, characterName, userName) {
+        if (!characterName) return null;
+        const text = String(raw || '').replace(/<(think|thinking|cot)\b[^>]*>[\s\S]*?(?:<\/\1>|$)|```[\s\S]*?```/gi, s => ' '.repeat(s.length));
+        const pattern = /(?:发(?:送|了|出)?(?:一|了)?(?:条|个)?(?:微信|消息|信息)|微信[^。！？\n]{0,60}(?:发送|发出|发了))[^。！？\n]{0,60}[：:]\s*[“"]([^”"\n]{1,1000})[”"]/g;
+        for (const match of text.matchAll(pattern)) {
+            const prefix = text.slice(Math.max(0, match.index - 800), match.index)
+                .replace(/“[^”]*”|"[^"\n]*"|「[^」]*」/g, '');
+            const own = prefix.lastIndexOf(characterName), player = userName ? prefix.lastIndexOf(userName) : -1;
+            const sentence = text.slice(Math.max(0, text.lastIndexOf('。', match.index) + 1, text.lastIndexOf('\n', match.index) + 1), match.index + match[0].indexOf(match[1]));
+            if (own < 0 || player > own || !/微信/.test(prefix + sentence)
+                || /想|准备|打算|考虑|如果|假如|未发|没发|不发|不要|不能|草稿|回忆|昨天|之前|刚才|群聊|群消息|导师|商家|客服|外卖|骑手/.test(sentence)) continue;
+            const recipient = /给([^，,：:\s]{1,20}?)(?:发|发送|联系)/.exec(sentence)?.[1];
+            if (recipient && !['你', '我', '玩家', userName].includes(recipient)) continue;
+            const quoteAt = match.index + match[0].lastIndexOf(match[1]) - 1;
+            return { content: match[1], narration: String(raw).slice(0, quoteAt).trim().replace(/[：:]$/, '。') };
+        }
+        return null;
+    }
     window.RPHubWeChatProtocol = Object.freeze({
         countUnanswered,
+        narratedSend,
         normalizeActiveText,
         MAX_MESSAGES,
         MAX_CONTENT_LEN,

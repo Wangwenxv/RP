@@ -151,6 +151,24 @@ test('首次旧现实记录可重新锚定到剧情日期，旧 ts 不重写', a
   assert.equal(h.s.wechatClockLabel.value, '2023-08-01 18:00');
   assert.equal(h.s.wechatTimeline.value[0].ts, ts); assert.equal(h.s.wechatTimeline.value[0].storyAt, undefined);
 });
+
+test('江拾中文开场在首次RP请求和微信中共用16:15，粗粒度后续时间不倒退', async () => {
+  const h = harness();
+  const card = JSON.parse(fs.readFileSync(path.join(ROOT, 'card/jiangshi/江拾.json'), 'utf8'));
+  h.s.chatHistory.value.push({ id: 'opening', role: 'assistant', content: card.data.first_mes });
+  assert.equal(h.s.wechatClockLabel.value, '2025-11-30 16:15');
+  assert.match(h.s.buildRpStoryClockPrompt(), /2025-11-30 16:15/);
+  assert.match(h.s.buildRpStoryClockPrompt(), /正文首行写完整公历时标/);
+  await h.s.openWechat(); h.s.wechatBurstMode.value = true; await h.send('门口旁边就有饮水机');
+  assert.equal(h.T.format(h.s.wechatTimeline.value.at(-1).storyAt), '2025-11-30 16:15');
+  h.s.chatHistory.value.push({ id: 'later', role: 'assistant', content: '【十一月末 16时】\n她仍在门口。' });
+  await h.s.recordRpMessages();
+  assert.equal(h.s.wechatClockLabel.value, '2025-11-30 16:15');
+  const start = h.T.parse('2025-11-30 16:15');
+  assert.equal(h.T.format(h.T.rpTime('下午五点半，她拿起手机。', start)), '2025-11-30 17:30');
+  assert.equal(h.T.format(h.T.rpTime('【第2日 07时】', start, start)), '2025-12-01 07:00');
+  for (const text of ['她说：下午五点见', '明天下午五点见', '【承和三年八月初七 辰时】']) assert.equal(h.T.rpTime(text, start), null);
+});
 test('落库、重新打开和分支切换恢复各自剧情钟，待发送选择不串分支', async () => {
   const h = harness(); await h.s.openWechat(); h.s.wechatBurstMode.value = true; h.pick('2023-08-01T18:00'); await h.send('A');
   await h.s.closeWechat(); await h.s.openWechat();

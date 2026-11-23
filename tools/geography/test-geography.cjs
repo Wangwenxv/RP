@@ -5,7 +5,7 @@ const root = path.resolve(__dirname, '../..');
 const ctx = vm.createContext({ window: {}, console });
 for (const name of ['built-in-content.js', 'geography.js', 'world-data.js', 'core-utils.js', 'app/30-geography.js']) vm.runInContext(fs.readFileSync(path.join(root, 'assets/js', name), 'utf8'), ctx);
 const G = ctx.window.RPHubGeography, W = ctx.window.RPHubWorlds['jiangnan-south-campus'];
-const card = JSON.parse(fs.readFileSync(path.join(root, 'card/suqixue/苏祈雪.json'), 'utf8'));
+const card = JSON.parse(fs.readFileSync(path.join(root, 'card/suqixue/苏祈雪v2.json'), 'utf8'));
 const bindings = card.data.extensions.rp_hub_geography.bindings;
 const json = v => JSON.parse(JSON.stringify(v));
 const message = (role, content, id) => ({ role, content, id });
