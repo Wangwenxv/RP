@@ -11,6 +11,29 @@ function harness() {
     return { context, G: context.window.RPHubImageGeneration, C: context.window.RPHubCardUtils, requests };
 }
 const plain = value => JSON.parse(JSON.stringify(value));
+
+test('linked references import/export as small paths or URLs, resolve only on pixel requests', async () => {
+    const h = harness(), refs = [{ id: 'file', name: '正面', kind: 'character', description: '外貌', src: 'card/suqixue/sqx1.jpg' },
+        { id: 'remote', name: '地点', kind: 'scene', description: '环境', src: 'https://asset.test/scene.png' }];
+    const raw = { data: { name: 'A', extensions: { rp_hub_image_references: refs } } };
+    const card = h.C.parseImportedCharacterCard(raw), exported = h.C.buildCharacterCardData(card);
+    assert.deepEqual(plain(exported.data.extensions.rp_hub_image_references), refs);
+    assert.equal(h.requests.length, 0); assert.doesNotMatch(JSON.stringify(exported), /base64/);
+    const reads = [];
+    h.context.window.RPHubWeChatMedia = { rasterize: async (src, { signal }) => { reads.push(src); return { blob: new Blob(['pixels']) }; }, blobToDataURL: async () => ref('resolved').dataUrl };
+    await h.G.generate({ ...h.G.PRESETS.yeelo, apiKey: 'key', referenceImages: [refs[0]] }, '自拍');
+    assert.deepEqual(reads, [refs[0].src]);
+    assert.equal(JSON.parse(h.requests[0].options.body).image_data_urls[0], ref('resolved').dataUrl);
+    assert.equal(card.imageReferences[0].dataUrl, undefined, 'resolution must not mutate the card');
+    for (const src of ['javascript:alert(1)', 'file:///C:/private.png', '//other.test/photo.png', 'C:\\private.png', 'https://user:password@asset.test/photo.png'])
+        assert.throws(() => h.C.normalizeImageReferences([{ id: 'bad', src }]));
+});
+
+test('failed linked pixel reads never call a paid image API', async () => {
+    const h = harness(); h.context.window.RPHubWeChatMedia = { rasterize: async () => { throw new Error('资源不存在'); } };
+    await assert.rejects(h.G.generate({ ...h.G.PRESETS.yeelo, apiKey: 'key', referenceImages: [{ id: 'file', src: 'missing.png' }] }, '自拍'), /资源不存在/);
+    assert.equal(h.requests.length, 0);
+});
 test('full endpoint and base URL resolve generation, edits and models without duplicated paths', async () => {
     const h = harness();
     for (const baseUrl of ['https://image.test/v1', 'https://image.test/v1/', 'https://image.test/v1/images/generations', 'https://image.test/v1/images/edits']) {

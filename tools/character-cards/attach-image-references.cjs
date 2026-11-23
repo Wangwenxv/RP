@@ -10,7 +10,7 @@ function cleanLegacy(data) {
     if (Array.isArray(data.character_book?.entries)) data.character_book.entries = data.character_book.entries.filter(e =>
         !(e.comment === '苏祈雪·本人生图外貌' && String(e.content || '').startsWith(marker)));
 }
-function attach(file, images = []) {
+function attach(file, images = [], { linked = false } = {}) {
     file = path.resolve(file);
     const bytes = fs.readFileSync(file), card = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')), data = card.data || card;
     cleanLegacy(data);
@@ -21,9 +21,12 @@ function attach(file, images = []) {
         const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' }[ext];
         if (!mime || pixel.length > 6 * 1024 * 1024) throw new Error('Reference must be PNG/JPEG/WebP, at most 6MB');
         const id = 'ref-' + crypto.createHash('sha256').update(pixel).digest('hex').slice(0, 16);
-        if (!refs.some(r => r.id === id)) refs.push({ id, name: path.basename(image), kind: 'character', description: `${data.name || '角色'}人物参考照片`, dataUrl: `data:${mime};base64,${pixel.toString('base64')}` });
+        const existing = refs.find(r => r.id === id);
+        const source = linked ? { src: path.relative(ROOT, path.resolve(image)).split(path.sep).map(encodeURIComponent).join('/') } : { dataUrl: `data:${mime};base64,${pixel.toString('base64')}` };
+        if (existing) { delete existing.dataUrl; delete existing.src; Object.assign(existing, source); }
+        else refs.push({ id, name: path.basename(image), kind: 'character', description: `${data.name || '角色'}人物参考照片`, ...source });
     }
-    if (refs.length > 16 || refs.reduce((n, r) => n + r.dataUrl.length, 0) > 32 * 1024 * 1024) throw new Error('Too many or oversized references');
+    if (refs.length > 16 || refs.reduce((n, r) => n + (r.dataUrl?.length || 0), 0) > 32 * 1024 * 1024) throw new Error('Too many or oversized references');
     if (refs.length) data.extensions.rp_hub_image_references = refs;
     if (Object.hasOwn(data, 'imageReferences')) data.imageReferences = refs;
     const output = JSON.stringify(card, null, 2) + '\n';
@@ -34,5 +37,5 @@ function attach(file, images = []) {
     fs.writeFileSync(file, output);
     return { changed: true, references: refs.length, backup };
 }
-if (require.main === module) console.log(JSON.stringify(attach(process.argv[2] || path.join(ROOT, 'card/suqixue/苏祈雪v2.json'), process.argv.slice(3))));
+if (require.main === module) console.log(JSON.stringify(attach(process.argv[2] || path.join(ROOT, 'card/suqixue/苏祈雪v2.json'), process.argv.slice(3).filter(arg => arg !== '--linked'), { linked: process.argv.includes('--linked') })));
 module.exports = { attach, cleanLegacy };

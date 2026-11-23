@@ -669,15 +669,21 @@ window.RPHubUtils = {
         if (!Array.isArray(value) || value.length > 16) throw new Error('角色最多保存16张参考图');
         const ids = new Set(); let total = 0;
         return value.map((ref, index) => {
-            if (!ref || typeof ref.dataUrl !== 'string' || !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/i.test(ref.dataUrl)
-                || ref.dataUrl.length > 8 * 1024 * 1024) throw new Error('参考图无效或单张超过6MB');
-            total += ref.dataUrl.length;
+            const inline = typeof ref?.dataUrl === 'string' && ref.dataUrl.length > 0;
+            const src = typeof ref?.src === 'string' ? ref.src.trim() : '';
+            if (inline ? !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/i.test(ref.dataUrl) || ref.dataUrl.length > 8 * 1024 * 1024
+                : !src || src.length > 2048 || /[\x00-\x20\\]/.test(src) || /^(?:\/\/|[a-z][\w+.-]*:)/i.test(src) && !/^https?:\/\//i.test(src)) throw new Error('参考图须为有效图片、相对路径或 HTTP(S) URL，单张不超过6MB');
+            if (!inline && /^https?:/i.test(src)) {
+                const url = new URL(src);
+                if (url.username || url.password) throw new Error('参考图 URL 不能包含账号密码');
+            }
+            total += inline ? ref.dataUrl.length : 0;
             if (total > 32 * 1024 * 1024) throw new Error('角色参考图总计不能超过24MB');
             const id = String(ref.id || `reference-${index + 1}`);
             if (!/^[\w-]{1,80}$/.test(id) || ids.has(id)) throw new Error('参考图 ID 无效或重复');
             ids.add(id);
             return { id, name: String(ref.name || `参考图${index + 1}`).slice(0, 80), kind: ref.kind === 'scene' ? 'scene' : 'character',
-                description: String(ref.description || '').replace(/\s+/g, ' ').trim().slice(0, 240), dataUrl: ref.dataUrl };
+                description: String(ref.description || '').replace(/\s+/g, ' ').trim().slice(0, 240), ...(inline ? { dataUrl: ref.dataUrl } : { src }) };
         });
     };
     const parseImportedCharacterCard = (rawData = {}) => {

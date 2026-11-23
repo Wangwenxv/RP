@@ -18,11 +18,25 @@ const options = () => ({ url: 'https://mock.local/v1/chat/completions', apiKey: 
   logRequest: true, messages: [{ role: 'user', content: '原文\n第二行' }, { role: 'assistant', tool_calls: [{ id: 'x', type: 'function', function: { name: 'tool_search_history', arguments: '{"query":"钥匙"}' } }] }, { role: 'tool', tool_call_id: 'x', content: '{"status":"empty"}' }] });
 test('每次发送前输出与请求体一致的messages固定快照，保留换行/原生工具签名，不输出密钥', async () => {
   const h = harness(), input = options(); await h.api.requestChatCompletion(input);
-  assert.deepEqual(h.events, ['console', 'fetch']);
-  const logged = h.logs[0][1]; assert.deepEqual(JSON.parse(logged.messagesJSON), h.requests[0].body.messages);
+  assert.deepEqual(h.events, ['console', 'console', 'fetch']);
+  const logged = h.logs.find(args => args[0].startsWith('[模型请求]'))[1]; assert.deepEqual(JSON.parse(logged.messagesJSON), h.requests[0].body.messages);
   assert.equal(logged.messages[0].content, '原文\n第二行'); assert.equal(logged.messages[2].tool_call_id, 'x');
   input.messages[0].content = '后来编辑'; assert.equal(logged.messages[0].content, '原文\n第二行');
   assert.ok(!JSON.stringify(h.logs).includes('fixture-secret'));
+});
+
+test('请求摘要只含图片数量和工具名，可区分新图与参考，不复制像素或消息内容', async () => {
+  const h = harness(), input = options();
+  input.messages.push({ role: 'user', content: [
+    { type: 'text', text: '【本轮新图 #new】private-caption' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,private-pixels' } },
+    { type: 'text', text: '【人物参考 #ref】' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,reference-pixels' } }
+  ] });
+  await h.api.requestChatCompletion(input);
+  const line = h.logs.find(args => args[0].startsWith('[模型请求摘要]'))[0];
+  const summary = JSON.parse(line.slice('[模型请求摘要] '.length));
+  assert.equal(summary.images, 2); assert.equal(summary.freshImageLabels, 1); assert.equal(summary.referenceLabels, 1);
+  assert.deepEqual(summary.toolCalls, ['tool_search_history']); assert.equal(summary.toolResults, 1);
+  assert.doesNotMatch(line, /private|pixels|base64|fixture-secret/);
 });
 test('关闭请求调试不输出；自动重试的每次实际发送都打印并标记尝试次数', async () => {
   const off = harness(); await off.api.requestChatCompletion({ ...options(), logRequest: false }); assert.equal(off.logs.length, 0);

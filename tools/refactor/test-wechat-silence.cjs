@@ -38,6 +38,7 @@ function harness(respond = async () => ({ content: '{"messages":[]}' })) {
     setScopedStoredValue: async (key, scope, value) => { stored.set(`${key}/${scope}`, plain(value)); }
   });
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/built-in-content.js'), 'utf8'), context, { filename: 'built-in-content.js' });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/image-generation.js'), 'utf8'), context, { filename: 'image-generation.js' });
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'assets/js/wechat-time.js'), 'utf8'), context, { filename: 'wechat-time.js' });
   vm.runInContext(protocolSource, context, { filename: 'wechat-protocol.js' });
   vm.runInContext(wechatSource, context, { filename: '25-wechat.js' });

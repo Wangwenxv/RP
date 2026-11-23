@@ -2032,6 +2032,7 @@
             let replyCorrections = 0;
             let positionDecision = null;
             const documentBudget = { used: 0 };
+            const referenceBudget = __s.createWechatReferenceBudget?.();
             const geographyBudget = __s.createGeographyBudget?.();
             // Geography needs at most two query rounds, one final reply and one repair.
             const maxRounds = documentTools.length || historyTools.length ? 8 : 4;
@@ -2042,7 +2043,7 @@
                 }
                 report({ title: round ? '正在整理回复' : '正在等待模型回复',
                     detail: round ? '模型正在生成最终回复' : '模型正在处理本轮消息', completed: null, total: null, modelRequest: true });
-                result = await __s.requestTrackedChatCompletion({ model, messages, requestLabel: round > 0 ? '微信工具续写' : '微信回复', ...(tools.length ? { tools, parallelTools: true } : {}), temperature: 0.95, stream: true, signal }, 'chat');
+                result = await __s.requestTrackedChatCompletion({ model, messages, requestLabel: replyCorrections ? '微信回复修正' : round > 0 ? '微信工具续写' : '微信回复', ...(tools.length ? { tools, parallelTools: true } : {}), temperature: 0.95, stream: true, signal }, 'chat');
                 assertRequest();
                 if (['length', 'content_filter'].includes(result?.finishReason)) break;
                 if (!result?.toolCalls?.length) {
@@ -2068,7 +2069,7 @@
                 }
                 const names = result.toolCalls.map(call => call.function?.name);
                 if (names.some(name => !tools.some(tool => tool.function.name === name))) throw new Error('模型调用了本轮未提供的微信工具');
-                viewCalls += names.filter(name => name === 'tool_view_image').length;
+                viewCalls += names.filter(name => ['tool_view_image', 'tool_view_character_reference'].includes(name)).length;
                 loadCalls += names.filter(name => name === 'tool_load_image_sending').length;
                 documentCalls += names.filter(name => documentTools.some(tool => tool.function.name === name)).length;
                 geographyCalls += names.filter(name => name === 'tool_geo').length;
@@ -2090,10 +2091,10 @@
                     const recalling = historyTools.some(tool => tool.function.name === call.function.name);
                     const title = { tool_list_documents: '正在查找历史文件', tool_search_document: '正在搜索文档',
                         tool_read_document: '正在读取原文', tool_document_reader: '正在准备长文阅读',
-                        tool_load_image_sending: '正在加载图片素材', tool_view_image: '正在查看历史图片', tool_geo: '正在查询地点与路程',
+                        tool_load_image_sending: '正在加载图片素材', tool_view_image: '正在查看历史图片', tool_view_character_reference: '正在核对角色参考图', tool_geo: '正在查询地点与路程',
                         tool_search_history: '正在检索历史原文', tool_read_history: '正在核对历史原文' }[call.function.name];
                     report({ title, detail: '工具处理中', completed: null, total: null, toolCall: true });
-                    try { viewed = recalling ? { content: JSON.stringify(await __s.executeHistoryRetrievalTool(call, signal, historyBudget)) } : call.function.name === 'tool_geo' ? geographyResults.get(call.id) : reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget, report) : loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal, report); }
+                    try { viewed = call.function.name === 'tool_view_character_reference' ? await __s.executeWechatReferenceTool(call, signal, referenceBudget, report) : recalling ? { content: JSON.stringify(await __s.executeHistoryRetrievalTool(call, signal, historyBudget)) } : call.function.name === 'tool_geo' ? geographyResults.get(call.id) : reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget, report) : loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal, report); }
                     catch (error) { if (error.name === 'AbortError') throw error; assertRequest(); report({ notice: recalling ? '本次原文核实失败，正在等待模型处理' : call.function.name === 'tool_geo' ? '地理查询失败，正在等待模型处理' : reading ? '本次文件处理失败；已保存的阅读进度保留' : '本次图片工具失败，正在等待模型处理' }); viewed = { content: recalling ? `原文核实失败：${error.message}。本次没有取得依据，保持不确定，不虚构旧事细节。` : call.function.name === 'tool_geo' ? `地理查询失败：${error.message}。未取得路程/地点资料，不得编造，应澄清。` : reading
                         ? `文件阅读失败：${error.message}。没有取得此次资料，不得假装读过；已成功的阅读进度保留，可以重试。`
                         : loading

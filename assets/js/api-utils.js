@@ -79,6 +79,15 @@
                 const messagesJson = JSON.stringify(options.body.messages, null, 2);
                 const title = `[模型请求] ${options.requestType || 'chat'} / ${options.body.model} / 尝试 ${options.requestAttempt || 1}`;
                 try {
+                    const parts = options.body.messages.flatMap(message => Array.isArray(message.content) ? message.content : []);
+                    const calls = options.body.messages.flatMap(message => message.tool_calls || []);
+                    // Keep a scalar summary inspectable even when the browser log viewer collapses objects.
+                    console.info('[模型请求摘要] ' + JSON.stringify({ request: options.requestType || 'chat', model: options.body.model,
+                        images: parts.filter(part => part.type === 'image_url').length,
+                        freshImageLabels: parts.filter(part => part.type === 'text' && part.text?.startsWith('【本轮新图 #')).length,
+                        referenceLabels: parts.filter(part => part.type === 'text' && /^【(?:人物|地点)参考 #/.test(part.text)).length,
+                        toolCalls: calls.map(call => call.function?.name),
+                        toolResults: options.body.messages.filter(message => message.role === 'tool').length }));
                     console.groupCollapsed?.(title);
                     console.info(title, { messages: JSON.parse(messagesJson), messagesJSON: messagesJson,
                         tools: (options.body.tools || []).map(tool => tool.function?.name),
