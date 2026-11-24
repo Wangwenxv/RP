@@ -95,7 +95,8 @@
             qualityModel: DEFAULT_API_CONFIG.qualityModel,
             balancedModel: DEFAULT_API_CONFIG.balancedModel,
             fastModel: DEFAULT_API_CONFIG.fastModel,
-            visionModel: ''
+            visionModel: '',
+            wechatVisionFollowsChat: true
         });
         __s.settings = settings;
         __s.wechatImageModels = ref([{ value: window.RPHubImageGeneration.DEFAULTS.model, label: window.RPHubImageGeneration.DEFAULTS.model }]);

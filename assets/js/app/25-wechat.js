@@ -2018,10 +2018,16 @@
                 ...buildWechatPresetMessages(), ...buildWechatModelMessages()
             ];
             const referenceBudget = __s.createWechatReferenceBudget?.();
+            if (referenceBudget) {
+                referenceBudget.chatModel = model;
+                referenceBudget.visionModel = __s.resolveWechatVisionModel?.() || model;
+            }
             if (__s.buildWechatVisualMessages) messages = await __s.buildWechatVisualMessages(messages, signal, referenceBudget);
             assertRequest();
             if (__s.checkWechatVisualContext) messages = await __s.checkWechatVisualContext(messages, signal, referenceBudget, report);
             assertRequest();
+            const initialIdentityPrompt = __s.buildWechatIdentityDecisionPrompt?.(referenceBudget);
+            if (initialIdentityPrompt) messages.push({ role: 'system', content: initialIdentityPrompt });
             const documentTools = __s.wechatDocumentTools?.() || [];
             const historyTools = __s.historyRetrievalTools?.() || [];
             const historyBudget = __s.createHistoryRetrievalBudget?.();
@@ -2060,7 +2066,9 @@
                     report({ notice: positionError ? `正在完善角色自身场景：${positionError.message}` : '正在修正图片请求格式，尚未调用生图服务' });
                     tools = [];
                     const correction = [imageCorrection, positionError && `刚才的回复尚未发送。本轮内部position无效：${positionError.message}。${__s.buildCharacterPositionPrompt('wechat')}`,
-                        '资料查询已结束，直接输出修正后的完整JSON，不再调用工具。'].filter(Boolean).join('\n');
+                        '资料查询已结束，直接输出修正后的完整JSON，不再调用工具。',
+                        __s.buildWechatIdentityDecisionPrompt?.(referenceBudget),
+                        '这次只修正JSON结构和已指出的字段错误，保留原消息意图、审美选择与逐图归属，不重新编造身份或关系。'].filter(Boolean).join('\n');
                     messages.push({ role: 'assistant', content: result.content || '' }, { role: 'system', content: correction });
                     continue;
                 }
@@ -2097,6 +2105,8 @@
                     if (viewed.attachment) attachments.push(viewed.attachment);
                 }
                 messages.push(...attachments);
+                const identityPrompt = __s.buildWechatIdentityDecisionPrompt?.(referenceBudget);
+                if (identityPrompt) messages.push({ role: 'system', content: identityPrompt });
             }
             const raw = String(result?.content || '').trim();
             if (!raw) throw new Error('模型返回了空内容');
@@ -2107,7 +2117,7 @@
             if (reply.silent) return { ...reply, position: positionDecision };
             if (!reply.messages.length) throw new Error('未能从回复中解析出任何消息');
             // 提示词之外再硬裁一道：模型无视档位刷表情时，这里兜底。
-            return { messages: wxProtocol.applyStickerPolicy(reply.messages, wechatStickerTier()), silent: false, position: positionDecision };
+            return { messages: wxProtocol.applyStickerPolicy(reply.messages, wechatStickerTier()), silent: false, position: positionDecision, referenceBudget };
         };
 
         const playWechatReply = async (messages, signal, scopeId, positionDecision) => {
@@ -2198,7 +2208,7 @@
                 }
                 report({ title: '正在准备发送内容', detail: '模型回复已返回', completed: null, total: null });
                 const timedMessages = resolveWechatReplyTimes(reply.messages);
-                const prepared = __s.prepareWechatReplyMedia ? await __s.prepareWechatReplyMedia(timedMessages, signal) : timedMessages;
+                const prepared = __s.prepareWechatReplyMedia ? await __s.prepareWechatReplyMedia(timedMessages, signal, undefined, reply.referenceBudget) : timedMessages;
                 if (signal.aborted || wechatScopeId() !== scopeId) return;
                 clearWechatActivity();
                 wechatTyping.value = true;
@@ -2284,7 +2294,7 @@
         __s.normalizeActiveWechatImage = raw => {
             if (!window.RPHubWeChatMedia) throw new Error('微信图片模块尚未加载');
             if (!raw || typeof raw !== 'object' || Array.isArray(raw)
-                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations', 'prompt', 'selfPortrait', 'referenceIds', 'scene'].includes(key))) {
+                || Object.keys(raw).some(key => !['mode', 'description', 'assetId', 'usage', 'template', 'text', 'subject', 'tone', 'decorations', 'prompt', 'selfPortrait', 'referenceIds', 'generationReferences', 'scene'].includes(key))) {
                 throw new Error('图片参数不能包含发送者、消息列表或未知字段');
             }
             const image = window.RPHubWeChatMedia.normalizeIntent(raw);

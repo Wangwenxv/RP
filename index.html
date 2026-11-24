@@ -1862,6 +1862,11 @@
                                                 </svg>
                                             </button>
                                         </div>
+                                        <label class="mt-2 flex items-center gap-2 text-xs text-gray-600">
+                                            <input type="checkbox" v-model="settings.wechatVisionFollowsChat" class="rounded text-primary-500 focus:ring-primary-500">
+                                            微信识图跟随当前聊天模型
+                                        </label>
+                                        <p class="mt-1 text-xs text-gray-400">包含照片人物比对。取消勾选后，微信使用上方独立识图模型。</p>
                                     </div>
                                     <div class="col-span-1 md:col-span-2">
                                         <button @click="fetchModels(true)"

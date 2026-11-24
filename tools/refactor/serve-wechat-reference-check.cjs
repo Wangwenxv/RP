@@ -3,15 +3,16 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const ROOT = path.resolve(__dirname, '../..');
-const OUT = path.join(ROOT, '.refactor-tmp/wechat-reference-check');
-const requests = [], assetReads = [];
+const OUT = process.argv[2] ? path.resolve(ROOT, process.argv[2]) : path.join(ROOT, '.refactor-tmp/wechat-reference-check');
+const requests = [], assetReads = [], imageRequests = [];
 const json = (res, value) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
 const bodyOf = async req => { let body = ''; for await (const chunk of req) body += chunk; return JSON.parse(body); };
 const server = http.createServer(async (req, res) => {
     try {
         const url = new URL(req.url, 'http://localhost'), pathname = decodeURIComponent(url.pathname);
-        if (pathname === '/__check/requests') return json(res, { requests, assetReads });
+        if (pathname === '/__check/requests') return json(res, { requests, assetReads, imageRequests });
         if (pathname === '/__check/report' && req.method === 'POST') {
             const report = await bodyOf(req);
             fs.mkdirSync(OUT, { recursive: true });
@@ -50,6 +51,13 @@ const server = http.createServer(async (req, res) => {
                     image_descriptions: fresh.map(part => ({ messageId: part.text.match(/本轮新图 #([^｜]+)/)[1], caption: '离线测试：围巾与长发的人物照片' })) });
             }
             return json(res, { choices: [{ message, finish_reason: finish }] });
+        }
+        if (['/__fixture/v1/images/edits', '/__fixture/v1/images/generations'].includes(pathname)) {
+            const body = await bodyOf(req), images = body.image_data_urls || [];
+            imageRequests.push({ model: body.model, endpoint: pathname, images: images.length,
+                purposes: [...body.prompt.matchAll(/"image":\d+,"role":"([^"]+)"/g)].map(match => match[1]),
+                imageHashes: images.map(data => crypto.createHash('sha256').update(data).digest('hex')) });
+            return json(res, { data: [{ b64_json: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1kAAAAASUVORK5CYII=' }] });
         }
         const file = path.resolve(ROOT, '.' + (pathname === '/' ? '/index.html' : pathname));
         if (!file.startsWith(ROOT + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404).end(); return; }

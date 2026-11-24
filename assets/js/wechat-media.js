@@ -28,6 +28,10 @@
                 || value.referenceIds.some(id => typeof id !== 'string' || !/^[\w-]{1,80}$/.test(id))) throw new Error('referenceIds 只能是生图模式的参考图 ID 列表');
             result.referenceIds = [...new Set(value.referenceIds)];
         }
+        if (value.generationReferences !== undefined) {
+            if (value.mode !== 'generate' || !window.RPHubImageGeneration?.normalizeGenerationReferences) throw new Error('generationReferences只能用于生图');
+            result.generationReferences = window.RPHubImageGeneration.normalizeGenerationReferences(value.generationReferences);
+        }
         if (value.selfPortrait !== undefined) {
             if (value.mode !== 'generate' || typeof value.selfPortrait !== 'boolean') throw new Error('selfPortrait 只能是生图模式的布尔值，表示当前角色本人入镜');
             result.selfPortrait = value.selfPortrait;

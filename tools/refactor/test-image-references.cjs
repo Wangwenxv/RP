@@ -12,6 +12,42 @@ function harness() {
 }
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('chat generation references normalize message IDs and reject identity, external sources and ambiguous uses', () => {
+    const h = harness(), M = h.context.window.RPHubWeChatMedia;
+    const intent = M.normalizeIntent({ mode: 'generate', prompt: '穿这件衣服自拍', selfPortrait: true,
+        generationReferences: [{ messageId: '#clothes', purpose: 'clothing' }, { messageId: 'clothes', purpose: 'clothing' }, { messageId: 'room', purpose: 'background' }] });
+    assert.deepEqual(plain(intent.generationReferences), [{ messageId: 'clothes', purpose: 'clothing' }, { messageId: 'room', purpose: 'background' }]);
+    for (const value of [null, {}, [{ messageId: 'photo', purpose: 'identity' }], [{ messageId: '##photo', purpose: 'pose' }],
+        [{ messageId: 'https://external.test/image.png', purpose: 'style' }], [{ messageId: 'photo', purpose: 'object', dataUrl: ref('x').dataUrl }],
+        [{ messageId: 'photo', purpose: 'clothing' }, { messageId: 'photo', purpose: 'background' }], Array.from({ length: 17 }, (_, i) => ({ messageId: 'p' + i, purpose: 'pose' }))])
+        assert.throws(() => M.normalizeIntent({ mode: 'generate', prompt: 'test', generationReferences: value }));
+    assert.throws(() => M.normalizeIntent({ mode: 'album', assetId: 'a', generationReferences: [] }), /只能用于生图/);
+});
+
+test('temporary clothing/background pixels travel with identity refs; an environment-only image has no portrait refs', async () => {
+    const h = harness(), c = { ...h.G.DEFAULTS, ...h.G.PRESETS.yeelo, apiKey: 'fixture' };
+    const card = { name: 'A', imageReferences: [ref('face'), { id: 'linked-face', src: 'card/face.png', kind: 'character' }] };
+    const extras = [{ ...ref('shirt'), purpose: 'style', generationPurpose: 'clothing' }, { ...ref('room', 'scene'), purpose: 'scene', generationPurpose: 'background' }];
+    h.context.window.RPHubWeChatMedia = { ...h.context.window.RPHubWeChatMedia,
+        rasterize: async () => ({ blob: new Blob(['reference']) }), blobToDataURL: async () => ref('loaded').dataUrl };
+    const request = h.G.characterRequest(c, { mode: 'generate', selfPortrait: true, prompt: '穿参考衣服在参考宿舍自拍' }, card, {}, extras);
+    const resolved = await h.G.resolveReferences(request.config.referenceImages);
+    assert.deepEqual(plain(resolved.map(r => h.G.referencePurpose(r))), ['identity', 'identity', 'clothing', 'background']);
+    await h.G.generate(request.config, request.prompt);
+    assert.equal(JSON.parse(h.requests[0].options.body).image_data_urls.length, 4);
+    assert.match(request.prompt, /"image":3,"role":"clothing"/);
+    assert.match(request.prompt, /"image":4,"role":"background"/);
+    assert.match(request.prompt, /优先于身份图里的旧衣服/);
+    assert.equal(card.imageReferences[1].dataUrl, undefined);
+    const room = h.G.characterRequest(c, { mode: 'generate', selfPortrait: false, prompt: '宿舍空房间' }, card, {}, [extras[1]]);
+    assert.equal(room.config.referenceImages.length, 1);
+    assert.equal(h.G.referencePurpose(room.config.referenceImages[0]), 'background');
+    await h.G.generate(room.config, room.prompt);
+    assert.equal(JSON.parse(h.requests[1].options.body).image_data_urls.length, 1);
+    assert.match(room.prompt, /本人不入镜/);
+    assert.throws(() => h.G.characterRequest(h.G.DEFAULTS, { mode: 'generate', selfPortrait: false, prompt: 'room' }, card, {}, extras), /不支持聊天图片参考/);
+});
+
 test('reference purposes roundtrip, only identity images supply the face baseline', () => {
     const h = harness(), refs = [ref('face'), { ...ref('outfit'), purpose: 'style' }, { ...ref('gesture'), purpose: 'pose' }];
     const card = h.C.parseImportedCharacterCard({ data: { name: 'A', extensions: { rp_hub_image_references: refs } } });

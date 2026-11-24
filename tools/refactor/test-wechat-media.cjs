@@ -75,7 +75,7 @@ const characterRef = id => ({ id, name: id, kind: 'character', description: '角
 test('七图子问题保留原话和图片顺序，不带人设或主模型的改写问题', async () => {
   for (const separate of [false, true]) {
     const h = harness();
-    if (separate) h.s.settings.visionModel = 'dedicated-vision';
+    if (separate) { h.s.settings.visionModel = 'dedicated-vision'; h.s.settings.wechatVisionFollowsChat = false; }
     h.s.currentCharacter.value.imageReferences = ['a', 'b', 'c'].map(characterRef);
     h.s.currentCharacter.value.wechatPersona = '人设哨兵，所有照片必须承认';
     const original = '下面几张照片，哪张好看？\n原话保留：不要替我改写问题。';
@@ -330,6 +330,7 @@ test('本人生成记录保留来源事实，用户上传、他人或历史缺�
 test('独立视觉模型先只观察本轮图片，普通画面不预读人物参考', async () => {
   const h = harness(async () => ({ content: '{"messages":[{"type":"text","content":"看到了"}]}' }));
   h.s.settings.visionModel = 'dedicated-vision';
+  h.s.settings.wechatVisionFollowsChat = false;
   h.s.currentCharacter.value.imageReferences = ['a', 'b', 'c'].map(id => ({ ...characterRef(id), dataUrl: undefined, src: 'card/' + id + '.jpg' }));
   h.s.currentCharacter.value.wechatPersona = '私密预设哨兵';
   const original = h.context.window.RPHubWeChatMedia.rasterize;
@@ -360,12 +361,73 @@ test('核对结论按图返回 verdict，非法取值按核对失败处理，超
       return { content: JSON.stringify(parsed), finishReason: 'stop' };
     };
     const visual = await h.s.buildWechatVisualMessages([]);
-    const checked = await h.s.checkWechatVisualContext(visual, undefined, h.s.createWechatReferenceBudget(), undefined, { mode: 'compare' });
+    const budget = h.s.createWechatReferenceBudget();
+    const checked = await h.s.checkWechatVisualContext(visual, undefined, budget, undefined, { mode: 'compare' });
     assert.equal(h.requests[0].timeoutMs, 240000);
     if (verdict === undefined) assert.match(checked.at(-1).content, /独立画面核对资料/);
     else if (['same', 'likely', 'uncertain', 'different', 'not_applicable'].includes(verdict)) assert.match(checked.at(-1).content, new RegExp(`"verdict":"${verdict}"`));
     else assert.match(checked.at(-1).content, /本轮核对失败/);
+    const prompt = h.s.buildWechatIdentityDecisionPrompt(budget);
+    if (['baseline', 'stranger', 'not_applicable'].includes(verdict)) assert.equal(prompt, '');
+    else {
+      const expected = { same: '本人', likely: '本人', uncertain: '未知', different: '非本人' }[verdict] || '未知';
+      assert.equal(JSON.parse(prompt.split('\n')[1]).photos[0].identity, expected);
+      assert.equal(h.s.wechatTimeline.value[0].media.visualEvidence.verdict, verdict || 'uncertain', '保留原始确定程度');
+      assert.ok(h.s.wechatImageRecordText(h.s.wechatTimeline.value[0]).includes('回复归属：' + expected));
+    }
   }
+});
+
+test('likely混合批次逐图按本人承接，原发送序号不随工具选图顺序改变', async () => {
+  const h = harness(); h.s.currentCharacter.value.imageReferences = ['a', 'b', 'c'].map(characterRef);
+  h.s.wechatTimeline.value = Array.from({ length: 4 }, (_, i) => ({ id: 'photo-' + i, channel: 'wechat', role: 'user', type: 'image', content: 'data:image/png;base64,photo-' + i }));
+  h.s.requestTrackedChatCompletion = async () => ({ content: JSON.stringify({
+    observations: [3, 1, 0, 2].map(i => ({ imageId: 'photo-' + i, verdict: i === 1 ? 'uncertain' : 'likely', details: '逐图可见依据' })),
+    differences: [], uncertainties: ['第二张不能确认']
+  }) });
+  const budget = h.s.createWechatReferenceBudget();
+  await h.s.executeWechatReferenceTool({ function: { arguments: JSON.stringify({ messageIds: ['photo-3', 'photo-1', 'photo-0', 'photo-2'], question: '逐图比对' }) } }, undefined, budget);
+  const prompt = h.s.buildWechatIdentityDecisionPrompt(budget), photos = JSON.parse(prompt.split('\n')[1]).photos;
+  assert.deepEqual(photos.map(p => [p.photo, p.imageId, p.identity]), [[1, 'photo-0', '本人'], [2, 'photo-1', '未知'], [3, 'photo-2', '本人'], [4, 'photo-3', '本人']]);
+  assert.match(prompt, /只有整组每张都为本人才能说“都是我”/);
+  assert.match(prompt, /含本人照片就不能说“都不是我”/);
+  assert.deepEqual(h.s.wechatTimeline.value.map(item => item.media.visualEvidence.verdict), ['likely', 'uncertain', 'likely', 'likely']);
+  assert.equal(h.s.buildWechatIdentityDecisionPrompt(h.s.createWechatReferenceBudget()), '', '新轮不继承临时归属表');
+  h.s.currentCharacter.value.imageReferences = [characterRef('replacement')];
+  assert.doesNotMatch(h.s.wechatImageRecordText(h.s.wechatTimeline.value[0]), /回复归属/, '换参考后历史依据失效');
+});
+
+test('本人归属表进入工具续写与JSON修正，下一轮历史保留likely为本人且卸载临时表', async () => {
+  const h = harness(async (_options, count) => count === 1
+    ? { toolCalls: [{ id: 'reference', type: 'function', function: { name: 'tool_view_character_reference', arguments: '{"question":"比对照片"}' } }] }
+    : { content: count === 2 ? '第三张吧\n第二张我认不出来' : '{"messages":[{"type":"text","content":"第三张吧"},{"type":"text","content":"第二张我认不出来"}]}' });
+  h.s.currentCharacter.value.imageReferences = ['a', 'b', 'c'].map(characterRef);
+  h.s.getChatGeographyWorld = () => ({});
+  h.s.buildCharacterPositionPrompt = () => '返回完整messages JSON';
+  h.s.wechatTimeline.value = Array.from({ length: 4 }, (_, i) => ({ id: 'photo-' + i, channel: 'wechat', role: 'user', type: 'image', content: 'data:image/png;base64,photo-' + i }));
+  const tracked = h.s.requestTrackedChatCompletion;
+  h.s.requestTrackedChatCompletion = async options => {
+    if (options.requestLabel !== '微信独立画面核对') return tracked(options);
+    h.requests.push(structuredClone({ ...options, signal: undefined }));
+    return { content: JSON.stringify({ observations: [0, 1, 2, 3].map(i => ({ imageId: 'photo-' + i, verdict: i === 1 ? 'uncertain' : 'likely', details: '逐图可见依据' })), differences: [], uncertainties: ['第二张不能确认'] }) };
+  };
+  await h.send('哪张好看？');
+  assert.deepEqual(h.requests.map(r => r.requestLabel), ['微信回复', '微信独立画面核对', '微信工具续写', '微信回复修正']);
+  for (const request of h.requests.slice(2)) {
+    const last = request.messages.at(-1);
+    assert.equal(last.role, 'system');
+    assert.match(last.content, /本轮照片回复归属/);
+    assert.match(last.content, /"photo":2,"imageId":"photo-1","verdict":"uncertain","identity":"未知"/);
+    assert.match(last.content, /"photo":3,"imageId":"photo-2","verdict":"likely","identity":"本人"/);
+    assert.equal(request.messages.flatMap(m => Array.isArray(m.content) ? m.content : []).filter(p => p.type === 'image_url').length, 4);
+  }
+  assert.match(h.requests[3].messages.at(-1).content, /只修正JSON结构.*保留原消息意图、审美选择与逐图归属/);
+  assert.equal(h.toasts.length, 0);
+  assert.doesNotMatch(JSON.stringify(h.s.wechatTimeline.value), /本轮照片回复归属|identityDecisions/);
+  await h.send('今天怎么样');
+  const next = JSON.stringify(h.requests.at(-1).messages);
+  assert.match(next, /likely；回复归属：本人/);
+  assert.doesNotMatch(next, /本轮照片回复归属|data:image/);
 });
 
 test('非人物图片不进入身份框架：全部 not_applicable 时只发画面规则', async () => {
@@ -593,7 +655,7 @@ test('参考图按当前卡隔离、第三张允许追加、同轮重复不重�
 });
 test('独立视觉模型一次收到角色参考和待核对照片，聊天只收到短结果', async () => {
   const h = harness(async () => ({ content: '照片呈现较年幼的外观，发型与设定存在差异，不能验证身份。' }));
-  h.s.settings.visionModel = 'vision'; h.s.currentCharacter.value.imageReferences = [characterRef('a')];
+  h.s.settings.visionModel = 'vision'; h.s.settings.wechatVisionFollowsChat = false; h.s.currentCharacter.value.imageReferences = [characterRef('a')];
   h.s.wechatTimeline.value = [{ id: 'target', channel: 'wechat', role: 'user', type: 'image', media: { assetId: 'builtin-salad' } }];
   const result = await h.s.executeWechatReferenceTool({ function: { name: 'tool_view_character_reference', arguments: JSON.stringify({ question: '外貌与设定是否相容', messageId: 'target' }) } });
   assert.equal(h.requests.length, 1); assert.equal(h.requests[0].model, 'vision');
@@ -613,6 +675,7 @@ test('同轮重排或重叠参考选择不重复读取附图，独立视觉问�
   assert.ok(!(await h.s.executeWechatReferenceTool(call(['a', 'b']), undefined, budget)).attachment);
   assert.deepEqual(reads, ['a', 'b']);
   h.s.settings.visionModel = 'vision';
+  h.s.settings.wechatVisionFollowsChat = false;
   const visionBudget = h.s.createWechatReferenceBudget();
   await h.s.executeWechatReferenceTool(call(['a'], '发型'), undefined, visionBudget);
   await h.s.executeWechatReferenceTool(call(['a'], '服装'), undefined, visionBudget);
@@ -635,7 +698,7 @@ test('同模型的身份核对也用独立请求，主聊天取得结构化结�
 });
 
 test('新图已在本轮视觉输入时查看工具不重复读图或计费', async () => {
-  const h = harness(); h.s.settings.visionModel = 'different-vision';
+  const h = harness(); h.s.settings.visionModel = 'different-vision'; h.s.settings.wechatVisionFollowsChat = false;
   h.s.wechatTimeline.value = [{ id: 'new', channel: 'wechat', role: 'user', type: 'image', media: { assetId: 'builtin-salad' } }];
   const result = await h.s.executeWechatImageTool({ function: { name: 'tool_view_image', arguments: '{"messageId":"new","question":"发型"}' } });
   assert.equal(h.requests.length, 0); assert.equal(h.reads, 0); assert.ok(!result.attachment);
@@ -908,6 +971,7 @@ test('独立识图模型查看原图，主模型续写只收到客观细节', as
     : options.messages.some(item => item.role === 'tool') ? { content: '{"messages":[{"type":"text","content":"白色碗"}]}' }
       : { content: '', toolCalls: [{ id: 'c', type: 'function', function: { name: 'tool_view_image', arguments: '{"messageId":"photo","question":"碗的颜色"}' } }] });
   h.s.settings.visionModel = 'vision';
+  h.s.settings.wechatVisionFollowsChat = false;
   h.s.wechatTimeline.value = [{ id: 'photo', ts: 1, channel: 'wechat', role: 'assistant', type: 'image', media: { assetId: 'builtin-salad', caption: '沙拉' } }];
   await h.send('碗是什么颜色');
   assert.equal(h.requests.length, 3);
@@ -1074,6 +1138,122 @@ function enableGeneration(h, generate = async () => new Blob(['generated pixels'
   h.s.settings.wechatImageApi = { apiKey: 'fixture-image-key' };
   h.context.window.RPHubImageGeneration = { ...h.context.window.RPHubImageGeneration, generate };
 }
+
+function enableReferenceGeneration(h, capture = []) {
+  h.context.window.RPHubWeChatMedia.blobToDataURL = async () => referencePixel;
+  h.s.settings.wechatImageApi = { ...h.context.window.RPHubImageGeneration.PRESETS.yeelo, apiKey: 'fixture-image-key' };
+  h.context.window.RPHubImageGeneration = { ...h.context.window.RPHubImageGeneration,
+    generate: async (config, prompt) => { capture.push({ config: structuredClone(config), prompt }); return new Blob(['generated pixels']); } };
+  return capture;
+}
+
+test('微信生图按消息ID合并本人、衣服和历史背景，复用本轮查看像素且不污染下一轮', async () => {
+  const intent = { mode: 'generate', selfPortrait: true, prompt: '穿上传的衣服在宿舍自拍', description: '宿舍里的新衣自拍',
+    generationReferences: [{ messageId: '#clothes', purpose: 'clothing' }, { messageId: 'room', purpose: 'background' }] };
+  const h = harness(async (_options, count) => count === 1
+    ? { toolCalls: [{ id: 'view-room', type: 'function', function: { name: 'tool_view_image', arguments: '{"messageId":"room","question":"宿舍布局"}' } }] }
+    : { content: count === 2 ? JSON.stringify({ messages: [{ type: 'image_request', media: intent }] }) : '{"messages":[{"type":"text","content":"嗯"}]}' });
+  const calls = enableReferenceGeneration(h);
+  h.s.currentCharacter.value.imageReferences = ['front', 'side', 'third'].map(characterRef);
+  const pixelReads = [], read = h.library.read;
+  h.library.read = async (id, thumbnail, signal) => { if (thumbnail === false) pixelReads.push(id); return read(id, thumbnail, signal); };
+  h.images.set('room-asset', { id: 'room-asset' }); h.images.set('clothes-asset', { id: 'clothes-asset' });
+  h.s.wechatTimeline.value = [
+    { id: 'room', channel: 'wechat', role: 'user', type: 'image', media: { assetId: 'room-asset' } },
+    { id: 'previous', channel: 'wechat', role: 'assistant', type: 'text', content: '我在宿舍' },
+    { id: 'clothes', channel: 'wechat', role: 'user', type: 'image', media: { assetId: 'clothes-asset', caption: '新衣服' } }
+  ];
+  const cardBefore = JSON.stringify(h.s.currentCharacter.value);
+  await h.send('穿这件衣服给我拍个照');
+  assert.equal(h.toasts.length, 0);
+  assert.equal(calls.length, 1); assert.equal(h.requests.length, 2);
+  assert.deepEqual(pixelReads, ['clothes-asset', 'room-asset'], '新图和历史查看各读一次完整像素，生图沿用本轮缓存');
+  assert.deepEqual(calls[0].config.referenceImages.map(ref => h.context.window.RPHubImageGeneration.referencePurpose(ref)), ['identity', 'identity', 'identity', 'clothing', 'background']);
+  assert.equal(calls[0].config.referenceImages[3].dataUrl, referencePixel);
+  assert.match(calls[0].prompt, /"image":4,"role":"clothing"/);
+  assert.match(calls[0].prompt, /"image":5,"role":"background"/);
+  assert.equal(JSON.stringify(h.s.currentCharacter.value), cardBefore);
+  assert.doesNotMatch(JSON.stringify(h.s.wechatTimeline.value), /generationReferences|generationPurpose|REAL_PIXELS/);
+  await h.send('好滴');
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(JSON.stringify(h.requests.at(-1).messages), /REAL_PIXELS|"purpose":"clothing"|image_url/);
+});
+
+test('宿舍纯场景生图只读取显式背景，不附角色人物参考', async () => {
+  const h = harness(), calls = enableReferenceGeneration(h);
+  h.s.currentCharacter.value.imageReferences = ['front', 'side', 'third'].map(characterRef);
+  h.s.wechatTimeline.value = [{ id: 'room', channel: 'wechat', role: 'user', type: 'image', media: { assetId: 'builtin-salad' } }];
+  await h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'generate', selfPortrait: false, prompt: '空的宿舍房间', generationReferences: [{ messageId: 'room', purpose: 'background' }] } }], new AbortController().signal);
+  assert.equal(calls[0].config.referenceImages.length, 1);
+  assert.equal(calls[0].config.referenceImages[0].generationPurpose, 'background');
+  await h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'generate', selfPortrait: false, prompt: '宿舍书桌近景' } }], new AbortController().signal);
+  assert.equal(calls[1].config.referenceImages.length, 0);
+});
+
+test('生图参考整批校验失败、无像素、跨会话、资源丢失、超额或协议不支持时不调用生图', async () => {
+  for (const kind of ['unknown', 'description', 'missing', 'over-limit', 'unsupported']) {
+    const h = harness(), calls = enableReferenceGeneration(h);
+    h.s.wechatTimeline.value = [{ id: 'valid', channel: 'wechat', role: 'user', type: 'image', media: { assetId: 'builtin-salad' } }];
+    let references = [{ messageId: 'valid', purpose: 'clothing' }, { messageId: 'other-branch', purpose: 'background' }];
+    if (kind === 'description') { h.s.wechatTimeline.value[0].media = { descriptionOnly: true, caption: '只有叙述' }; references = references.slice(0, 1); }
+    if (kind === 'missing') { h.s.wechatTimeline.value[0].media.assetId = 'missing'; references = references.slice(0, 1); }
+    if (kind === 'over-limit') { h.s.currentCharacter.value.imageReferences = Array.from({ length: 16 }, (_, i) => characterRef('ref-' + i)); references = references.slice(0, 1); }
+    if (kind === 'unsupported') { h.s.settings.wechatImageApi = { ...h.context.window.RPHubImageGeneration.DEFAULTS, apiKey: 'fixture' }; references = references.slice(0, 1); }
+    await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'generate', selfPortrait: kind === 'over-limit', prompt: 'test', generationReferences: references } }], new AbortController().signal));
+    assert.equal(calls.length, 0, kind);
+    if (kind !== 'missing') assert.equal(h.reads, 0, kind + '在读图前拒绝');
+  }
+});
+
+test('读取生图参考期间停止或切会话，晚到像素不交给生图服务', async () => {
+  for (const kind of ['stop', 'branch']) {
+    const h = harness(), calls = enableReferenceGeneration(h), controller = new AbortController();
+    h.s.wechatTimeline.value = [{ id: 'photo', channel: 'wechat', role: 'user', type: 'image', media: { assetId: 'builtin-salad' } }];
+    h.library.read = async () => { if (kind === 'stop') controller.abort(); else h.setScope('branch-b'); return new Blob(['late']); };
+    await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media: { mode: 'generate', selfPortrait: false, prompt: 'room', generationReferences: [{ messageId: 'photo', purpose: 'background' }] } }], controller.signal), { name: 'AbortError' });
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('旧生图任务重试保留选图ID和用途，已生成成功的像素不重新付费', async () => {
+  const h = harness(), calls = enableReferenceGeneration(h);
+  h.s.wechatTimeline.value = [{ id: 'photo', channel: 'wechat', role: 'user', type: 'image', media: { assetId: 'builtin-salad' } }];
+  const media = { mode: 'generate', selfPortrait: false, prompt: '参考宿舍', generationReferences: [{ messageId: 'photo', purpose: 'background' }] };
+  const generate = h.context.window.RPHubImageGeneration.generate;
+  h.context.window.RPHubImageGeneration = { ...h.context.window.RPHubImageGeneration, generate: async () => { throw new Error('接口失败'); } };
+  await assert.rejects(h.s.prepareWechatReplyMedia([{ type: 'image_request', media }], new AbortController().signal), /接口失败/);
+  const task = h.s.wechatMediaTasks.value[0];
+  assert.deepEqual(task.messages[0].media.generationReferences, media.generationReferences);
+  h.context.window.RPHubImageGeneration = { ...h.context.window.RPHubImageGeneration, generate };
+  await h.s.prepareWechatReplyMedia(task.messages, new AbortController().signal, task);
+  await h.s.prepareWechatReplyMedia(task.messages, new AbortController().signal, task);
+  assert.equal(calls.length, 1, '成功资源检查点复用，不重新生图');
+});
+
+test('默认微信识图跟随当前聊天模型，旧visionModel不钉住比对，单轮模型保持一致', async () => {
+  const h = harness(async (_options, count) => {
+    if (count === 1) { h.s.settings.model = 'next-chat'; return { toolCalls: [{ id: 'ref', type: 'function', function: { name: 'tool_view_character_reference', arguments: '{"question":"核对人物"}' } }] }; }
+    return { content: '{"messages":[{"type":"text","content":"看到了"}]}' };
+  });
+  h.s.settings.model = 'selected-chat'; h.s.settings.visionModel = 'qwen3.7-plus';
+  h.s.currentCharacter.value.imageReferences = [characterRef('face')];
+  h.s.wechatPendingImage.value = referencePixel;
+  await h.send('哪张好看？');
+  assert.deepEqual(h.requests.map(r => r.model), ['selected-chat', 'selected-chat', 'selected-chat']);
+  assert.equal(h.requests[1].requestLabel, '微信独立画面核对');
+  await h.send('接着聊');
+  assert.equal(h.requests.at(-1).model, 'next-chat');
+});
+
+test('显式关闭跟随时微信继续使用独立visionModel，主回复仍用当前聊天模型', async () => {
+  const h = harness(async (_options, count) => count === 1
+    ? { toolCalls: [{ id: 'ref', type: 'function', function: { name: 'tool_view_character_reference', arguments: '{"question":"核对人物"}' } }] }
+    : { content: '{"messages":[{"type":"text","content":"看到了"}]}' });
+  h.s.settings.model = 'selected-chat'; h.s.settings.visionModel = 'dedicated-vision'; h.s.settings.wechatVisionFollowsChat = false;
+  h.s.currentCharacter.value.imageReferences = [characterRef('face')]; h.s.wechatPendingImage.value = referencePixel;
+  await h.send('哪张好看？');
+  assert.deepEqual(h.requests.map(r => [r.requestLabel, r.model]), [['微信画面观察', 'dedicated-vision'], ['微信回复', 'selected-chat'], ['微信独立画面核对', 'dedicated-vision'], ['微信工具续写', 'selected-chat']]);
+});
 const generated = () => ({ type: 'image_request', media: { mode: 'generate',
   prompt: 'young adult woman, shoulder-length soft hair tucked behind ears, phone selfie, campus corridor, evening light',
   description: '教学楼走廊里，齐肩头发别在耳后的女生自拍', usage: 'scene_photo' } });
