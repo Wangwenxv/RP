@@ -55,16 +55,22 @@
             const s = window.__REFERENCE_CHECK_SCOPE__;
             s.showWechatSettings.value = false;
             const before = (await (await fetch('/__check/requests')).json()).requests.length;
-            const source = await RPHubWeChatMedia.rasterize('assets/images/wechat/salad.jpg');
-            s.wechatPendingImage.value = await RPHubWeChatMedia.blobToDataURL(source.blob);
-            s.wechatInput.value = '我到啦，这张照片像你吗';
+            for (const name of ['1.jpg', '2.png', '3.jpg', '4.jpg']) {
+                const source = await RPHubWeChatMedia.rasterize('card/suqixue/sqx_test/' + name);
+                s.wechatPendingImage.value = await RPHubWeChatMedia.blobToDataURL(source.blob);
+                s.wechatInput.value = '';
+                await s.sendWechatMessage();
+            }
+            const originalQuestion = '下面这4张照片，哪张好看？';
+            s.wechatInput.value = originalQuestion;
             await s.sendWechatMessage();
             await s.requestWechatReplyNow();
             let traffic = await (await fetch('/__check/requests')).json();
             const turn = traffic.requests.slice(before);
-            check('同模型先独立核对再聊天，两次请求且不重复调用参考工具', turn.length === 2 && turn.every(r => r.model === 'fixture-multimodal' && r.toolCalls.length === 0));
-            check('独立核对为新图加两张参考，聊天只带一张用户新图', turn[0].images === 3 && turn[0].visualCheckImageLabels === 3 && turn[0].visualCheckReferenceLabels === 2 && turn[1].images === 1 && turn[1].freshLabels === 1 && turn[1].referenceLabels === 0);
-            check('真实模型编号变体通过校验，资料进入聊天且参考像素不重附', turn[1].hasVisualCheck && !turn[1].hasReferenceReturn && turn[1].toolResults === 0);
+            check('主聊天按需调用一次子问题，之后继续回复', turn.length === 3 && turn[0].images === 4 && turn[1].images === 7 && turn[2].images === 4);
+            check('子问题完整收到三张参考与四张待判断图', turn[1].visualCheckImageLabels === 7 && turn[1].visualCheckReferenceLabels === 3);
+            check('子问题按参考在前组织并保留玩家原话', turn[1].comparisonTask.includes('前3张') && turn[1].comparisonTask.includes('后4张') && turn[1].comparisonTask.endsWith(originalQuestion));
+            check('主聊天使用核对结果，参考像素不重复附送', turn[2].hasVisualCheck && turn[2].hasReferenceReturn && turn[2].toolResults === 1);
             check('真实路径读取不回写角色卡内嵌数据', s.currentCharacter.value.imageReferences.every(r => r.src && !r.dataUrl));
             const photo = s.wechatTimeline.value.find(i => i.role === 'user' && i.type === 'image');
             check('用户图片存为资源 ID 并保留模型给出的短描述', photo?.media?.assetId && photo.media.caption === '离线测试：围巾与长发的人物照片' && !photo.content);

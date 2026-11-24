@@ -9,6 +9,8 @@
 世界开场白、清空恢复与本轮模型/工具调用状态见 [开场与调用状态交接](./12-world-opening-and-activity.md)。
 微信按需生图见 [生图能力交接](./13-wechat-image-generation.md)，已配置 API 仍发送描述卡片的修正与真实场景实测见 [生图格式修正交接](./14-wechat-image-reliability.md)。
 苏祈雪 v2 固定外貌、发图工具复用与旧存档填写见 [人物外貌生图交接](./15-character-image-identity.md)。
+
+2026-11-24原单卡微信解除工具次数与两张参考限制，保持按需参考；苏祈雪链路验收和空白Chat-ai视觉基线分开记录，见 [视觉工具交接](../wechat-visual-tools-handoff.md)。
 聊天右侧地图抽屉、头像定位、玩家设定与模型事实位置更新见 [聊天地图交接](./16-chat-geography-map.md)。
 角色自主决定自身场景、微信内部位置协议、刷新恢复与线上验证见 [角色自身位置交接](./17-wechat-location-replay.md)。
 

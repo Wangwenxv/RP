@@ -18,7 +18,7 @@ test('reference contract preserves identity and contextual tastes/poses instead 
     await h.G.generate(request.config, request.prompt);
     const body = JSON.parse(h.requests[0].options.body);
     assert.equal(body.image_data_urls.length, 2);
-    assert.match(body.prompt, /不是只参考脸/); assert.match(body.prompt, /可迁移视觉偏好/);
+    assert.match(body.prompt, /衣品、妆容、表情和拍照习惯/); assert.match(body.prompt, /视觉偏好/);
     assert.match(body.prompt, /第2张图片的拍照动作/); assert.match(body.prompt, /轻淡眼妆/);
     assert.match(body.prompt, /没有本轮明确的.*不出现头戴麦克风/);
     assert.equal(body.negative_prompt, undefined);
@@ -65,7 +65,7 @@ test('natural portrait names the primary face reference and forwards explicit cu
     const h = harness(), card = { imageReferences: [ref('front', '近景'), ref('side', '侧面')] };
     const request = h.G.characterRequest(h.c, { mode: 'generate', selfPortrait: true, prompt: '齐肩细软黑发，校园自拍',
         scene: { ...scene, appearance: '自然白皙，齐肩细软黑发' } }, card);
-    assert.match(request.prompt, /第1张人物参考作为主要面部依据/);
+    assert.match(request.prompt, /第1张身份参考作为主要面部依据/);
     assert.match(request.prompt, /不混合出新的五官/);
     assert.match(request.prompt, /"appearance":"自然白皙，齐肩细软黑发"/);
     assert.match(h.G.formatPrompt(h.c), /生图服务看不到整张角色卡/);

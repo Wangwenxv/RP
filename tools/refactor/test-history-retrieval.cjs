@@ -100,6 +100,15 @@ test('同轮重复、调用次数和实际结果字符预算有界；超额结�
   const budget = h.s.createHistoryRetrievalBudget(); budget.used = 11999;
   await assert.rejects(h.search('钥匙', budget), /12000 字符预算/); assert.equal(budget.records.size, 0);
 });
+test('微信允许超过四次原文检索，字符预算仍有效且RP次数限制保留', async () => {
+  const h = harness(); seed(h); const budget = h.s.createHistoryRetrievalBudget(); budget.unlimitedCalls = true;
+  for (let i = 0; i < 8; i++) await h.search('不存在的词' + i, budget);
+  assert.equal(budget.calls, 8);
+  assert.match(h.s.buildHistoryRetrievalPrompt('wechat'), /不限制检索\/读取次数/);
+  assert.match(h.s.buildHistoryRetrievalPrompt('rp'), /最多四次/);
+  budget.used = 12000;
+  await assert.rejects(h.search('钥匙', budget), /12000 字符预算/);
+});
 test('参数拒绝跨角色字段、非法渠道/范围和未知工具；关闭检索保留旧工具，按需工具不被强制调用', async () => {
   const h = harness(); seed(h); const tools = h.s.getEnabledActiveTools();
   assert.equal(tools.length, 2); assert.equal(h.s.shouldRequireActiveToolCall(tools), false);

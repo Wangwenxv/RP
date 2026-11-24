@@ -12,6 +12,18 @@ function harness() {
 }
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('reference purposes roundtrip, only identity images supply the face baseline', () => {
+    const h = harness(), refs = [ref('face'), { ...ref('outfit'), purpose: 'style' }, { ...ref('gesture'), purpose: 'pose' }];
+    const card = h.C.parseImportedCharacterCard({ data: { name: 'A', extensions: { rp_hub_image_references: refs } } });
+    assert.deepEqual(plain(h.C.buildCharacterCardData(card).data.extensions.rp_hub_image_references), refs);
+    assert.deepEqual(plain(h.G.identityReferencesOf(card)).map(r => r.id), ['face']);
+    const request = h.G.characterRequest({ ...h.G.PRESETS.yeelo, apiKey: 'fixture' }, { mode: 'generate', selfPortrait: true, prompt: '自拍' }, card);
+    assert.equal(request.config.referenceImages.length, 3);
+    assert.match(request.prompt, /风格与姿势图只迁移对应偏好，不迁移其面孔/);
+    assert.throws(() => h.C.normalizeImageReferences([{ ...ref('bad'), purpose: 'scene' }]), /用途与/);
+    assert.throws(() => h.C.normalizeImageReferences([{ ...ref('bad'), purpose: 'unknown' }]), /用途须为/);
+});
+
 test('linked references import/export as small paths or URLs, resolve only on pixel requests', async () => {
     const h = harness(), refs = [{ id: 'file', name: '正面', kind: 'character', description: '外貌', src: 'card/suqixue/sqx1.jpg' },
         { id: 'remote', name: '地点', kind: 'scene', description: '环境', src: 'https://asset.test/scene.png' }];

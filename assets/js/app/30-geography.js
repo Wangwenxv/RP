@@ -133,7 +133,7 @@
             if (args.operation === 'set_position') return (async () => {
                 G.validateArgs(args);
                 if (Object.keys(args).some(k => !['operation', 'action', 'placeId', 'to', 'mode', 'sceneDetail'].includes(k))) throw new Error('set_position只接受自身场景字段，不能指定玩家或旧原文');
-                if (++budget.calls > 4) throw new Error('本轮地理调用已达4次');
+                if (++budget.calls > 4 && !budget.unlimitedCalls) throw new Error('本轮地理调用已达4次');
                 const decision = { action: args.action, ...Object.fromEntries(['placeId', 'to', 'mode'].filter(k => args[k]).map(k => [k, args[k]])), ...(args.sceneDetail ? { detail: args.sceneDetail } : {}) };
                 const storyAt = context?.storyAt ?? __s.wechatClock?.value?.time;
                 const next = G.decidePosition(data, state(data).character, decision, storyAt);
@@ -152,14 +152,14 @@
             })();
             if (args.operation === 'update_location') {
                 if (context?.channel === 'wechat') return { status: 'use_final_position', note: '微信不补写旧原文；使用最终JSON的position决定当前自身场景。' };
-                if (++budget.calls > 4) return { status: 'budget_exhausted', note: '本轮地理调用已达4次' };
+                if (++budget.calls > 4 && !budget.unlimitedCalls) return { status: 'budget_exhausted', note: '本轮地理调用已达4次' };
                 return updateLocation(data, args, call, context);
             }
             const locations = state(data);
             if (budget.positionDecision) locations.character = G.decidePosition(data, locations.character, budget.positionDecision, context?.storyAt ?? __s.wechatClock?.value?.time);
             const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
             const key = JSON.stringify([__s.getCurrentStoryBranchScopeId(), data.id, locations, canonical(args)]);
-            if (++budget.calls > 4) return { status: 'budget_exhausted', note: '本轮地理调用已达4次，请依据已有资料完成回复。' };
+            if (++budget.calls > 4 && !budget.unlimitedCalls) return { status: 'budget_exhausted', note: '本轮地理调用已达4次，请依据已有资料完成回复。' };
             if (budget.seen.has(key)) return { status: 'already_returned', referenceCallId: budget.seen.get(key), note: '同样查询本轮已返回，使用原结果继续回复，不重复查询。' };
             const result = G.execute(data, locations, args);
             personal(result, args.detail, args.requests);

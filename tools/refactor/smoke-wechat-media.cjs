@@ -166,6 +166,33 @@ const check = (label, value) => { assert.ok(value, label); console.log('PASS ' +
     const lateCount = await page.evaluate(() => window.__APP_PROXY__.wechatTimeline.length);
     delayReply(); await late;
     check('关闭重开后过期请求不追加图片', await page.evaluate(n => window.__APP_PROXY__.wechatTimeline.length === n, lateCount));
+    // A fresh fixture timeline keeps the batch test independent of earlier scene
+    // photos, which legitimately trigger a separate visual comparison request.
+    await page.evaluate(() => { const r = window.__APP_PROXY__; r.wechatTimeline = []; r.wechatBurstMode = true; });
+    fixture = 'upload'; const burstStart = requests.length;
+    for (let i = 0; i < 6; i++) {
+      await page.locator('.wx-composer input[type=file]').first().setInputFiles(path.join(ROOT, 'assets/images/wechat/salad.jpg'));
+      await page.waitForFunction(() => !!window.__APP_PROXY__.wechatPendingImage);
+      await send('');
+    }
+    check('连发六张图片先落成气泡，没有提前请求回复', requests.length === burstStart
+      && await page.evaluate(() => window.__APP_PROXY__.wechatUnansweredCount === 6 && window.__APP_PROXY__.wechatTimeline.filter(item => item.type === 'image').length === 6));
+    await page.evaluate(async () => { await window.__APP_PROXY__.requestWechatReplyNow(); });
+    const burstRequest = requests[burstStart], burstParts = burstRequest.messages.flatMap(message => Array.isArray(message.content) ? message.content : []);
+    check('统一回复把六张完整照片按顺序提交给模型', requests.length === burstStart + 1 && burstParts.filter(part => part.type === 'image_url').length === 6
+      && burstParts.filter(part => part.type === 'text' && part.text.startsWith('【本轮新图')).length === 6);
+    check('六张照片均保存识图描述，待回复计数清零', await page.evaluate(() => {
+      const r = window.__APP_PROXY__;
+      return r.wechatUnansweredCount === 0 && r.wechatTimeline.filter(item => item.type === 'image').every(item => item.media.caption.includes('沙拉'));
+    }));
+    await page.evaluate(() => { window.__APP_PROXY__.wechatBurstMode = false; });
+    fixture = 'silence'; const afterBurst = requests.length; await send('今天怎么样');
+    check('六图处理后的普通下一轮只带描述', !JSON.stringify(requests[afterBurst].messages).includes('data:image/'));
+    await page.evaluate(async () => { const r = window.__APP_PROXY__; await r.closeWechat(); await r.openWechat(); });
+    await page.waitForFunction(() => document.querySelectorAll('.wx-photo-button img').length === 6
+      && [...document.querySelectorAll('.wx-photo-button img')].every(img => img.naturalWidth > 0));
+    check('关闭重开恢复六张图片及全部说明', await page.locator('.wx-photo-button').count() === 6
+      && await page.evaluate(() => window.__APP_PROXY__.wechatTimeline.filter(item => item.type === 'image').every(item => item.media.caption.includes('沙拉'))));
     check('0 JavaScript 错误', errors.length === 0);
     const filePage = await browser.newPage();
     await filePage.goto('file:///' + path.join(ROOT, 'index.html').replace(/\\/g, '/'), { waitUntil: 'domcontentloaded' });

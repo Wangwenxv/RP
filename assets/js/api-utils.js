@@ -2,6 +2,7 @@
 (function () {
     const { extractApiErrorMessage, formatApiErrorMessage, getApiUsagePayload } = window.RPHubUtils;
     const { extractNativeReasoning, isNativeReasoningPart } = window.RPHubCardUtils;
+    let debugRequestSequence = 0;
     const buildApiEndpoint = (baseUrl, path) => {
         const root = String(baseUrl || '').replace(/\/+$/, '');
         const apiRoot = /\/v1$/i.test(root) ? root : `${root}/v1`;
@@ -83,6 +84,13 @@
                     const calls = options.body.messages.flatMap(message => message.tool_calls || []);
                     // Keep a scalar summary inspectable even when the browser log viewer collapses objects.
                     console.info('[模型请求摘要] ' + JSON.stringify({ request: options.requestType || 'chat', model: options.body.model,
+                        requestId: options.requestDebugId || null, attempt: options.requestAttempt || 1,
+                        stream: !!options.body.stream, temperature: options.body.temperature,
+                        messageCount: options.body.messages.length,
+                        textCharacters: options.body.messages.reduce((sum, message) => sum + (typeof message.content === 'string'
+                            ? message.content.length : (message.content || []).reduce((n, part) => n + (part.type === 'text' ? (part.text || '').length : 0), 0)), 0),
+                        availableTools: (options.body.tools || []).map(tool => tool.function?.name),
+                        toolChoice: options.body.tool_choice || null,
                         images: parts.filter(part => part.type === 'image_url').length,
                         freshImageLabels: parts.filter(part => part.type === 'text' && part.text?.startsWith('【本轮新图 #')).length,
                         comparisonImageLabels: parts.filter(part => part.type === 'text' && part.text?.startsWith('【本轮对照旧图 #') && !part.text.includes('读取失败')).length,
@@ -94,6 +102,7 @@
                         toolResults: options.body.messages.filter(message => message.role === 'tool').length }));
                     console.groupCollapsed?.(title);
                     console.info(title, { messages: JSON.parse(messagesJson), messagesJSON: messagesJson,
+                        requestId: options.requestDebugId || null,
                         tools: (options.body.tools || []).map(tool => tool.function?.name),
                         stream: options.body.stream, messageCount: options.body.messages.length });
                     console.groupEnd?.();
@@ -131,9 +140,11 @@
 
     const requestChatCompletionOnce = async (options, attempt) => {
         const startedAt = Date.now();
+        options = { ...options, requestDebugId: `request-${startedAt}-${++debugRequestSequence}` };
         const logResponse = options.logResponse || options.replyInTool;
         let rawResponse = '';
         let streamResponse = null;
+        const streamEvents = [];
         const result = { content: '', reasoning: '', toolCalls: [], assistantMessage: null, usage: null, finishReason: null, isStream: false };
         let receivedPayload = false;
         let pendingContent = '';
@@ -141,6 +152,8 @@
         const calls = new Map();
         const assistantMetadata = {};
         let toolsChanged = false;
+        const responseFields = new Set();
+        let payloadCount = 0, firstPayloadMs = null, firstReasoningMs = null, receivedEventStream = false;
         const toolSnapshot = () => [...calls.entries()].sort(([a], [b]) => a - b).map(([index, call]) => ({
             ...call, index, function: { ...call.function }
         }));
@@ -242,6 +255,9 @@
             return result;
         };
         const accept = data => {
+            if (options.logResponse) streamEvents.push(data);
+            payloadCount++;
+            if (firstPayloadMs === null) firstPayloadMs = Date.now() - startedAt;
             if (streamResponse) {
                 const { choices = [], ...metadata } = data;
                 streamResponse = mergeResponseDelta(streamResponse, metadata);
@@ -263,6 +279,14 @@
             const message = choice.delta || choice.message || {};
             let content = readTextContent(message.content ?? choice.text);
             const reasoning = extractNativeReasoning(message) || extractNativeReasoning(choice) || '';
+            Object.keys(message).forEach(key => responseFields.add(key));
+            if (reasoning && firstReasoningMs === null) {
+                firstReasoningMs = Date.now() - startedAt;
+                if (options.logResponse) {
+                    try { console.info('[模型思考开始] ' + JSON.stringify({ requestId: options.requestDebugId,
+                        request: options.requestType || 'chat', model: options.model, firstReasoningMs })); } catch (_) { }
+                }
+            }
             plainContent += content;
             refusal += readTextContent(message.refusal);
             // 保留转接接口返回的签名和推理字段，原样用于本轮工具结果回传，不混进聊天正文。
@@ -318,6 +342,7 @@
                 ...(options.stream ? { stream_options: { include_usage: true } } : {})
             } }, async (response, touch) => {
                 const eventStream = response.headers.get('content-type')?.includes('text/event-stream');
+                receivedEventStream = !!eventStream;
                 let rawText;
                 if (!eventStream) {
                     rawText = await response.text();
@@ -328,6 +353,7 @@
                     }
                 }
                 if (logResponse) streamResponse = { choices: [] };
+                receivedEventStream = true;
                 result.isStream = !!options.stream;
                 let buffer = '';
                 let eventLines = [];
@@ -402,10 +428,35 @@
             failure = error;
             throw error;
         } finally {
-            if (logResponse) console.info(options.logResponse ? '[模型输出][最新一次]' : '[Gemini抗截断]', {
-                模型: options.model, 次数: attempt, 结果: failure ? failure.message : '成功',
-                响应体: rawResponse || (streamResponse ? JSON.stringify(streamResponse) : '')
-            });
+            if (logResponse) {
+                try {
+                    if (options.logResponse) console.info('[模型输出摘要] ' + JSON.stringify({
+                        requestId: options.requestDebugId, request: options.requestType || 'chat', model: options.model, attempt,
+                        status: failure ? 'failed' : 'completed', error: failure?.message || null,
+                        requestedStream: !!options.stream, receivedEventStream, payloadCount, firstPayloadMs, firstReasoningMs,
+                        durationMs: Date.now() - startedAt, finishReason: result.finishReason,
+                        responseFields: [...responseFields], reasoningCharacters: result.reasoning.length,
+                        reasoningStatus: result.reasoning ? 'returned' : 'not_returned',
+                        inlineThinkingPresent: /<(?:think|thinking|reasoning|analysis)(?:\s[^>]*)?>/i.test(plainContent),
+                        contentCharacters: result.content.length,
+                        toolCalls: toolSnapshot().map(call => ({ id: call.id, name: call.function.name, arguments: call.function.arguments }))
+                    }));
+                    const responseLog = {
+                        requestId: options.requestDebugId, 请求: options.requestType || 'chat',
+                        模型: options.model, 次数: attempt, 结果: failure ? failure.message : '成功',
+                        推理文本: result.reasoning || null,
+                        响应体: rawResponse || (streamResponse ? JSON.stringify(streamResponse) : '')
+                    };
+                    console.info(options.logResponse ? '[模型输出][最新一次]' : '[Gemini抗截断]', responseLog);
+                    if (options.logResponse) {
+                        // Scalar logs remain readable in browser tools that render objects as "Object".
+                        console.info('[模型输出原文] ' + JSON.stringify(responseLog));
+                        if (receivedEventStream) console.info('[模型流式事件] ' + JSON.stringify({
+                            requestId: options.requestDebugId, events: streamEvents
+                        }));
+                    }
+                } catch (_) { /* Debug hooks must not change success, cancellation or usage recording. */ }
+            }
             // 在业务层 JSON/模板校验之前记账；部分流式响应后中止也不会漏掉已返回的用量。
             if (receivedPayload) options.onUsage?.(result.usage, {
                 isStream: result.isStream, durationMs: Date.now() - startedAt,

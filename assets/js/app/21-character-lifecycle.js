@@ -118,6 +118,9 @@
                 }
             }
             if (!isCurrentRequest()) return false;
+            __s.stopWechatGeneration?.();
+            await __s.flushPendingWechatSave?.();
+            if (!isCurrentRequest()) return false;
             __s.abortConversationBackgroundWork();
             await __s.flushPendingChatHistorySave();
             if (!isCurrentRequest()) return false;
@@ -279,16 +282,18 @@
                 const branchNumber = __s.storyBranches.value.filter(branch => branch.id !== STORY_BRANCH_MAIN_ID).length + 1;
                 const branchName = `分支 ${branchNumber}`;
                 const now = Date.now();
-                const [loadedChatHistory, sourceClassicMemories] = await Promise.all([
+                const [loadedChatHistory, sourceClassicMemories, sourceWechatTimeline] = await Promise.all([
                     loadStoredChatHistory(char, null, parentScopeId),
-                    getScopedStoredValue('classic_memories', parentScopeId)
+                    getScopedStoredValue('classic_memories', parentScopeId),
+                    getScopedStoredValue('wechat_timeline', parentScopeId)
                 ]);
                 const storedClassicMemories = Array.isArray(sourceClassicMemories) ? sourceClassicMemories : [];
                 let sourceChatHistory = loadedChatHistory;
                 let branchClassicMemories = storedClassicMemories;
                 let forkTurn = null;
+                let sourceIndex = null;
                 if (forkFromMessage) {
-                    const sourceIndex = forkMessageId
+                    sourceIndex = forkMessageId
                         ? loadedChatHistory.findIndex(message => message?.id === forkMessageId)
                         : forkMessageIndex;
                     if (sourceIndex < 0 || loadedChatHistory[sourceIndex]?.role !== 'assistant') {
@@ -301,8 +306,18 @@
                 const floorCount = __s.getPostprocessedChatMessages(sourceChatHistory, { includeSystem: false }).length;
                 const wordCount = getConversationBodyLength(sourceChatHistory);
 
+                const branchWechat = window.RPHubBranchChat.forkTimeline(Array.isArray(sourceWechatTimeline) ? sourceWechatTimeline : [], loadedChatHistory, sourceIndex);
+                const resources = await window.RPHubBranchChat.prepareForkResources(branchWechat, char.uuid, parentScopeId, branchScopeId,
+                    window.RPHubStorage, generateUUID, !forkFromMessage);
+                if (resources.entries.length) {
+                    // Atomically store scoped attachment copies before publishing this branch.
+                    await window.RPHubStorage.setStoredValues(resources.entries);
+                    createdBranch.resourceIds = resources.resourceIds;
+                }
+
                 await setScopedStoredValue('chat', branchScopeId, cloneForStorage(sourceChatHistory), { clone: false });
                 await setScopedStoredValue('classic_memories', branchScopeId, cloneForStorage(branchClassicMemories), { clone: false });
+                await setScopedStoredValue('wechat_timeline', branchScopeId, resources.timeline, { clone: false });
 
                 __s.getUiTemplatesForRuntime(char).forEach(template => {
                     if (!template.runtimeByCharacter || typeof template.runtimeByCharacter !== 'object') {
@@ -365,6 +380,8 @@
                     await Promise.allSettled([
                         deleteScopedStoredValue('chat', createdBranch.branchScopeId),
                         deleteScopedStoredValue('classic_memories', createdBranch.branchScopeId),
+                        deleteScopedStoredValue('wechat_timeline', createdBranch.branchScopeId),
+                        window.RPHubBranchChat.cleanupForkResources(createdBranch.branchScopeId, window.RPHubStorage),
                         saveStoryBranchesForCharacter(char),
                         __s.saveMemorySettingsNow(),
                         setStoredValue('global_ui_templates', __s.globalUiTemplates.value),

@@ -141,6 +141,7 @@
             const apiUrl = __s.settings.apiUrl;
             const request = { url: buildApiEndpoint(apiUrl, 'chat/completions'), apiKey: __s.settings.apiKey, ...options };
             return requestChatCompletion({ ...request, logRequest: __s.settings.debugModelRequests === true,
+                logResponse: request.logResponse || (__s.settings.debugModelRequests === true && /^微信/.test(request.requestLabel || '')),
                 requestType: request.requestLabel || type || 'chat', onUsage: (usage, metrics) => recordApiUsage(usage, {
                 type, model: request.model, apiUrl, apiKey: request.apiKey, ...metrics
             }) });

@@ -19,8 +19,8 @@
             __s.historyRetrievalBudget?.records.clear();
             __s.resetHistoryRetrievalBudget();
         };
-        __s.buildHistoryRetrievalPrompt = () => available()
-            ? '【压缩后的原文检索】前情提要/记忆只是概要。提到具体旧事而当前上下文缺少依据、措辞有分歧时，可先 tool_search_history 找具体关键词，再 tool_read_history 按返回 ID 和命中字符位置核对。足够明确时直接承接，不为普通聊天凑工具。最多四次检索/读取，共 12000 字符结果，仅留本轮。关键词可能漏掉同义词，可换具体关键词；没找到就说无法确认，不编造所谓回忆。' + H.evidenceRule : '';
+        __s.buildHistoryRetrievalPrompt = (channel = 'rp') => available()
+            ? '【压缩后的原文检索】前情提要/记忆只是概要。提到具体旧事而当前上下文缺少依据、措辞有分歧时，可先 tool_search_history 找具体关键词，再 tool_read_history 按返回 ID 和命中字符位置核对。足够明确时直接承接，不为普通聊天凑工具。' + (channel === 'wechat' ? '不限制检索/读取次数，' : '最多四次检索/读取，') + '共 12000 字符结果，仅留本轮。关键词可能漏掉同义词，可换具体关键词；没找到就说无法确认，不编造所谓回忆。' + H.evidenceRule : '';
         const cleanRp = message => {
             let text = window.RPHubUtils.parseCot(String(message.content || '')).main;
             text = __s.stripDisabledImageGenContext(__s.stripNextResponsePrompt(__s.stripUiTemplateContextInjection(text)));
@@ -70,7 +70,7 @@
                 if (!available()) throw new Error('本轮原文检索已关闭或没有可检索的压缩历史');
             };
             check();
-            if (++budget.calls > 4) throw new Error('本轮原文检索/读取最多四次');
+            if (++budget.calls > 4 && !budget.unlimitedCalls) throw new Error('本轮原文检索/读取最多四次');
             const args = H.normalize(call.function.name, JSON.parse(call.function.arguments));
             const key = call.function.name + JSON.stringify(args);
             if (budget.seen.has(key)) throw new Error('本轮已经取得该检索结果，请用已有结果或换更具体的关键词/范围');

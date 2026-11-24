@@ -366,3 +366,12 @@ test('同轮4次调用与12000字符成功资料预算；scope变化不会引用
     h.s.resetGeographyBudget(); assert.equal(h.s.executeGeographyTool(call).status, 'ok'); h.switchScope(); assert.equal(h.s.executeGeographyTool(call).status, 'ok');
     h.s.executeGeographyTool(call); h.s.executeGeographyTool(call); assert.equal(h.s.executeGeographyTool(call).status, 'budget_exhausted');
 });
+test('微信地理调用可超过四次，重复查询复用与字符预算继续生效', () => {
+    const h = adapter(), budget = h.s.createGeographyBudget(); budget.unlimitedCalls = true;
+    const call = { id: 'first', function: { name: 'tool_geo', arguments: '{"operation":"status"}' } };
+    assert.equal(h.s.executeGeographyTool(call, budget, { channel: 'wechat' }).status, 'ok');
+    for (let i = 0; i < 9; i++) assert.equal(h.s.executeGeographyTool({ ...call, id: 'repeat-' + i }, budget, { channel: 'wechat' }).status, 'already_returned');
+    assert.equal(budget.calls, 10);
+    budget.seen.clear(); budget.used = 12000;
+    assert.equal(h.s.executeGeographyTool(call, budget, { channel: 'wechat' }).status, 'budget_exhausted');
+});

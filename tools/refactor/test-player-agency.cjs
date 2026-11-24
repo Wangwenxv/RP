@@ -398,6 +398,7 @@ test('实际工具运行时把输出协议追加到system，保留玩家图文�
   Object.assign(s, { isAutoImageGenEnabled: { value: true }, isTruncationEnabled: { value: true },
     isStoryPanelsEnabled: { value: true }, isUiTemplateAnalysisEnabled: () => true });
   s.settings.imageGenCount = 4;
+  vm.runInContext(read('image-generation.js'), c);
   vm.runInContext(read('app/14-tools-runtime.js'), c); c.window.RPHubAppSections.toolsRuntime(s);
   const source = [{ role: 'system', content: '唯一文风规则', _worldInfoEntries: ['fixture'] },
     { role: 'user', content: '档案资料', _contextOrigin: 'story_archive', _preventContextMerge: true },

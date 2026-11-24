@@ -177,10 +177,12 @@ test('资料预算、参数守卫和按 owner 回收原文', async () => {
   await h.lib.save(file('另一个角色'), { ownerId: 'char-b', scopeId: 'branch-b' });
   await h.s.deleteWechatDocumentOwner('char-a'); assert.equal((await h.lib.list()).length, 1); assert.ok(!(await h.lib.get(msg.document.id)));
 });
-test('恶意或超额工具调用不会变成成功/沉默回复', async () => {
-  const h = harness(async () => ({ content: '', toolCalls: [call('tool_list_documents', {})] }));
+test('12次文档工具后仍能继续回复，不再受四次或八轮限制', async () => {
+  const h = harness(async (_options, n) => n <= 12 ? { content: '', toolCalls: [call('tool_list_documents', {})] }
+    : { content: '{"messages":[{"type":"text","content":"已查到文件目录"}]}' });
   await h.upload('文本'); await h.send('继续');
-  assert.ok(h.toasts.some(item => String(item[0]).includes('上限'))); assert.equal(h.requests.length, 5);
+  assert.equal(h.toasts.length, 0); assert.equal(h.requests.length, 13);
+  assert.equal(h.s.wechatTimeline.value.at(-1).content, '已查到文件目录');
   assert.ok(!h.s.wechatTimeline.value.some(item => item.replyDecision === 'silent'));
 });
 test('移除文件消息回收资源并调整摘要边界；清空仅回收当前分支', async () => {

@@ -16,3 +16,4 @@ __pycache__/
 /card/manifest.json
 tmp/*
 docs/Multi-Agent-Engineering/test文本/*
+.workbuddy/*

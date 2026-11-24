@@ -32,7 +32,8 @@ const server = http.createServer(async (req, res) => {
                 visualCheckReferenceLabels: checks.filter(p => p.text.startsWith('【核对图片 #reference:')).length,
                 hasVisualCheck: JSON.stringify(body.messages).includes('【独立画面核对资料｜仅本轮使用】'),
                 hasDescription: JSON.stringify(body.messages).includes('离线测试：围巾与长发的人物照片'),
-                hasReferenceReturn: JSON.stringify(body.messages).includes('工具返回的角色参考资料') });
+                comparisonTask: checks.length ? body.messages.find(m => typeof m.content === 'string' && m.content.startsWith('下面共'))?.content || '' : '',
+                hasReferenceReturn: JSON.stringify(body.messages).includes('已读取当前角色参考图') });
             let message = { role: 'assistant', content: '{"messages":[]}' }, finish = 'stop';
             if (checks.length) {
                 // Reproduce both real-model display-ID variants, without a paid request.
@@ -45,9 +46,8 @@ const server = http.createServer(async (req, res) => {
                     name: 'tool_view_character_reference', arguments: JSON.stringify({ question: '核对可见发型与角色设定是否相容' }) } }] };
                 finish = 'tool_calls';
             } else if (fresh.length) {
-                const id = fresh[0].text.match(/本轮新图 #([^｜]+)/)[1];
-                message.content = JSON.stringify({ messages: [{ type: 'text', content: '这张发型不太对呀，你发的是哪张？' }],
-                    image_descriptions: [{ messageId: id, caption: '离线测试：围巾与长发的人物照片' }] });
+                message.content = JSON.stringify({ messages: [{ type: 'text', content: '离线流程验证完成' }],
+                    image_descriptions: fresh.map(part => ({ messageId: part.text.match(/本轮新图 #([^｜]+)/)[1], caption: '离线测试：围巾与长发的人物照片' })) });
             }
             return json(res, { choices: [{ message, finish_reason: finish }] });
         }

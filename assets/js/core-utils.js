@@ -682,7 +682,10 @@ window.RPHubUtils = {
             const id = String(ref.id || `reference-${index + 1}`);
             if (!/^[\w-]{1,80}$/.test(id) || ids.has(id)) throw new Error('参考图 ID 无效或重复');
             ids.add(id);
+            if (ref.purpose !== undefined && !['identity', 'style', 'pose', 'scene'].includes(ref.purpose)) throw new Error('参考图用途须为identity、style、pose或scene');
+            if (ref.purpose !== undefined && (ref.kind === 'scene') !== (ref.purpose === 'scene')) throw new Error('参考图用途与人物/地点分类不一致');
             return { id, name: String(ref.name || `参考图${index + 1}`).slice(0, 80), kind: ref.kind === 'scene' ? 'scene' : 'character',
+                ...(ref.purpose !== undefined ? { purpose: ref.purpose } : {}),
                 description: String(ref.description || '').replace(/\s+/g, ' ').trim().slice(0, 240), ...(inline ? { dataUrl: ref.dataUrl } : { src }) };
         });
     };

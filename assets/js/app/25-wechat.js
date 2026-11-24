@@ -904,7 +904,7 @@
                 storyClock: `【当前剧情钟】${wechatClockLabel.value}。本轮回复以此为基准；连续消息沿用同一时刻，只有明确选择发送时间才推进。`,
                 stickerRule: wxProtocol.stickerRuleFor(wechatStickerTier()),
                 stickerCatalog: buildWechatStickerCatalog(),
-                mediaPrompt: [mediaPrompt, __s.buildWechatDocumentPrompt?.(), __s.buildGeographyPrompt?.('wechat'), __s.buildHistoryRetrievalPrompt?.()].filter(Boolean).join('\n'),
+                mediaPrompt: [mediaPrompt, __s.buildWechatDocumentPrompt?.(), __s.buildGeographyPrompt?.('wechat'), __s.buildHistoryRetrievalPrompt?.('wechat')].filter(Boolean).join('\n'),
                 positionPrompt: __s.buildCharacterPositionPrompt?.('wechat'),
                 voicePrompt: __s.buildWechatVoicePrompt?.(),
                 extraRules: `【跨场景连续性】微信是同一段 roleplay 剧情中人物的通信渠道。`
@@ -2025,24 +2025,19 @@
             const documentTools = __s.wechatDocumentTools?.() || [];
             const historyTools = __s.historyRetrievalTools?.() || [];
             const historyBudget = __s.createHistoryRetrievalBudget?.();
+            if (historyBudget) historyBudget.unlimitedCalls = true;
             let tools = [...(__s.wechatImageTools?.(mediaContext) || []), ...documentTools, ...(__s.geographyTools?.('wechat') || []), ...historyTools];
             let result;
-            let viewCalls = 0;
-            let loadCalls = 0;
-            let documentCalls = 0;
-            let geographyCalls = 0;
-            let geographyRounds = 0;
+            let sendingInfo = null;
             let replyCorrections = 0;
             let positionDecision = null;
             const documentBudget = { used: 0 };
             const geographyBudget = __s.createGeographyBudget?.();
-            // Geography needs at most two query rounds, one final reply and one repair.
-            const maxRounds = documentTools.length || historyTools.length ? 8 : 4;
-            for (let round = 0; round < maxRounds; round++) {
-                if (round === maxRounds - 1) {
-                    tools = [];
-                    messages.push({ role: 'system', content: '本轮资料查询结束。直接输出最终回复JSON，不再调用工具。' });
-                }
+            if (geographyBudget) geographyBudget.unlimitedCalls = true;
+            // Continue until the model replies or the user stops the request.
+            // Tool payload validation and conversation cancellation still apply.
+            for (let round = 0; ; round++) {
+                assertRequest();
                 report({ title: round ? '正在整理回复' : '正在等待模型回复',
                     detail: round ? '模型正在生成最终回复' : '模型正在处理本轮消息', completed: null, total: null, modelRequest: true });
                 result = await __s.requestTrackedChatCompletion({ model, messages, requestLabel: replyCorrections ? '微信回复修正' : round > 0 ? '微信工具续写' : '微信回复', ...(tools.length ? { tools, parallelTools: true } : {}), temperature: 0.95, stream: true, signal }, 'chat');
@@ -2061,7 +2056,7 @@
                     catch (error) { positionError = error; }
                     const imageCorrection = __s.wechatImageReplyCorrection?.(reply.messages);
                     if (!positionError && !imageCorrection) break;
-                    if (replyCorrections++ || round === maxRounds - 1) throw new Error(positionError ? `自身场景未能确认：${positionError.message}` : '模型仍未使用已开启的微信生图格式，本轮未发送；可以重试');
+                    if (replyCorrections++) throw new Error(positionError ? `自身场景未能确认：${positionError.message}` : '模型仍未使用已开启的微信生图格式，本轮未发送；可以重试');
                     report({ notice: positionError ? `正在完善角色自身场景：${positionError.message}` : '正在修正图片请求格式，尚未调用生图服务' });
                     tools = [];
                     const correction = [imageCorrection, positionError && `刚才的回复尚未发送。本轮内部position无效：${positionError.message}。${__s.buildCharacterPositionPrompt('wechat')}`,
@@ -2071,12 +2066,6 @@
                 }
                 const names = result.toolCalls.map(call => call.function?.name);
                 if (names.some(name => !tools.some(tool => tool.function.name === name))) throw new Error('模型调用了本轮未提供的微信工具');
-                viewCalls += names.filter(name => ['tool_view_image', 'tool_view_character_reference'].includes(name)).length;
-                loadCalls += names.filter(name => name === 'tool_load_image_sending').length;
-                documentCalls += names.filter(name => documentTools.some(tool => tool.function.name === name)).length;
-                geographyCalls += names.filter(name => name === 'tool_geo').length;
-                if (names.includes('tool_geo')) geographyRounds++;
-                if (round === maxRounds - 1 || viewCalls > 2 || loadCalls > 1 || documentCalls > 4 || geographyCalls > 4) throw new Error('微信工具调用次数达到本轮上限，请下一轮继续');
                 messages.push(result.assistantMessage || { role: 'assistant', content: result.content || '', tool_calls: result.toolCalls });
                 // Updates and reads run in model order so subsequent status queries see the committed location.
                 const geographyResults = new Map();
@@ -2096,7 +2085,8 @@
                         tool_load_image_sending: '正在加载图片素材', tool_view_image: '正在查看历史图片', tool_view_character_reference: '正在核对角色参考图', tool_geo: '正在查询地点与路程',
                         tool_search_history: '正在检索历史原文', tool_read_history: '正在核对历史原文' }[call.function.name];
                     report({ title, detail: '工具处理中', completed: null, total: null, toolCall: true });
-                    try { viewed = call.function.name === 'tool_view_character_reference' ? await __s.executeWechatReferenceTool(call, signal, referenceBudget, report) : recalling ? { content: JSON.stringify(await __s.executeHistoryRetrievalTool(call, signal, historyBudget)) } : call.function.name === 'tool_geo' ? geographyResults.get(call.id) : reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget, report) : loading ? await __s.loadWechatImageSending(call, signal) : await __s.executeWechatImageTool(call, signal, report, referenceBudget); }
+                    try { viewed = call.function.name === 'tool_view_character_reference' ? await __s.executeWechatReferenceTool(call, signal, referenceBudget, report) : recalling ? { content: JSON.stringify(await __s.executeHistoryRetrievalTool(call, signal, historyBudget)) } : call.function.name === 'tool_geo' ? geographyResults.get(call.id) : reading ? await __s.executeWechatDocumentTool(call, signal, documentBudget, report) : loading ? await __s.loadWechatImageSending(call, signal, sendingInfo) : await __s.executeWechatImageTool(call, signal, report, referenceBudget);
+                        if (loading && !sendingInfo) sendingInfo = viewed; }
                     catch (error) { if (error.name === 'AbortError') throw error; assertRequest(); report({ notice: recalling ? '本次原文核实失败，正在等待模型处理' : call.function.name === 'tool_geo' ? '地理查询失败，正在等待模型处理' : reading ? '本次文件处理失败；已保存的阅读进度保留' : '本次图片工具失败，正在等待模型处理' }); viewed = { content: recalling ? `原文核实失败：${error.message}。本次没有取得依据，保持不确定，不虚构旧事细节。` : call.function.name === 'tool_geo' ? `地理查询失败：${error.message}。未取得路程/地点资料，不得编造，应澄清。` : reading
                         ? `文件阅读失败：${error.message}。没有取得此次资料，不得假装读过；已成功的阅读进度保留，可以重试。`
                         : loading
@@ -2107,11 +2097,6 @@
                     if (viewed.attachment) attachments.push(viewed.attachment);
                 }
                 messages.push(...attachments);
-                if (geographyRounds >= 2 || geographyCalls >= 4) {
-                    tools = tools.filter(tool => tool.function.name !== 'tool_geo');
-                    messages.push({ role: 'system', content: '本轮地图查询已结束，依据已有结果完成回复；地点仍不明可自然澄清。原地用position stay，实际出发用depart；不要重复查询或补写旧位置。直接输出完整JSON。' });
-                }
-                if (loadCalls) tools = tools.filter(tool => tool.function.name !== 'tool_load_image_sending');
             }
             const raw = String(result?.content || '').trim();
             if (!raw) throw new Error('模型返回了空内容');

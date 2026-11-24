@@ -807,13 +807,13 @@ test('无效移动只修正一次，修正请求撤掉工具且不把邀请变�
   assert.equal(h.state.wechatTimeline.value.some(m => m.role === 'assistant' && m.content === '我去二饭等你'), false);
 });
 
-test('两轮地图查询后撤掉地理工具，截断JSON只补一次完整回复', async () => {
+test('两轮地图查询后保留地理工具，截断JSON只补一次完整回复', async () => {
   const h = harness(async (_options, n) => n <= 2
     ? { toolCalls: [nativeCall(`query-${n}`, { operation: n === 1 ? 'search' : 'context', query: '二饭' }, 'tool_geo')] }
     : { content: n === 3 ? '{"messages":[' : '{"messages":[{"type":"text","content":"我在宿舍"}],"position":{"action":"present","placeId":"dorm-3","detail":"书桌前"}}' });
   await h.loadGeography(); await h.send('没呢，那我现在去2饭找你？');
   assert.equal(h.requests.length, 4);
-  assert.equal(h.requests[2].tools, undefined);
+  assert.ok(h.requests[2].tools.some(tool => tool.function.name === 'tool_geo'));
   assert.equal(h.requests[3].tools, undefined);
   assert.equal(h.toasts.length, 0);
   assert.equal(h.state.wechatUnansweredCount.value, 0);

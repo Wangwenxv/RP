@@ -138,5 +138,71 @@
         for (const pair of indexes) entries.push(pair);
         return { chats, entries };
     }
-    window.RPHubBranchChat = Object.freeze({ collectResources, parse, prepareResources });
+    // Keep the timeline's causal ordering; a story-time value can cover many RP/WeChat events.
+    function forkTimeline(timeline, messages, forkIndex = null) {
+        if (!Number.isInteger(forkIndex)) return copy(timeline || []);
+        const message = messages[forkIndex];
+        const anchor = (timeline || []).findIndex(item => item.channel === 'rp'
+            && (message?.id ? item.rpMsgId === message.id : item.rpIndex === forkIndex));
+        if (anchor < 0 && (timeline || []).some(item => item.channel === 'wechat')) throw new Error('找不到微信时间线中的分叉锚点，请先打开微信同步剧情记录');
+        return copy(anchor < 0 ? [] : timeline.slice(0, anchor + 1));
+    }
+    async function prepareForkResources(timeline, ownerId, sourceScope, targetScope, storage, makeId, includeReader = true) {
+        const next = copy(timeline), entries = [], indexes = new Map(), remapped = new Map();
+        for (const item of next) {
+            const kind = item.type === 'voice' ? 'voice' : item.type === 'document' ? 'document' : null;
+            const sourceId = kind === 'voice' ? item.media?.assetId : item.document?.id;
+            if (!kind || !sourceId) continue;
+            const token = kind + ':' + sourceId;
+            if (!remapped.has(token)) {
+                const prefix = CONFIG[kind].prefix, indexKey = prefix + '_index';
+                if (!indexes.has(indexKey)) indexes.set(indexKey, copy(await storage.getStoredValue(indexKey) || []));
+                const index = indexes.get(indexKey), original = index.find(value => value.id === sourceId);
+                if (!original || original.ownerId !== ownerId || original.scopeId !== sourceScope) throw new Error('分支附件已丢失或不属于源会话：' + sourceId);
+                const id = makeId();
+                if (!validId(id) || index.some(value => value.id === id)) throw new Error('分支附件新标识无效或重复');
+                const parts = [...CONFIG[kind].required];
+                if (kind === 'document') {
+                    if (!Number.isSafeInteger(original.chunkCount) || original.chunkCount < 0 || original.chunkCount > 100000) throw new Error('文档分块目录无效');
+                    for (let i = 0; i < original.chunkCount; i++) parts.push('chunk_' + i);
+                    if (includeReader) {
+                        const reader = await storage.getStoredValue(key(kind, sourceId, 'reader'));
+                        if (reader !== undefined && reader !== null) entries.push([key(kind, id, 'reader'), copy(reader)]);
+                    }
+                }
+                for (const part of parts) {
+                    const value = await storage.getStoredValue(key(kind, sourceId, part));
+                    if (value === undefined || value === null || part === 'blob' && !(value instanceof Blob)) throw new Error('分支附件内容已丢失：' + sourceId);
+                    entries.push([key(kind, id, part), value instanceof Blob ? value : copy(value)]);
+                }
+                index.push({ ...copy(original), id, scopeId: targetScope });
+                remapped.set(token, id);
+            }
+            if (kind === 'voice') item.media.assetId = remapped.get(token);
+            else item.document.id = remapped.get(token);
+        }
+        entries.push(...indexes);
+        return { timeline: next, entries, resourceIds: [...remapped.values()] };
+    }
+    async function cleanupForkResources(scopeId, storage) {
+        const keys = [], indexes = [];
+        for (const kind of ['voice', 'document']) {
+            const indexKey = CONFIG[kind].prefix + '_index';
+            const index = await storage.getStoredValue(indexKey) || [];
+            const removed = index.filter(item => item.scopeId === scopeId);
+            if (!removed.length) continue;
+            indexes.push([indexKey, index.filter(item => item.scopeId !== scopeId)]);
+            for (const item of removed) {
+                const parts = [...CONFIG[kind].required];
+                if (kind === 'document') {
+                    parts.push('reader');
+                    for (let i = 0; i < item.chunkCount; i++) parts.push('chunk_' + i);
+                }
+                keys.push(...parts.map(part => key(kind, item.id, part)));
+            }
+        }
+        if (indexes.length) await storage.setStoredValues(indexes);
+        await Promise.all(keys.map(name => storage.deleteStoredValue(name)));
+    }
+    window.RPHubBranchChat = Object.freeze({ collectResources, parse, prepareResources, forkTimeline, prepareForkResources, cleanupForkResources });
 })();
