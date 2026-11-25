@@ -45,7 +45,14 @@ const check = (label, value) => { assert.ok(value, label); console.log('PASS ' +
       const contentText = JSON.stringify(body.messages);
       const freshIds = body.messages.flatMap(message => Array.isArray(message.content) ? message.content.filter(part => part.type === 'text').map(part => part.text.match(/本轮新图 #([^｜]+)/)?.[1]).filter(Boolean) : []);
       let message = { role: 'assistant', content: '{"messages":[]}' }, finishReason = 'stop';
-      if (fixture === 'album') message.content = '{"messages":[{"type":"text","content":"给你看看"},{"type":"image_request","media":{"mode":"album","assetId":"builtin-salad","usage":"scene_photo"}}]}';
+      if (['album', 'draw'].includes(fixture)) {
+        if (!body.messages.some(item => item.role === 'tool' && item.content.includes('【可选相册图片】'))) {
+          message = { role: 'assistant', content: '', tool_calls: [{ id: 'load-materials', type: 'function', function: { name: 'tool_load_image_sending', arguments: '{}' } }] };
+          finishReason = 'tool_calls';
+        } else message.content = fixture === 'album'
+          ? '{"messages":[{"type":"text","content":"给你看看"},{"type":"image_request","media":{"mode":"album","assetId":"builtin-salad","usage":"scene_photo"}}]}'
+          : '{"messages":[{"type":"image_request","media":{"mode":"draw","template":"note","text":"今天也要好好吃饭","decorations":["heart"]}}]}';
+      }
       if (fixture === 'lazy') {
         if (body.messages.some(item => item.role === 'tool' && item.content.includes('【可选相册图片】'))) message.content = '{"messages":[{"type":"image_request","media":{"mode":"album","assetId":"builtin-cat","usage":"scene_photo"}}]}';
         else {
@@ -53,7 +60,6 @@ const check = (label, value) => { assert.ok(value, label); console.log('PASS ' +
           finishReason = 'tool_calls';
         }
       }
-      if (fixture === 'draw') message.content = '{"messages":[{"type":"image_request","media":{"mode":"draw","template":"note","text":"今天也要好好吃饭","decorations":["heart"]}}]}';
       if (fixture === 'upload') message.content = JSON.stringify({ messages: [{ type: 'text', content: '这个沙拉颜色好多' }], image_descriptions: freshIds.map(messageId => ({ messageId, caption: '木桌上的一碗蔬菜沙拉，有番茄、牛油果和紫甘蓝。' })) });
       if (fixture === 'view') {
         if (body.messages.some(item => item.role === 'tool')) message.content = '{"messages":[{"type":"text","content":"纸条写着今天也要好好吃饭"}]}';
@@ -91,10 +97,10 @@ const check = (label, value) => { assert.ok(value, label); console.log('PASS ' +
     });
     const send = text => page.evaluate(async text => { const r = window.__APP_PROXY__; r.wechatInput = text; await r.sendWechatMessage(); }, text);
     fixture = 'silence'; await send('先忙吧');
-    check('普通聊天不携带完整发图说明和素材目录', !requests[0].messages[0].content.includes('【可选相册图片】') && !requests[0].messages[0].content.includes('image_descriptions'));
+    check('普通聊天有直接图片格式但不查询素材目录', requests[0].messages[0].content.includes('"mode":"describe"') && !requests[0].messages[0].content.includes('【可选相册图片】') && !requests[0].messages[0].content.includes('image_descriptions'));
     fixture = 'album';
     await send('拍个照');
-    check('拍照关键词通过世界书匹配器按需注入目录', requests.at(-1).messages[0].content.includes('【可选相册图片】') && !requests.at(-1).tools?.some(tool => tool.function.name === 'tool_load_image_sending'));
+    check('直接照片请求不按关键词加载，相册目录来自模型工具调用', !requests.at(-1).messages[0].content.includes('【可选相册图片】') && requests.at(-1).messages.some(item => item.role === 'tool' && item.content.includes('【可选相册图片】')));
     check('相册图片与前置文字发出，记录不包含图片字节', await page.evaluate(() => { const items = window.__APP_PROXY__.wechatTimeline.filter(item => item.channel === 'wechat' && item.role === 'assistant'); return items.length === 2 && items[1].media.assetId === 'builtin-salad' && !items[1].content; }));
     await page.waitForFunction(() => document.querySelector('.wx-photo-button img')?.naturalWidth > 0);
     check('相册照片真实显示', await page.locator('.wx-photo-button img').count() === 1);
@@ -156,7 +162,11 @@ const check = (label, value) => { assert.ok(value, label); console.log('PASS ' +
       const index = await window.RPHubStorage.getStoredValue('wechat_media_index');
       return item.media?.source === 'search' && index.find(asset => asset.id === item.media.assetId)?.license === 'CC0';
     }));
-    fixture = 'generate'; await send('按需生成一张图');
+    fixture = 'generate'; const generationStart = requests.length; await send('让我过过眼瘾');
+    check('隐含请求首轮已有生图格式，无需先加载工具', requests.length === generationStart + 1
+      && requests[generationStart].messages[0].content.includes('直接输出generate请求，无需先调用tool_load_image_sending')
+      && requests[generationStart].messages[0].content.includes('【生图格式：NAI 标签组】')
+      && !requests[generationStart].messages.some(item => item.role === 'tool'));
     check('微信 STA1N 生图使用标签格式提交并保存图片', await page.evaluate(() => window.__APP_PROXY__.wechatTimeline.at(-1).media?.source === 'generate')
       && providerRequests.some(request => request.provider === 'generate' && request.authorization === 'Bearer fixture-key' && request.body.model === 'nai-diffusion-4-5-full:k_dpmpp_2m' && request.body.messages[0].content.startsWith('提示词:cat at a wooden desk')));
     fixture = 'late';

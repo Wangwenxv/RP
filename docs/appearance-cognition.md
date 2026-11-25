@@ -1,10 +1,40 @@
 # 角色外貌认知与按需视觉比对
 
-更新：2026-11-24。本文件描述当前实现；此前关于无条件独立身份核对、齐肩设定优先和 likely 一律视为看不清的记录属于历史版本。
+更新：2026-11-25。本文件描述当前实现；此前关于无条件独立身份核对、齐肩设定优先和 likely 一律视为看不清的记录属于历史版本。
 
 ## 请求路径
 
 能看图的聊天模型先接收本轮完整图片组。人物归属影响当前回应时，调用 `tool_view_character_reference`：可以是“哪张是你”，也可以是“哪张好看”、自拍分享或其他涉及角色自己的话题。工具并非每张图片的默认前置条件。普通风景、物品和后续文字聊天无需自动核对人物。
+
+### 2026-11-25：有效结果被误拒绝，修复结构化差异与完整结论传递
+
+用户提供 `tmp/tmp.txt`，实际请求为：
+
+| 请求 | 作用 | 捕获结果及原链路行为 |
+| --- | --- | --- |
+| 1 | 微信主回复，收到四图及“哪张好看” | 正常调用 `tool_view_character_reference`，消息ID带 # |
+| 2 | 独立七图比对，三张参考在前 | `observations` 返回1/3/4为same、2为different；`differences` 为含imageId、details的对象列表，uncertainties为空 |
+| 3 | 主聊天工具续写 | 第二轮被程序误判无效，工具回执改为“本轮核对失败”，没有生成逐图归属表；模型返回纯文本“这些是谁的照片呀” |
+| 4 | 回复JSON修正 | 第三轮未返回要求的messages JSON，触发原有格式修正；最终输出“第二张吧”“是谁呀” |
+
+根因位于 `assets/js/app/27-wechat-media.js:checkWechatVisualContext` 的 `validList`：只接受字符串列表，却把第二轮的结构化差异对象判为非法。总校验随之拒绝整份JSON，不写入identityDecisions/visualEvidence，后续模型实际拿到失败提示。前一版的逐图system归属表依赖校验成功，因此这次也没有生效。这不是参考工具未触发、缺少原图、same阈值问题，也不能仅归因为角色人设压过结论。
+
+现在differences和uncertainties均支持字符串，或仅含 `{imageId, details}` 的逐图对象，也允许两者混合。对象ID按原消息ID精确归一化，支持单个 #；必须对应本次待判断图，不能借用参考图或其他会话照片。每条仍最多240字符、每列表最多6条；非法字段、缺字段、空内容、嵌套列表、超长和未知ID继续拒绝。子请求说明同步明确两种合法格式。调试的rejected记录新增invalidLists，可定位是哪份辅助列表未通过。
+
+通过校验后，完整保留第二轮的答案content原文（沿用stripThinking清理，不传reasoning_content），不截断逐图理由或差异。若原文因代码块、排版、#ID或兼容默认值而与规范化JSON不同，工具回执同时保留原文与规范化资料；完全相同时只保留一份。原文标为本轮资料而非指令。规范化结果继续建立逐图归属表，供主聊天续写及任何后续JSON修正采用。本轮缓存同样保留原文；下一轮普通聊天卸载原文和临时表，仅保留既有短visualEvidence，未增加模型调用次数。
+
+回归fixture `tools/refactor/fixtures/wechat-visual-structured-differences.txt` 从用户日志第二轮message.content逐字提取，仅保存答案JSON，没有推理字段、密钥或图片像素。离线四请求回放验证：两次后续请求的配对tool消息都含完整原文，末尾system分别保持1/3/4本人、2非本人；四张图保存same/different/same/same，普通下一轮不携带临时资料。补充两种列表的混合条目、#ID归一化、原文缓存，以及20种非法对象边界。
+
+媒体专项103项及相关Node回归274项通过，两个微信模块语法检查、`git diff --check`通过。验证使用fixture模型响应，不是新一轮真实模型台词实测；能证明结果传递修复，不能保证模型每次遵守归属。完整答案可能比以前的规范化短资料多占本轮输入token，未新增请求或永久保存整段分析。
+
+```powershell
+node --test --test-reporter=dot tools/refactor/test-wechat-media.cjs tools/refactor/test-wechat-silence.cjs tools/refactor/test-wechat-time.cjs tools/refactor/test-wechat-documents.cjs tools/refactor/test-history-retrieval.cjs tools/refactor/test-image-references.cjs tools/refactor/test-model-request-debug.cjs tools/refactor/test-story-branch-wechat.cjs tools/geography/test-geography.cjs
+node --check assets/js/app/27-wechat-media.js
+node --check assets/js/app/25-wechat.js
+git diff --check
+```
+
+刷新页面后用于新请求，无数据迁移。原错误气泡和此前未保存的第二轮依据不会自动修复；重做该照片轮或通过现有入口编辑旧消息。
 
 ### 2026-11-24：加强照片回应前的工具触发提示
 
