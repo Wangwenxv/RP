@@ -87,8 +87,11 @@
             card.classList.toggle('is-generating', job.status === 'running');
             card.classList.toggle('is-generation-error', job.status === 'failed');
             card.classList.remove('is-waiting');
-            if (label) label.textContent = job.status === 'running' ? '生成中…' : job.status === 'failed' ? job.error || '生成失败，请点击重新生成' : '';
-            if (bar) bar.style.width = job.status === 'done' ? '100%' : '0%';
+            if (label) {
+                const text = job.status === 'running' ? job.label || '生成中…' : job.status === 'failed' ? job.error || '生成失败，请点击重新生成' : '';
+                if (label.textContent !== text) label.textContent = text;
+            }
+            if (bar) bar.style.width = job.status === 'done' ? '100%' : `${(job.fraction || 0) * 100}%`;
             if (job.status === 'done') {
                 card.querySelector('img').src = task.imageUrl;
                 card.style.aspectRatio = `${job.width} / ${job.height}`;
@@ -162,12 +165,17 @@
                     // Validate before saving a pending task or paying.
                     const intent = G.inlineIntent(prompt);
                     const request = G.characterRequest(config, intent, __s.currentCharacter.value);
+                    request.config.referenceImages = await G.resolveReferences(request.config.referenceImages, controller.signal);
+                    check();
                     G.payload(request.config, request.prompt);
                     message.generatedImages = [...(message.generatedImages || [])];
                     message.generatedImages[index] = { prompt, status: 'pending' };
                     await save();
                     publish({ status: 'running' });
-                    const blob = await G.generate(request.config, request.prompt, controller.signal); check();
+                    const blob = await G.generate(request.config, request.prompt, controller.signal, progress => {
+                        check();
+                        publish({ status: 'running', ...progress });
+                    }); check();
                     const image = await M.rasterize(blob, { signal: controller.signal }); check();
                     asset = await library.save(image, { source: 'generate', ownerId: __s.currentCharacter.value.uuid,
                         scopeId, caption: 'RP 剧情插图', captionSource: 'generation_prompt' }, controller.signal); check();
@@ -231,7 +239,8 @@
             card.classList.add('is-generating');
             card.classList.remove('is-generation-error');
             const size = window.RPHubImageGeneration.config(__s.settings).size;
-            card.style.aspectRatio = size === '1216x832' ? '1216 / 832' : size === '1024x1024' ? '1' : '832 / 1216';
+            const dimensions = /^(\d+)x(\d+)$/.exec(size);
+            card.style.aspectRatio = dimensions ? `${dimensions[1]} / ${dimensions[2]}` : '1';
             if (task.job) renderGeneratedImageJob(card, task, task.job);
             return task.promise;
         };

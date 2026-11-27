@@ -2,14 +2,24 @@
 (function () {
     const DEFAULTS = Object.freeze({ enabled: true, baseUrl: 'https://sta1n.ai/v1', apiKey: '',
         model: 'nai-diffusion-4-5-full:k_dpmpp_2m', protocol: 'sta1n-nai', size: '1024x1024',
-        referenceMode: 'none', referenceEndpoint: 'images/edits', responseFormat: 'auto' });
+        referenceMode: 'none', referenceEndpoint: 'images/edits', responseFormat: 'auto', localService: false });
     const PRESETS = Object.freeze({
-        yeelo: { baseUrl: 'https://img.yeelo.fun/v1/images/generations', model: 'gpt-image-2.6', protocol: 'openai-images', size: '1024x1024', referenceMode: 'image_data_urls', referenceEndpoint: 'images/edits', responseFormat: 'b64_json' },
-        openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-image-1', protocol: 'openai-images', size: '1024x1024', referenceMode: 'multipart', referenceEndpoint: 'images/edits', responseFormat: 'auto' },
+        yeelo: { baseUrl: 'https://img.yeelo.fun/v1/images/generations', model: 'gpt-image-2.6', protocol: 'openai-images', size: '1024x1024', referenceMode: 'image_data_urls', referenceEndpoint: 'images/edits', responseFormat: 'b64_json', localService: false },
+        openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-image-1', protocol: 'openai-images', size: '1024x1024', referenceMode: 'multipart', referenceEndpoint: 'images/edits', responseFormat: 'auto', localService: false },
+        local: { baseUrl: 'http://127.0.0.1:7865/v1', model: 'qwen-image-2.1-turbo-local', protocol: 'openai-images', size: 'auto', referenceMode: 'multipart', referenceEndpoint: 'images/edits', responseFormat: 'b64_json', localService: true, timeoutMs: 1800000 },
         sta1n: { ...DEFAULTS }
     });
     const config = settings => ({ ...DEFAULTS, ...(settings?.wechatImageApi || {}) });
-    const ready = value => value?.enabled !== false && !!String(value?.apiKey || '').trim() && !!String(value?.model || '').trim();
+    const isLocalService = value => {
+        if (value?.localService !== true || value.protocol !== 'openai-images') return false;
+        try {
+            const url = new URL(value.baseUrl);
+            return ['http:', 'https:'].includes(url.protocol) && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+                && !url.username && !url.password && !url.search && !url.hash;
+        } catch (_) { return false; }
+    };
+    const ready = value => value?.enabled !== false && !!String(value?.model || '').trim()
+        && (value?.localService === true ? isLocalService(value) : !!String(value?.apiKey || '').trim());
     const supportsReferenceImages = c => c?.protocol === 'openai-images'
         ? ['image_data_urls', 'image_urls', 'multipart'].includes(c.referenceMode) && ['images/edits', 'images/generations'].includes(c.referenceEndpoint)
         : c?.protocol === 'chat-image' && c.referenceMode === 'chat-content';
@@ -46,8 +56,12 @@
     };
     const referencePurpose = ref => ref.generationPurpose || (ref.kind === 'scene' ? 'scene' : ref.purpose || 'identity');
     const identityReferencesOf = card => referencesOf(card).filter(ref => referencePurpose(ref) === 'identity');
+    const sqxModel = PRESETS.local.model + '-sqx';
+    const usesSqxModel = c => isLocalService(c) && c.model === sqxModel;
+    const isSqxCard = card => (card?.data || card)?.name === '苏祈雪';
     const appearancePrompt = '【外貌与造型】人物身份参考图定义角色的稳定外貌，卡面外貌文字作补充；冲突时以身份参考像素为准。发型长度、发色、衣着、妆容和配饰是可变造型：本轮明确发生的变化优先；没有本轮变化时沿用身份参考中的造型，旧卡的齐肩/短发等只作无参考时的默认值。历史照片展示过去的造型，不会自动改变现在。表情、透视、光线、年龄和体态可以影响脸部观感，不能单靠发型或通用的漂亮、小脸、大眼判断人物相同。风格/姿势参考只借鉴其用途，不作为本人长相依据；人物参考背景和道具仍需当前场景支持。';
-    const hasPortrait = (card, c) => (c?.protocol !== 'sta1n-nai' && identityReferencesOf(card).length > 0) || !!identityOf(card);
+    const hasPortrait = (card, c) => (c?.protocol !== 'sta1n-nai' && identityReferencesOf(card).length > 0)
+        || (usesSqxModel(c) && isSqxCard(card)) || !!identityOf(card);
     const formatPrompt = c => c?.protocol === 'sta1n-nai'
         ? '【生图格式：NAI 标签组】prompt 使用英文逗号分隔的绘图标签，按原人设描述外貌与本轮场景。正面标签、通用负面提示词、画师和采样器由生图适配器组织，不写进角色人设，也不要在 prompt 里混入负面段落。此协议不支持参考图像素。'
         : usesImageCenter(c)
@@ -181,6 +195,7 @@
         const selected = [...new Map([...portraits, ...scenes].map(r => [r.id, r])).values(), ...generationReferences];
         if (selected.length > 16) throw new Error('人物、地点和聊天参考合计最多16张');
         const config = { ...c, referenceImages: c.protocol === 'sta1n-nai' ? [] : selected };
+        if (usesSqxModel(c) && (intent.selfPortrait !== true || !isSqxCard(card))) config.model = PRESETS.local.model;
         const profile = intent.selfPortrait === true && c.protocol === 'sta1n-nai' ? identityOf(card) : null;
         let prompt = String(intent.prompt || '').trim();
         if (compact) return { config, prompt };
@@ -245,6 +260,9 @@
         const refs = validateReferences(c.referenceImages || []);
         if (c.protocol === 'openai-images') {
             const body = { model, prompt, n: 1, size: c.size };
+            if (isLocalService(c) && c.size !== 'auto' && c.size.split('x').map(Number).some(value => value < 256 || value % 32)) {
+                throw new Error('本机生图宽和高须至少为 256，且为 32 的倍数');
+            }
             if (c.responseFormat && c.responseFormat !== 'auto') {
                 if (!['url', 'b64_json'].includes(c.responseFormat)) throw new Error('图片返回格式无效');
                 body.response_format = c.responseFormat;
@@ -253,7 +271,7 @@
             if (!['images/edits', 'images/generations'].includes(c.referenceEndpoint)) throw new Error('参考图接口路径无效');
             if (!['image_data_urls', 'image_urls', 'multipart'].includes(c.referenceMode)) throw new Error('当前服务未启用参考图输入，请在生图设置选择参考图方式');
             if (c.referenceMode !== 'multipart') body[c.referenceMode] = refs.map(r => r.dataUrl);
-            if (usesImageCenter(c)) body.reference_roles = refs.map(ref => {
+            if (usesImageCenter(c) || isLocalService(c)) body.reference_roles = refs.map(ref => {
                 const role = referencePurpose(ref);
                 return role === 'scene' ? 'background' : role;
             });
@@ -300,13 +318,13 @@
         try { return new Blob([Uint8Array.from(atob(encoded.replace(/\s/g, '')), c => c.charCodeAt(0))]); }
         catch (_) { throw new Error('接口返回的图片 Base64 无效'); }
     }
-    async function scoped(signal, timeoutMs, operation) {
+    async function scoped(signal, timeoutMs, operation, timeoutMessage = '生图等待超时，可手动重试；服务端可能仍已计费') {
         active(signal);
         const controller = new AbortController(); let timedOut = false;
         const abort = () => controller.abort(); signal?.addEventListener('abort', abort, { once: true });
         const timer = setTimeout(() => { timedOut = true; abort(); }, timeoutMs);
         try { return await operation(controller.signal); }
-        catch (error) { active(signal); if (timedOut) throw new Error('生图等待超时，可手动重试；服务端可能仍已计费'); throw error; }
+        catch (error) { active(signal); if (timedOut) throw new Error(timeoutMessage); throw error; }
         finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
     }
     async function extract(response, c, signal) {
@@ -334,29 +352,102 @@
         }
         throw new Error('接口返回成功，但没有图片；请检查生图模型和接口协议');
     }
-    async function generate(c, prompt, signal) {
+    async function localFetch(url, options) {
+        let response;
+        try { response = await fetch(url, { cache: 'no-store', credentials: 'omit', ...options }); }
+        catch (error) {
+            active(options?.signal);
+            throw new Error('无法连接本机生图中心。请运行 RP-image-center 的 start.cmd，检查本机地址与浏览器的本地网络权限。', { cause: error });
+        }
+        if (!response.ok) {
+            const data = await response.json().catch(() => null);
+            const detail = data?.error?.message || data?.detail;
+            const message = response.status === 429 ? '本机生图队列已满，请等当前任务完成后重试。'
+                : typeof detail === 'string' ? detail : `本机生图请求失败（HTTP ${response.status}）`;
+            throw Object.assign(new Error(message), { status: response.status });
+        }
+        return response;
+    }
+    const localPhases = { queued: '排队中', waiting: '等待引擎', loading: '加载模型', preparing: '准备采样', conditioning: '编码提示词和参考图',
+        condition: '编码提示词和参考图', vae_encode: '编码参考图', sampling: '采样', vae_decode: '解码图片',
+        decoding: '解码图片', retrying_memory: '正在以低显存模式重试', cancelling: '正在取消' };
+    function localProgress(job) {
+        const { completed, total, unit } = job.progress || {};
+        const prefix = job.attempt > 1 && job.phase !== 'retrying_memory' ? '低显存模式 · ' : '';
+        const label = prefix + (localPhases[job.phase] || '生成中');
+        return unit === 'steps' && total > 0
+            ? { label: `${label} ${completed ?? 0} / ${total}`, fraction: (completed ?? 0) / total }
+            : { label };
+    }
+    async function localGenerate(c, body, headers, signal, onProgress) {
+        const jobsUrl = `${base(c.baseUrl)}/jobs`;
+        let job, jobUrl, terminal = false;
+        const cancel = () => {
+            if (jobUrl && !terminal) fetch(`${jobUrl}/cancel`, { method: 'POST', credentials: 'omit', keepalive: true }).catch(() => {});
+        };
+        signal.addEventListener('abort', cancel, { once: true });
+        try {
+            // Let a submitted request return its job ID so we can cancel even during upload.
+            job = await scoped(undefined, 30000, async submitSignal => {
+                const response = await localFetch(jobsUrl, { method: 'POST', body, headers, signal: submitSignal });
+                return response.json();
+            }, '本机生图提交超时，请到调试台查看任务。');
+            if (!/^img_[a-f0-9]{32}$/.test(job.id)) throw new Error('本机生图中心未返回有效任务编号');
+            jobUrl = `${jobsUrl}/${job.id}`;
+            if (signal.aborted) cancel();
+            active(signal);
+            let failures = 0;
+            while (!['completed', 'failed', 'cancelled', 'interrupted'].includes(job.status)) {
+                onProgress?.(failures ? { label: '连接暂时中断，正在重连' } : localProgress(job));
+                await new Promise(resolve => setTimeout(resolve, failures ? 2000 : 1000));
+                active(signal);
+                try {
+                    job = await scoped(signal, 5000, async pollSignal => {
+                        const response = await localFetch(jobUrl, { signal: pollSignal });
+                        return response.json();
+                    }, '读取本机生图进度超时');
+                    failures = 0;
+                } catch (error) {
+                    active(signal);
+                    if (error.status === 404 || ++failures >= 4) throw error;
+                }
+            }
+            terminal = true;
+            if (job.status === 'cancelled') throw new DOMException('图片生成已取消', 'AbortError');
+            if (job.status !== 'completed') throw new Error(job.error || '本机生图已中断，请重试。');
+            return imageBlob(await (await localFetch(`${jobUrl}/image`, { signal })).blob());
+        } finally {
+            signal.removeEventListener('abort', cancel);
+        }
+    }
+    async function generate(c, prompt, signal, onProgress) {
         c = { ...DEFAULTS, ...c };
-        if (!ready(c)) throw new Error('请在设置 → 生图服务（RP / 微信共用）中填写 API Key 并开启生图');
-        return scoped(signal, c.timeoutMs || 300000, async signal => {
+        if (!ready(c)) throw new Error(c.localService === true ? '本地生图需要启用服务并使用本机 HTTP 地址与 Images 协议' : '请在设置 → 生图服务（RP / 微信共用）中填写 API Key 并开启生图');
+        const local = isLocalService(c);
+        return scoped(signal, c.timeoutMs || (local ? PRESETS.local.timeoutMs : 300000), async signal => {
             c.referenceImages = await resolveReferences(c.referenceImages || [], signal);
             const request = payload(c, prompt), url = endpoint(c, request.endpoint);
             // Validate the actual file signatures before making a paid request.
             for (const ref of c.referenceImages || []) await imageBlob(decode(ref.dataUrl));
             active(signal);
-            const headers = { Authorization: `Bearer ${c.apiKey.trim()}` };
+            const headers = local ? {} : { Authorization: `Bearer ${c.apiKey.trim()}` };
             let body = JSON.stringify(request.body);
             if (request.files) {
                 body = new FormData();
                 for (const [key, value] of Object.entries(request.body)) body.append(key, Array.isArray(value) ? JSON.stringify(value) : String(value));
                 for (const [index, ref] of request.files.entries()) body.append('image[]', await imageBlob(decode(ref.dataUrl)), `reference-${index + 1}.${ref.dataUrl.includes('image/jpeg') ? 'jpg' : ref.dataUrl.includes('image/webp') ? 'webp' : 'png'}`);
             } else headers['Content-Type'] = 'application/json';
+            if (local) return localGenerate(c, body, headers, signal, onProgress);
             const response = await fetch(url, { method: 'POST', signal, credentials: 'omit', headers, body });
             const blob = await extract(response, c, signal); active(signal); return blob;
-        });
+        }, local ? '本机生图等待超时，已请求取消。' : undefined);
     }
     async function models(c, signal) {
         return scoped(signal, 30000, async signal => {
-            const response = await fetch(`${base(c.baseUrl)}/models`, { signal, credentials: 'omit', headers: { Authorization: `Bearer ${String(c.apiKey || '').trim()}` } });
+            if (c.localService === true && !isLocalService(c)) throw new Error('本地生图服务只能使用本机地址');
+            const url = `${base(c.baseUrl)}/models`;
+            const response = isLocalService(c) ? await localFetch(url, { signal, headers: {} })
+                : await fetch(url, { signal, credentials: 'omit', headers: { Authorization: `Bearer ${String(c.apiKey || '').trim()}` } });
             if (!response.ok) throw new Error(`读取模型失败（HTTP ${response.status}）`);
             const data = await response.json();
             return [...new Set((data.data || []).map(m => m.id).filter(id => typeof id === 'string'))].sort();

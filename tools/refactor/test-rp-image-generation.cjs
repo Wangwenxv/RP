@@ -50,14 +50,24 @@ test('RP uses shared model, credential, NAI protocol and size, persists pixels a
     h.s.cancelGeneratedImageTasks();
 });
 
-test('RP natural JSON illustration sends bound reference images and restores without paying again', async () => {
+test('RP natural JSON illustration resolves linked reference images and restores without paying again', async () => {
     const h = harness();
     const G = h.context.window.RPHubImageGeneration;
     Object.assign(h.s.settings.wechatImageApi, G.PRESETS.yeelo);
-    h.s.currentCharacter.value.imageReferences = [{ id: 'portrait', kind: 'character', dataUrl: 'data:image/png;base64,' + png }];
+    h.s.currentCharacter.value.imageReferences = [{ id: 'portrait', kind: 'character', src: 'card/portrait.png' }];
+    const media = h.context.window.RPHubWeChatMedia;
+    const rasterize = media.rasterize;
+    const linked = [];
+    media.rasterize = async source => {
+        if (typeof source !== 'string') return rasterize(source);
+        linked.push(source);
+        return { blob: new Blob([Buffer.from(png, 'base64')], { type: 'image/png' }) };
+    };
+    media.blobToDataURL = async blob => 'data:image/png;base64,' + Buffer.from(await blob.arrayBuffer()).toString('base64');
     const binding = h.add(JSON.stringify({ prompt: '她在走廊里拍下课后的自拍。', selfPortrait: true }));
     const result = await h.s.startGeneratedImageTask('http://local/rp-image', false, binding).promise;
     assert.equal(result.status, 'done', result.error);
+    assert.deepEqual(linked, ['card/portrait.png']);
     const body = JSON.parse(h.requests[0].options.body);
     assert.equal(h.requests[0].url, 'https://img.yeelo.fun/v1/images/edits');
     assert.equal(body.image_data_urls.length, 1); assert.ok(body.prompt.includes('【本轮画面】她在走廊里拍下课后的自拍。'));
