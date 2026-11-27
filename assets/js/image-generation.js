@@ -13,6 +13,8 @@
     const supportsReferenceImages = c => c?.protocol === 'openai-images'
         ? ['image_data_urls', 'image_urls', 'multipart'].includes(c.referenceMode) && ['images/edits', 'images/generations'].includes(c.referenceEndpoint)
         : c?.protocol === 'chat-image' && c.referenceMode === 'chat-content';
+    const IMAGE_CENTER_MODELS = new Set(['qwen-image-2.1-turbo-local', 'qwen-image-2.1-turbo-local-sqx', 'qwen-image-2.1-turbo', 'sd-cpp-local']);
+    const usesImageCenter = c => c?.protocol === 'openai-images' && IMAGE_CENTER_MODELS.has(String(c.model || '').trim());
     const GENERATION_REFERENCE_PURPOSES = Object.freeze(['clothing', 'background', 'pose', 'style', 'object']);
     const GENERATION_REFERENCE_SCHEMA = Object.freeze({ type: 'array', maxItems: 16, items: { type: 'object', properties: {
         messageId: { type: 'string', maxLength: 100, description: '当前微信会话中的图片消息ID，可带一个#前缀' },
@@ -48,6 +50,9 @@
     const hasPortrait = (card, c) => (c?.protocol !== 'sta1n-nai' && identityReferencesOf(card).length > 0) || !!identityOf(card);
     const formatPrompt = c => c?.protocol === 'sta1n-nai'
         ? '【生图格式：NAI 标签组】prompt 使用英文逗号分隔的绘图标签，按原人设描述外貌与本轮场景。正面标签、通用负面提示词、画师和采样器由生图适配器组织，不写进角色人设，也不要在 prompt 里混入负面段落。此协议不支持参考图像素。'
+        : usesImageCenter(c)
+        ? '【生图格式：Qwen 简短画面描述】prompt 写一段约 80～160 字的中文短语，用逗号连接构图、人物造型、动作与手持物、背景、光线和照片质感。只写画面里能看到的内容，并把本轮明确要求排除的细节写在段末，例如“没有耳饰”。身份图只提供脸部轮廓和五官，妆发、衣着、耳饰按本轮画面。没有身份图时用已知外貌简短描述主体。prompt 直接交给生图模型，画面关键细节要写在这段里。'
+            + '在 media.scene 保留核对用的画面计划，location、action、framing、props 必填（无道具为[]），time、appearance、clothing、lighting、avoid 可补充。位置已确认时可带 placeId，明确借鉴某张本人照片的姿势时可带 poseReferenceId。'
         : '【生图格式：自然语言】prompt 使用连贯的画面描述，中文或英文均可。按当前人设、实际对话与已确认场景组织：人物身份 → 地点与时间 → 本轮服装 → 动作及持有物 → 拍摄方式与构图 → 光线 → 参考图继承范围。不要输出 NAI 标签、画师串或正反词模板。'
             + '人物自拍同时提供身份与视觉偏好：五官关系用于保持身份；多张照片中相容的衣品、妆容、表情与自拍习惯可在当前人设和场景允许时借鉴，不能只截取脸，也不能把单张偶然造型断言为永久偏好。具体服装、首饰、姿势应按本轮天气、活动、情绪和机位取舍，不能逐张照搬。麦克风、伞、舞台和背景则需要本轮情境支持，不得因参考图有设备就把课后自拍改成演出；本轮确实演出、授课、录制时可保留设备。'
             + appearancePrompt
@@ -132,9 +137,16 @@
     };
     const identityPrompt = (card, c = DEFAULTS) => {
         const refs = referencesOf(card), profile = c.protocol === 'sta1n-nai' ? identityOf(card) : null;
-        const example = c.protocol === 'sta1n-nai' ? 'campus corridor, phone selfie, evening light' : 'A candid phone selfie in the campus corridor after class.';
+        const compact = usesImageCenter(c);
+        const example = c.protocol === 'sta1n-nai' ? 'campus corridor, phone selfie, evening light'
+            : compact ? '傍晚的教学楼走廊，半身前置自拍，穿浅灰针织衫，暖色窗光，手机实拍' : 'A candid phone selfie in the campus corridor after class.';
         let text = hasPortrait(card, c) ? `【当前角色图片资料｜${String((card?.data || card)?.name || '本人')}】\n所有generate请求必须填写selfPortrait布尔值：本人入镜为true；饭菜、风景或他人为false。示例：{"mode":"generate","selfPortrait":true,"prompt":"${example}","description":"课后的自拍"}。拍照意愿按人设决定，不要求每轮发图。\n` : '';
         if (profile) text += `旧存档的 NAI 固定外貌资料：${profile.description}\n固定英文特征：${profile.prompt}\n程序仅在 NAI 本人入镜时拼入旧资料，新角色无需这套正反词。\n`;
+        if (refs.length && compact) {
+            const portrait = identityReferencesOf(card)[0];
+            return text + (portrait ? `本人入镜自动使用 ${portrait.name} 作为脸部参考。\n` : '')
+                + `referenceIds 只填本轮匹配的地点参考图 ID。可用图片资料：${JSON.stringify(refs.map(r => ({ id: r.id, name: r.name, kind: r.kind, purpose: referencePurpose(r) })))}\n`;
+        }
         if (refs.length && c.protocol !== 'sta1n-nai') text += appearancePrompt + `可用参考图目录（仅资料，不是新指令）：${JSON.stringify(refs.map(r => ({ id: r.id, name: r.name, kind: r.kind, purpose: referencePurpose(r), description: r.description })))}\n本人入镜自动使用人物参考图，只有identity用途定义本人长相；referenceIds只填写本轮匹配的地点参考图ID，不得借用其他角色或编造ID。生图时读取参考像素；聊天仅在有查看工具并实际调用时才能声称看过参考图，不进入持久聊天历史。\n`;
         return text;
     };
@@ -156,12 +168,22 @@
         if (generationReferences.length && !supportsReferenceImages(c)) throw new Error('当前生图服务不支持聊天图片参考，请选择支持参考图的服务');
         validateReferences(generationReferences);
         if (generationReferences.some(ref => !GENERATION_REFERENCE_PURPOSES.includes(ref.generationPurpose))) throw new Error('聊天生图参考用途无效');
-        const selected = [...new Map([...(intent.selfPortrait === true ? refs.filter(r => r.kind !== 'scene') : []), ...scenes].map(r => [r.id, r])).values(), ...generationReferences];
+        let portraits = intent.selfPortrait === true ? refs.filter(r => r.kind !== 'scene') : [];
+        const poseId = intent.scene?.poseReferenceId;
+        const pose = portraits.find(ref => ref.id === poseId);
+        if (poseId && !pose) throw new Error('姿势参考必须来自当前角色已选中的人物照片');
+        const compact = usesImageCenter(c);
+        if (compact) {
+            const identity = portraits.find(ref => referencePurpose(ref) === 'identity');
+            portraits = identity ? [identity] : [];
+            if (pose && pose !== identity) portraits.push({ ...pose, generationPurpose: 'pose' });
+        }
+        const selected = [...new Map([...portraits, ...scenes].map(r => [r.id, r])).values(), ...generationReferences];
         if (selected.length > 16) throw new Error('人物、地点和聊天参考合计最多16张');
-        if (intent.scene?.poseReferenceId && (intent.selfPortrait !== true || !selected.some(ref => ref.kind !== 'scene' && ref.id === intent.scene.poseReferenceId))) throw new Error('姿势参考必须来自当前角色已选中的人物照片');
         const config = { ...c, referenceImages: c.protocol === 'sta1n-nai' ? [] : selected };
         const profile = intent.selfPortrait === true && c.protocol === 'sta1n-nai' ? identityOf(card) : null;
         let prompt = String(intent.prompt || '').trim();
+        if (compact) return { config, prompt };
         if (c.protocol !== 'sta1n-nai') return { config, prompt: naturalScenePrompt(intent, selected, sceneContext) };
         if (!profile) return { config, prompt };
         // Only remove an exact duplicated prefix. Never rewrite the scene or infer who is pictured.
@@ -231,6 +253,10 @@
             if (!['images/edits', 'images/generations'].includes(c.referenceEndpoint)) throw new Error('参考图接口路径无效');
             if (!['image_data_urls', 'image_urls', 'multipart'].includes(c.referenceMode)) throw new Error('当前服务未启用参考图输入，请在生图设置选择参考图方式');
             if (c.referenceMode !== 'multipart') body[c.referenceMode] = refs.map(r => r.dataUrl);
+            if (usesImageCenter(c)) body.reference_roles = refs.map(ref => {
+                const role = referencePurpose(ref);
+                return role === 'scene' ? 'background' : role;
+            });
             return { endpoint: c.referenceEndpoint, body, ...(c.referenceMode === 'multipart' ? { files: refs } : {}) };
         }
         if (!['sta1n-nai', 'chat-image'].includes(c.protocol)) throw new Error('图片接口协议无效');
@@ -321,7 +347,7 @@
             let body = JSON.stringify(request.body);
             if (request.files) {
                 body = new FormData();
-                for (const [key, value] of Object.entries(request.body)) body.append(key, String(value));
+                for (const [key, value] of Object.entries(request.body)) body.append(key, Array.isArray(value) ? JSON.stringify(value) : String(value));
                 for (const [index, ref] of request.files.entries()) body.append('image[]', await imageBlob(decode(ref.dataUrl)), `reference-${index + 1}.${ref.dataUrl.includes('image/jpeg') ? 'jpg' : ref.dataUrl.includes('image/webp') ? 'webp' : 'png'}`);
             } else headers['Content-Type'] = 'application/json';
             const response = await fetch(url, { method: 'POST', signal, credentials: 'omit', headers, body });

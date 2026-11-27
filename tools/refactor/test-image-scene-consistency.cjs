@@ -5,7 +5,7 @@ const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwM
 const ref = (id, description, kind = 'character') => ({ id, name: id, kind, description, dataUrl: 'data:image/png;base64,' + png });
 const scene = { location: '校园走廊', time: '傍晚，天已黑', action: '下课后自然自拍', framing: '手机前置摄像头，上半身', props: ['手机'], avoid: ['头戴麦克风'], lighting: '柔和室内灯' };
 function harness() {
-    const requests = [], context = vm.createContext({ window: {}, URL, Blob, Uint8Array, atob, DOMException, AbortController, setTimeout, clearTimeout,
+    const requests = [], context = vm.createContext({ window: {}, URL, Blob, FormData, Uint8Array, atob, DOMException, AbortController, setTimeout, clearTimeout,
         fetch: async (url, options) => { requests.push({ url, options }); return new Response(JSON.stringify({ data: [{ b64_json: png }] }), { headers: { 'Content-Type': 'application/json' } }); } });
     for (const file of ['image-generation.js', 'wechat-media.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../../assets/js', file), 'utf8'), context);
     const G = context.window.RPHubImageGeneration;
@@ -70,4 +70,22 @@ test('natural portrait names the primary face reference and forwards explicit cu
     assert.match(request.prompt, /"appearance":"自然白皙，齐肩细软黑发"/);
     assert.match(h.G.formatPrompt(h.c), /生图服务看不到整张角色卡/);
     assert.equal(request.config.referenceImages.length, 2);
+});
+
+test('Image Center sends the visual prompt and one primary face reference with explicit image roles', async () => {
+    const h = harness();
+    const c = { ...h.c, model: 'qwen-image-2.1-turbo-local-sqx', referenceMode: 'multipart' };
+    const card = { imageReferences: [ref('front', '近景耳环'), ref('side', '侧脸'), ref('hall', '教室', 'scene')] };
+    const intent = { mode: 'generate', selfPortrait: true, prompt: '平视自拍，白色睡衣，暖灯，没有耳饰', scene };
+    assert.match(h.G.formatPrompt(c), /Qwen 简短画面描述/);
+    const primary = h.G.characterRequest(c, intent, card);
+    assert.deepEqual(Array.from(primary.config.referenceImages, image => image.id), ['front']);
+    const clothing = { ...ref('shirt', '睡衣'), generationPurpose: 'clothing' };
+    const explicit = h.G.characterRequest(c, { ...intent, referenceIds: ['hall'], scene: { ...scene, poseReferenceId: 'side' } },
+        card, {}, [clothing]);
+    await h.G.generate(explicit.config, explicit.prompt);
+    const { body } = h.requests[0].options;
+    assert.equal(body.get('prompt'), intent.prompt);
+    assert.deepEqual(JSON.parse(body.get('reference_roles')), ['identity', 'pose', 'background', 'clothing']);
+    assert.equal(body.getAll('image[]').length, 4);
 });
